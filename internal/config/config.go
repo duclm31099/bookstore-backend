@@ -5,6 +5,13 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/google/wire"
+)
+
+// ProviderSet is config providers.
+var ProviderSet = wire.NewSet(
+	Load,
 )
 
 type Config struct {

@@ -13,6 +13,7 @@ import (
 	"bookstore-backend/internal/config"
 	"bookstore-backend/internal/infrastructure/cache"
 	"bookstore-backend/internal/infrastructure/database"
+	"bookstore-backend/internal/shared/middleware"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -131,7 +132,10 @@ func main() {
 
 func setupRouter() *gin.Engine {
 	router := gin.Default()
-
+	router.Use(middleware.Recovery())
+	router.Use(middleware.RequestID())
+	router.Use(middleware.Logger())
+	router.Use(middleware.CORS())
 	// Root endpoint
 	router.GET("/", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
