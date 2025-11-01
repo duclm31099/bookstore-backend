@@ -28,10 +28,10 @@ type User struct {
 	Points int `db:"points" json:"points"`
 
 	// Email Verification
-	IsVerified         bool       `db:"is_verified" json:"is_verified"`
-	VerificationToken  *string    `db:"verification_token" json:"-"`
-	VerificationSentAt *time.Time `db:"verification_sent_at" json:"-"`
-
+	IsVerified                 bool       `db:"is_verified" json:"is_verified"`
+	VerificationToken          *string    `db:"verification_token" json:"-"`
+	VerificationSentAt         *time.Time `db:"verification_sent_at" json:"-"`
+	VerificationTokenExpiresAt *time.Time `db:"verification_token_expires_at"` // ← ADD
 	// Password Reset
 	ResetToken          *string    `db:"reset_token" json:"-"`
 	ResetTokenExpiresAt *time.Time `db:"reset_token_expires_at" json:"-"`

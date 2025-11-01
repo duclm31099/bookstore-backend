@@ -14,8 +14,10 @@ type Service interface {
 	VerifyEmail(ctx context.Context, token string) error
 	ForgotPassword(ctx context.Context, req ForgotPasswordRequest) error
 	ResetPassword(ctx context.Context, req ResetPasswordRequest) error
+	ResendVerification(ctx context.Context, email string) error
+	UpdateVerificationToken(ctx context.Context, id string) (string, error)
 	ChangePassword(ctx context.Context, userID uuid.UUID, req ChangePasswordRequest) error
-
+	RefreshToken(ctx context.Context, refreshToken string) (*LoginResponse, error)
 	// User Profile
 	GetProfile(ctx context.Context, userID uuid.UUID) (*UserDTO, error)
 	UpdateProfile(ctx context.Context, userID uuid.UUID, req UpdateProfileRequest) (*UserDTO, error)

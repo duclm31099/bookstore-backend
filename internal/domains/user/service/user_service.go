@@ -3,29 +3,33 @@ package service
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 
 	"bookstore-backend/internal/domains/user"
+	"bookstore-backend/pkg/jwt"
+	"bookstore-backend/pkg/logger"
 	// TODO: Cần tạo JWT helper
 )
 
 // userService implement user.Service interface
 type userService struct {
-	repo      user.Repository // Data access layer
-	jwtSecret string          // JWT signing secret
+	repo       user.Repository // Data access layer
+	jwtManager *jwt.Manager    // JWT signing secret
 }
 
 // NewUserService tạo service instance
 // Inject repository qua constructor (Dependency Injection)
-func NewUserService(repo user.Repository, jwtSecret string) user.Service {
+func NewUserService(repo user.Repository, jwtManager *jwt.Manager) user.Service {
 	return &userService{
-		repo:      repo,
-		jwtSecret: jwtSecret,
+		repo:       repo,
+		jwtManager: jwtManager,
 	}
 }
 
@@ -53,9 +57,9 @@ func (s *userService) Register(ctx context.Context, req user.RegisterRequest) (*
 	// 3. HASH PASSWORD
 	// bcrypt cost = 12: balance giữa security và performance
 	// Higher cost = slower but more secure
-	passwordHash, err := bcrypt.GenerateFromPassword([]byte(req.Password), 12)
+	passwordHash, err := s.hashPassword(req.Password)
 	if err != nil {
-		return nil, fmt.Errorf("hash password: %w", err)
+		return nil, err
 	}
 
 	// 4. GENERATE VERIFICATION TOKEN
@@ -64,23 +68,25 @@ func (s *userService) Register(ctx context.Context, req user.RegisterRequest) (*
 	if err != nil {
 		return nil, fmt.Errorf("generate token: %w", err)
 	}
-
+	verificationTokenHash := s.hashToken(verificationToken)
+	expiresAt := time.Now().Add(3 * 24 * time.Hour)
 	// 5. CREATE USER ENTITY
 	now := time.Now()
 	newUser := &user.User{
-		ID:                 uuid.New(),
-		Email:              req.Email,
-		PasswordHash:       string(passwordHash),
-		FullName:           req.FullName,
-		Phone:              stringPtr(req.Phone), // Convert string to *string
-		Role:               user.RoleUser,        // Default role
-		IsActive:           true,                 // Active by default
-		Points:             0,                    // Start with 0 points
-		IsVerified:         false,                // Require email verification
-		VerificationToken:  &verificationToken,
-		VerificationSentAt: &now,
-		CreatedAt:          now,
-		UpdatedAt:          now,
+		ID:                         uuid.New(),
+		Email:                      req.Email,
+		PasswordHash:               string(passwordHash),
+		FullName:                   req.FullName,
+		Phone:                      stringPtr(req.Phone), // Convert string to *string
+		Role:                       user.RoleUser,        // Default role
+		IsActive:                   true,                 // Active by default
+		Points:                     0,                    // Start with 0 points
+		IsVerified:                 false,                // Require email verification
+		VerificationToken:          &verificationTokenHash,
+		VerificationSentAt:         &now,
+		VerificationTokenExpiresAt: &expiresAt,
+		CreatedAt:                  now,
+		UpdatedAt:                  now,
 	}
 
 	// 6. PERSIST TO DATABASE
@@ -157,6 +163,49 @@ func (s *userService) Login(ctx context.Context, req user.LoginRequest) (*user.L
 	}, nil
 }
 
+func (s *userService) RefreshToken(ctx context.Context, refreshTokenStr string) (*user.LoginResponse, error) {
+	// 1. Validate refresh token
+	claims, err := s.jwtManager.ValidateRefreshToken(refreshTokenStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid refresh token")
+	}
+
+	userID, err := uuid.Parse(claims.UserID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid user id in token: %w", err)
+	}
+	// 2. Get user
+	u, err := s.repo.FindByID(ctx, userID)
+	if err != nil {
+		return nil, user.ErrUserNotFound
+	}
+
+	// 3. Check user still active
+	if !u.IsActive {
+		return nil, user.ErrUserInactive
+	}
+
+	// 4. Generate new tokens
+	accessToken, err := s.generateAccessToken(u)
+	if err != nil {
+		return nil, fmt.Errorf("generate access token: %w", err)
+	}
+
+	newRefreshToken, err := s.generateRefreshToken(u)
+	if err != nil {
+		return nil, fmt.Errorf("generate refresh token: %w", err)
+	}
+
+	// 5. Return (RefreshToken sẽ set vào cookie ở handler)
+	dto := u.ToDTO()
+	return &user.LoginResponse{
+		AccessToken:  accessToken,
+		RefreshToken: newRefreshToken,
+		ExpiresAt:    time.Now().Add(15 * time.Minute),
+		User:         dto,
+	}, nil
+}
+
 // VerifyEmail xác nhận email - FR-AUTH-001
 func (s *userService) VerifyEmail(ctx context.Context, token string) error {
 	// 1. FIND USER BY TOKEN
@@ -184,12 +233,8 @@ func (s *userService) VerifyEmail(ctx context.Context, token string) error {
 
 // ForgotPassword gửi reset password link - FR-AUTH-003
 func (s *userService) ForgotPassword(ctx context.Context, req user.ForgotPasswordRequest) error {
-	// 1. VALIDATE INPUT
-	if err := req.Validate(); err != nil {
-		return err
-	}
 
-	// 2. FIND USER BY EMAIL
+	// 1. FIND USER BY EMAIL
 	u, err := s.repo.FindByEmail(ctx, req.Email)
 	if err != nil {
 		// Security: không expose email có tồn tại không
@@ -203,48 +248,113 @@ func (s *userService) ForgotPassword(ctx context.Context, req user.ForgotPasswor
 		return fmt.Errorf("generate token: %w", err)
 	}
 
-	// 4. SET TOKEN EXPIRY (15 minutes)
-	expiresAt := time.Now().Add(15 * time.Minute)
+	// 4. SET TOKEN EXPIRY (60 minutes)
+	expiresAt := time.Now().Add(60 * time.Minute)
 	u.ResetToken = &resetToken
 	u.ResetTokenExpiresAt = &expiresAt
 
-	// 5. UPDATE USER
-	if err := s.repo.Update(ctx, u); err != nil {
+	// 5. UPDATE USER WITH RESET TOKEN
+	if err := s.repo.UpdateResetToken(ctx, u.ID.String(), &resetToken, &expiresAt); err != nil {
 		return fmt.Errorf("update reset token: %w", err)
 	}
 
 	// 6. SEND RESET EMAIL (Async)
 	// TODO: Queue password reset email
 	// go s.emailService.SendPasswordResetEmail(u.Email, resetToken)
+	log.Printf("🔐 Reset token for %s: %s (expires: %v)", u.Email, resetToken, expiresAt)
+	return nil
+}
+
+// service.go
+func (s *userService) ResendVerification(ctx context.Context, email string) error {
+	// 1. Find user by email
+	u, err := s.repo.FindByEmail(ctx, email)
+	if err != nil {
+		// Security: generic message
+		return nil
+	}
+
+	// 2. Check already verified
+	if u.IsVerified {
+		return nil
+	}
+
+	// 3. Generate new verification token
+	token, err := generateSecureToken(32)
+	if err != nil {
+		return fmt.Errorf("generate token: %w", err)
+	}
+
+	// 4. Update verification token
+	newTokenHash := s.hashToken(token)
+	expiresAt := time.Now().Add(24 * time.Hour)
+	if err := s.repo.UpdateVerificationToken(ctx, u.ID.String(), &newTokenHash, &expiresAt); err != nil {
+		return fmt.Errorf("update token: %w", err)
+	}
+
+	// 5. Send email
+	// go s.emailService.SendVerificationEmail(u.Email, token)
 
 	return nil
 }
 
+// UpdateVerificationToken - Generate and update verification token
+// Used when:
+// 1. ResendVerification - User wants new verification token
+// 2. Register - Generate initial verification token
+func (s *userService) UpdateVerificationToken(
+	ctx context.Context,
+	userID string,
+) (string, error) {
+	// 1. Generate new verification token (32-char hex)
+	token, err := generateSecureToken(32)
+	if err != nil {
+		return "", fmt.Errorf("generate verification token: %w", err)
+	}
+
+	// 2. Get current time
+	now := time.Now()
+
+	// 3. Update database with new token
+	// Token expires in 24 hours
+	expiresAt := now.Add(24 * time.Hour)
+
+	err = s.repo.UpdateVerificationToken(ctx, userID, &token, &expiresAt)
+	if err != nil {
+		return "", fmt.Errorf("update verification token in db: %w", err)
+	}
+
+	// 5. Log for audit trail
+	logger.Info("verification token updated",
+		map[string]interface{}{
+			"user_id":    userID,
+			"expires_at": expiresAt,
+		})
+
+	return token, nil
+}
+
 // ResetPassword đổi password mới - FR-AUTH-003
 func (s *userService) ResetPassword(ctx context.Context, req user.ResetPasswordRequest) error {
-	// 1. VALIDATE INPUT
-	if err := req.Validate(); err != nil {
+
+	// 1. FIND USER BY RESET TOKEN
+	u, err := s.repo.FindByResetToken(ctx, req.Token)
+	if err != nil {
+		return user.ErrInvalidToken
+	}
+
+	// 2. HASH NEW PASSWORD
+	passwordHash, err := s.hashPassword(req.NewPassword)
+	if err != nil {
 		return err
 	}
 
-	// 2. FIND USER BY RESET TOKEN
-	u, err := s.repo.FindByResetToken(ctx, req.Token)
-	if err != nil {
-		return err // ErrInvalidToken or database error
-	}
-
-	// 3. HASH NEW PASSWORD
-	passwordHash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), 12)
-	if err != nil {
-		return fmt.Errorf("hash password: %w", err)
-	}
-
-	// 4. UPDATE PASSWORD
+	// 3. UPDATE PASSWORD
 	if err := s.repo.UpdatePassword(ctx, u.ID, string(passwordHash)); err != nil {
 		return fmt.Errorf("update password: %w", err)
 	}
 
-	// 5. SEND CONFIRMATION EMAIL (Async)
+	// 4. SEND CONFIRMATION EMAIL (Async)
 	// TODO: Queue password changed email
 	// go s.emailService.SendPasswordChangedEmail(u.Email)
 
@@ -425,6 +535,12 @@ func generateSecureToken(length int) (string, error) {
 	return hex.EncodeToString(bytes), nil
 }
 
+// hashToken - Hash token using SHA256 for storage
+func (s *userService) hashToken(token string) string {
+	hash := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(hash[:])
+}
+
 // stringPtr convert string thành *string (helper cho nullable fields)
 func stringPtr(s string) *string {
 	if s == "" {
@@ -433,30 +549,23 @@ func stringPtr(s string) *string {
 	return &s
 }
 
-// generateAccessToken tạo JWT access token (15 minutes TTL)
+// generateAccessToken tạo JWT access token (24 hours TTL)
 func (s *userService) generateAccessToken(u *user.User) (string, error) {
-	// TODO: Implement JWT generation
-	// claims := jwt.MapClaims{
-	//     "sub":   u.ID.String(),
-	//     "email": u.Email,
-	//     "role":  u.Role,
-	//     "type":  "access",
-	//     "exp":   time.Now().Add(15 * time.Minute).Unix(),
-	//     "iat":   time.Now().Unix(),
-	// }
-	// return jwt.GenerateToken(claims, s.jwtSecret)
-	return "TODO_ACCESS_TOKEN", nil
+	return s.jwtManager.GenerateAccessToken(
+		u.ID.String(),
+		u.Email,
+		u.Role.String(),
+	)
 }
 
 // generateRefreshToken tạo JWT refresh token (3 days TTL)
 func (s *userService) generateRefreshToken(u *user.User) (string, error) {
-	// TODO: Implement JWT generation
-	// claims := jwt.MapClaims{
-	//     "sub":  u.ID.String(),
-	//     "type": "refresh",
-	//     "exp":  time.Now().Add(3 * 24 * time.Hour).Unix(),
-	//     "iat":  time.Now().Unix(),
-	// }
-	// return jwt.GenerateToken(claims, s.jwtSecret)
-	return "TODO_REFRESH_TOKEN", nil
+	return s.jwtManager.GenerateRefreshToken(u.ID.String())
+}
+func (s *userService) hashPassword(password string) (string, error) {
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
+	if err != nil {
+		return "", fmt.Errorf("hash password: %w", err)
+	}
+	return string(hash), nil
 }

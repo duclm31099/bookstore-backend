@@ -63,7 +63,7 @@ func (r LoginRequest) Validate() error {
 // LoginResponse - JWT tokens
 type LoginResponse struct {
 	AccessToken  string    `json:"access_token"`
-	RefreshToken string    `json:"refresh_token"`
+	RefreshToken string    `json:"-"`
 	ExpiresAt    time.Time `json:"expires_at"`
 	User         UserDTO   `json:"user"`
 }
@@ -273,4 +273,28 @@ type AddPointsRequest struct {
 type DeductPointsRequest struct {
 	Points int    `json:"points" binding:"required,min=1"`
 	Reason string `json:"reason,omitempty"`
+}
+
+// ResendVerificationRequest đại diện resend verification request
+type ResendVerificationRequest struct {
+	Email string `json:"email" binding:"required,email"`
+}
+
+// Validate validates resend verification request
+func (r *ResendVerificationRequest) Validate() error {
+	if r.Email == "" {
+		return ErrInvalidEmail
+	}
+
+	if r.isValidEmail(r.Email) != nil {
+		return ErrInvalidEmail
+	}
+
+	return nil
+}
+
+func (r *ResendVerificationRequest) isValidEmail(email string) error {
+	return validation.ValidateStruct(&r,
+		validation.Field(&r.Email, validation.Required, is.Email),
+	)
 }

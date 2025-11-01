@@ -37,12 +37,14 @@ func SetupRouter(c *container.Container) *gin.Engine {
 		{
 			// FR-AUTH-001: User Registration
 			auth.POST("/register", c.UserHandler.Register)
+			auth.POST("/refresh", c.UserHandler.RefreshToken)
 
 			// FR-AUTH-002: User Login
 			auth.POST("/login", c.UserHandler.Login)
 
 			// FR-AUTH-001: Email Verification
 			auth.GET("/verify-email", c.UserHandler.VerifyEmail)
+			auth.POST("/resend-verification", c.UserHandler.ResendVerification)
 
 			// FR-AUTH-003: Password Reset
 			auth.POST("/forgot-password", c.UserHandler.ForgotPassword)
@@ -54,7 +56,7 @@ func SetupRouter(c *container.Container) *gin.Engine {
 		// ========================================
 		users := v1.Group("/users")
 		// TODO: Add Auth middleware
-		// users.Use(middleware.Auth())
+		users.Use(middleware.AuthMiddleware(c.Config.JWT.Secret))
 		{
 			// Profile endpoints
 			users.GET("/me", c.UserHandler.GetProfile)

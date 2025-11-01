@@ -11,6 +11,7 @@ import (
 	infraCache "bookstore-backend/internal/infrastructure/cache"
 	"bookstore-backend/internal/infrastructure/database"
 	"bookstore-backend/pkg/cache"
+	"bookstore-backend/pkg/jwt"
 
 	// User domain imports
 	"bookstore-backend/internal/domains/user"
@@ -36,10 +37,10 @@ type Container struct {
 	// Infrastructure components - shared across all domains
 	// Lifecycle: Singleton (1 instance duy nhất trong app lifetime)
 
-	Config *config.Config       // Application config
-	DB     *database.PostgresDB // Database connection pool
-	Cache  cache.Cache          // Redis cache (interface)
-
+	Config     *config.Config       // Application config
+	DB         *database.PostgresDB // Database connection pool
+	Cache      cache.Cache          // Redis cache (interface)
+	JWTManager *jwt.Manager
 	// ========================================
 	// REPOSITORY LAYER (DATA ACCESS)
 	// ========================================
@@ -163,6 +164,9 @@ func NewContainer() (*Container, error) {
 
 	c.Cache = redisCache
 
+	jwtSecret := cfg.JWT.Secret // Use from config
+	c.JWTManager = jwt.NewManager(jwtSecret)
+
 	// ========================================
 	// STEP 4: INITIALIZE REPOSITORIES
 	// ========================================
@@ -241,8 +245,8 @@ func (c *Container) initServices() error {
 	// Inject dependencies: Repository và JWT secret
 	// Constructor: func NewUserService(repo user.Repository, jwtSecret string) user.Service
 	c.UserService = userService.NewUserService(
-		c.UserRepo,          // Inject repository
-		c.Config.JWT.Secret, // Inject JWT secret từ config
+		c.UserRepo,   // Inject repository
+		c.JWTManager, // Inject JWT secret từ config
 	)
 
 	// ----------------------------------------

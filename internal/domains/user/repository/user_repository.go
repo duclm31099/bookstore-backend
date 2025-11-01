@@ -52,17 +52,18 @@ func NewPostgresRepository(pool *pgxpool.Pool, cache cache.Cache) user.Repositor
 // Context: cho phép cancel operation, set timeout, pass metadata qua request chain
 func (r *postgresRepository) Create(ctx context.Context, u *user.User) error {
 	// SQL query - sử dụng $1, $2, ... placeholders để tránh SQL injection
+	expiresAt := time.Now().Add(24 * time.Hour)
 	query := `
 		INSERT INTO users (
 			id, email, password_hash, full_name, phone, role,
 			is_active, points, is_verified, 
 			verification_token, verification_sent_at,
-			created_at, updated_at
+			created_at, updated_at, verification_token_expires_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6,
 			$7, $8, $9,
 			$10, $11,
-			$12, $13
+			$12, $13, $14
 		)
 	`
 
@@ -83,6 +84,7 @@ func (r *postgresRepository) Create(ctx context.Context, u *user.User) error {
 		u.VerificationSentAt,
 		u.CreatedAt,
 		u.UpdatedAt,
+		expiresAt,
 	)
 
 	if err != nil {
@@ -211,6 +213,21 @@ func (r *postgresRepository) FindByEmail(ctx context.Context, email string) (*us
 	}
 
 	return &u, nil
+}
+
+// UpdateProfile updates user profile (name, phone)
+func (r *postgresRepository) UpdateProfile(ctx context.Context, id string, fullName, phone *string) error {
+	query := `
+		UPDATE users
+		SET 
+			full_name = COALESCE($2, full_name),
+			phone = COALESCE($3, phone),
+			updated_at = $4
+		WHERE id = $1 AND deleted_at IS NULL
+	`
+
+	_, err := r.pool.Exec(ctx, query, id, fullName, phone, time.Now())
+	return err
 }
 
 // Update cập nhật thông tin user và invalidate cache
@@ -344,6 +361,62 @@ func (r *postgresRepository) FindByResetToken(ctx context.Context, token string)
 	return &u, nil
 }
 
+// UpdateVerificationToken sets email verification token
+func (r *postgresRepository) UpdateVerificationToken(ctx context.Context, id string, token *string, expiredAt *time.Time) error {
+	query := `
+		UPDATE users
+		SET 
+			verification_token = $2,
+			verification_sent_at = $3,
+			verification_token_expires_at = $4
+		WHERE id = $1 AND deleted_at IS NULL
+	`
+
+	_, err := r.pool.Exec(ctx, query, id, token, time.Now(), expiredAt)
+	return err
+}
+
+// VerifyEmail marks user email as verified
+func (r *postgresRepository) VerifyEmail(ctx context.Context, token string) error {
+	query := `
+		UPDATE users
+		SET 
+			is_verified = true,
+			verification_token = NULL,
+			verification_sent_at = NULL,
+			verification_token_expires_at = NULL,
+			updated_at = $2
+		WHERE verification_token = $1 AND deleted_at IS NULL
+	`
+
+	result, err := r.pool.Exec(ctx, query, token, time.Now())
+	if err != nil {
+		return err
+	}
+
+	rows := result.RowsAffected()
+	if rows == 0 {
+		return user.ErrInvalidToken
+	}
+
+	return nil
+}
+
+// UpdateResetToken sets password reset token
+func (r *postgresRepository) UpdateResetToken(ctx context.Context, id string, token *string, expiresAt *time.Time) error {
+	query := `
+		UPDATE users
+		SET 
+			reset_token = $2,
+			reset_token_expires_at = $3,
+			updated_at = $4
+		WHERE id = $1 AND deleted_at IS NULL
+	`
+
+	_, err := r.pool.Exec(ctx, query, id, token, expiresAt, time.Now())
+	return err
+}
+
 // UpdatePassword cập nhật password và clear reset token
 func (r *postgresRepository) UpdatePassword(ctx context.Context, userID uuid.UUID, passwordHash string) error {
 	query := `
@@ -380,6 +453,7 @@ func (r *postgresRepository) MarkAsVerified(ctx context.Context, userID uuid.UUI
 			is_verified = true,
 			verification_token = NULL,
 			verification_sent_at = NULL,
+			verification_token_expires_at = NULL,
 			updated_at = NOW()
 		WHERE id = $1 AND deleted_at IS NULL
 	`
@@ -734,3 +808,29 @@ func (r *postgresRepository) CountByRole(ctx context.Context, role user.Role) (i
 
 	return count, nil
 }
+
+// InvalidateUserCache - Remove user from cache
+// This method clears the cached user data when it's updated
+// func (r *postgresRepository) InvalidateUserCache(
+// 	ctx context.Context,
+// 	userID uuid.UUID,
+// ) error {
+// 	if r.cache == nil {
+// 		// Cache not configured, skip
+// 		return nil
+// 	}
+
+// 	cacheKey := fmt.Sprintf("user:%s", userID.String())
+
+// 	err := r.cache.Delete(ctx, cacheKey)
+// 	if err != nil && err != redis.Nil {
+// 		// Log but don't fail - cache miss is not critical
+// 		logger.Info("failed to invalidate user cache",
+// 			map[string]interface{}{
+// 				"user_id": userID.String(),
+// 				"error":   err.Error(),
+// 			})
+// 		return nil // Don't fail the operation
+// 	}
+// 	return nil
+// }

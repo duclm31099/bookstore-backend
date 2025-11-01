@@ -2,6 +2,7 @@ package user
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -39,7 +40,11 @@ type Repository interface {
 	// ========================================
 	// AUTHENTICATION SPECIFIC
 	// ========================================
+	UpdateVerificationToken(ctx context.Context, id string, token *string, sentAt *time.Time) error
 
+	VerifyEmail(ctx context.Context, token string) error
+
+	UpdateResetToken(ctx context.Context, id string, token *string, expiresAt *time.Time) error
 	// FindByVerificationToken tìm user theo verification token
 	// Chỉ trả về user nếu token còn hạn (< 24h từ verification_sent_at)
 	FindByVerificationToken(ctx context.Context, token string) (*User, error)
@@ -47,6 +52,7 @@ type Repository interface {
 	// FindByResetToken tìm user theo password reset token
 	// Chỉ trả về user nếu reset_token_expires_at > NOW()
 	FindByResetToken(ctx context.Context, token string) (*User, error)
+	UpdateProfile(ctx context.Context, id string, fullName, phone *string) error
 
 	// UpdatePassword cập nhật password và clear reset token
 	UpdatePassword(ctx context.Context, userID uuid.UUID, passwordHash string) error

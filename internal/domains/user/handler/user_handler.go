@@ -9,6 +9,7 @@ import (
 
 	"bookstore-backend/internal/domains/user"
 	"bookstore-backend/internal/shared/response"
+	"bookstore-backend/pkg/logger"
 )
 
 // UserHandler xử lý HTTP requests cho user domain
@@ -46,16 +47,7 @@ func (h *UserHandler) Register(c *gin.Context) {
 	// - Tự động validate JSON format
 	// - Map JSON fields vào Go struct fields (theo json tags)
 	var req user.RegisterRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		// Bad request: JSON malformed hoặc missing required fields
-		response.Error(c, http.StatusBadRequest, "Invalid request body", err)
-		return
-	}
-
-	// STEP 2: VALIDATE BUSINESS RULES
-	// DTO validation: email format, password strength, etc.
-	if err := req.Validate(); err != nil {
-		response.Error(c, http.StatusBadRequest, "Validation failed", err)
+	if err := h.bindAndValidate(c, &req); err != nil {
 		return
 	}
 
@@ -75,6 +67,67 @@ func (h *UserHandler) Register(c *gin.Context) {
 	// Location header: URL của resource mới (optional)
 	c.Header("Location", "/api/v1/users/"+userDTO.ID.String())
 	response.Success(c, http.StatusCreated, "User registered successfully. Please check your email to verify.", userDTO)
+}
+
+func (h *UserHandler) RefreshToken(c *gin.Context) {
+	// ✅ Lấy refresh token từ cookie (không phải body)
+	refreshToken, err := c.Cookie("refresh_token")
+	if err != nil {
+		response.Error(c, http.StatusUnauthorized, "Missing refresh token", nil)
+		return
+	}
+
+	// Call service để validate và generate new tokens
+	newLoginResp, err := h.service.RefreshToken(c.Request.Context(), refreshToken)
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+
+	// ✅ Set new refresh token in cookie
+	c.SetCookie(
+		"refresh_token",
+		newLoginResp.RefreshToken,
+		7*24*3600,
+		"/",
+		"",
+		true,
+		true,
+	)
+
+	// ✅ Remove from response body
+	newLoginResp.RefreshToken = ""
+
+	response.Success(c, http.StatusOK, "Token refreshed", newLoginResp)
+}
+
+// ResendVerification xử lý POST /auth/resend-verification
+// @Summary      Resend verification email
+// @Description  Send verification email again to user email
+// @Tags         Authentication
+// @Accept       json
+// @Produce      json
+// @Param        request body user.ResendVerificationRequest true "Email address"
+// @Success      200 {object} response.Success
+// @Failure      400 {object} response.Error
+// @Failure      404 {object} response.Error "User not found"
+// @Failure      409 {object} response.Error "Already verified"
+// @Router       /auth/resend-verification [post]
+func (h *UserHandler) ResendVerification(c *gin.Context) {
+	// STEP 1: PARSE REQUEST
+	var req user.ResendVerificationRequest
+	if err := h.bindAndValidate(c, &req); err != nil {
+		return
+	}
+
+	// STEP 3: RESEND VERIFICATION EMAIL
+	if err := h.service.ResendVerification(c.Request.Context(), req.Email); err != nil {
+		h.handleError(c, err)
+		return
+	}
+
+	// STEP 4: SUCCESS
+	response.Success(c, http.StatusOK, "If your email exists and not verified, verification link has been sent", nil)
 }
 
 // Login xử lý POST /auth/login - FR-AUTH-002
@@ -109,8 +162,21 @@ func (h *UserHandler) Login(c *gin.Context) {
 		h.handleError(c, err)
 		return
 	}
+	// ✅ STEP 4: SET REFRESH TOKEN IN HTTPONLYCOOKIE
+	c.SetCookie(
+		"refresh_token",        // Cookie name
+		loginResp.RefreshToken, // Cookie value
+		7*24*3600,              // Max age (7 days in seconds)
+		"/",                    // Path
+		"",                     // Domain (empty = auto-detect)
+		true,                   // Secure (HTTPS only)
+		true,                   // HttpOnly (JavaScript cannot access)
+	)
 
-	// STEP 4: SUCCESS
+	// ✅ STEP 5: REMOVE REFRESH TOKEN FROM RESPONSE BODY
+	loginResp.RefreshToken = "" // ← Đừng trả về body nữa
+
+	// STEP 6: SUCCESS
 	// Return JWT tokens để client lưu (localStorage/cookie)
 	response.Success(c, http.StatusOK, "Login successful", loginResp)
 }
@@ -236,6 +302,9 @@ func (h *UserHandler) GetProfile(c *gin.Context) {
 	// Middleware Auth() đã parse JWT và set userID vào context
 	// c.Get("userID"): lấy value từ Gin context (type assertion cần thiết)
 	userID, err := getUserIDFromContext(c)
+	logger.Info("USER ID", map[string]interface{}{
+		"USER_ID": userID,
+	})
 	if err != nil {
 		response.Error(c, http.StatusUnauthorized, "Unauthorized", err)
 		return
@@ -550,4 +619,22 @@ func (h *UserHandler) handleError(c *gin.Context, err error) {
 		// logger.Error("internal error", zap.Error(err))
 		response.Error(c, http.StatusInternalServerError, "Internal server error", nil)
 	}
+}
+
+// ✅ REFACTORED - Eliminate repetition
+func (h *UserHandler) bindAndValidate(c *gin.Context, req interface{}) error {
+	if err := c.ShouldBindJSON(req); err != nil {
+		response.Error(c, http.StatusBadRequest, "Invalid request body", err)
+		return err
+	}
+
+	// Type assert để check có Validate method
+	if v, ok := req.(interface{ Validate() error }); ok {
+		if err := v.Validate(); err != nil {
+			response.Error(c, http.StatusBadRequest, "Validation failed", err)
+			return err
+		}
+	}
+
+	return nil
 }
