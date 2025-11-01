@@ -4,109 +4,110 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"time"
-
-	"github.com/google/wire"
 )
 
-// ProviderSet is config providers.
-var ProviderSet = wire.NewSet(
-	Load,
-)
-
+// Config chứa toàn bộ application configuration
+// Struct này được populate từ environment variables
 type Config struct {
 	App      AppConfig
 	Database DatabaseConfig
 	Redis    RedisConfig
 	JWT      JWTConfig
+	Email    EmailConfig
 }
 
 type AppConfig struct {
 	Name        string
-	Environment string
+	Environment string // development, staging, production
 	Port        string
 	Version     string
-	URL         string
 }
 
 type DatabaseConfig struct {
-	Host            string
-	Port            string
-	User            string
-	Password        string
-	Name            string
-	MaxConnections  int
-	MaxIdleConns    int
-	ConnMaxLifetime time.Duration
+	Host     string
+	Port     int
+	User     string
+	Password string
+	Database string
+	SSLMode  string
+	MaxConns int
+	MinConns int
 }
 
 type RedisConfig struct {
-	Host        string
-	Password    string
-	DB          int
-	MaxRetries  int
-	PoolSize    int
-	DialTimeout time.Duration
+	Host     string
+	Password string
+	DB       int
 }
 
 type JWTConfig struct {
-	Secret            string
-	Expiration        time.Duration
-	RefreshExpiration time.Duration
+	Secret             string
+	AccessTokenExpiry  int // minutes
+	RefreshTokenExpiry int // hours
 }
 
+type EmailConfig struct {
+	Provider string // ses, sendgrid
+	APIKey   string
+	From     string
+}
+
+// Load đọc config từ environment variables
 func Load() (*Config, error) {
 	cfg := &Config{
 		App: AppConfig{
-			Name:        getEnv("APP_NAME", "Bookstore Backend"),
+			Name:        getEnv("APP_NAME", "Bookstore API"),
 			Environment: getEnv("APP_ENV", "development"),
 			Port:        getEnv("APP_PORT", "8080"),
 			Version:     getEnv("APP_VERSION", "1.0.0"),
-			URL:         getEnv("APP_URL", "http://localhost:8080"),
 		},
 		Database: DatabaseConfig{
-			Host:            getEnv("DB_HOST", "localhost"),
-			Port:            getEnv("DB_PORT", "5432"),
-			User:            getEnv("DB_USER", "bookstore"),
-			Password:        getEnv("DB_PASSWORD", "secret"),
-			Name:            getEnv("DB_NAME", "bookstore_dev"),
-			MaxConnections:  getEnvInt("DB_MAX_CONNECTIONS", 25),
-			MaxIdleConns:    getEnvInt("DB_MAX_IDLE_CONNECTIONS", 5),
-			ConnMaxLifetime: getEnvDuration("DB_CONNECTION_LIFETIME", 5*time.Minute),
+			Host:     getEnv("DB_HOST", "localhost"),
+			Port:     getEnvInt("DB_PORT", 5432),
+			User:     getEnv("DB_USER", "postgres"),
+			Password: getEnv("DB_PASSWORD", ""),
+			Database: getEnv("DB_NAME", "bookstore"),
+			SSLMode:  getEnv("DB_SSLMODE", "disable"),
+			MaxConns: getEnvInt("DB_MAX_CONNS", 25),
+			MinConns: getEnvInt("DB_MIN_CONNS", 5),
 		},
 		Redis: RedisConfig{
-			Host:        getEnv("REDIS_HOST", "localhost:6379"),
-			Password:    getEnv("REDIS_PASSWORD", ""),
-			DB:          getEnvInt("REDIS_DB", 0),
-			MaxRetries:  getEnvInt("REDIS_MAX_RETRIES", 3),
-			PoolSize:    getEnvInt("REDIS_POOL_SIZE", 10),
-			DialTimeout: 5 * time.Second,
+			Host:     getEnv("REDIS_HOST", "localhost:6379"),
+			Password: getEnv("REDIS_PASSWORD", ""),
+			DB:       getEnvInt("REDIS_DB", 0),
 		},
 		JWT: JWTConfig{
-			Secret:            getEnv("JWT_SECRET", "change-this-secret"),
-			Expiration:        getEnvDuration("JWT_EXPIRATION", 24*time.Hour),
-			RefreshExpiration: getEnvDuration("JWT_REFRESH_EXPIRATION", 168*time.Hour),
+			Secret:             getEnv("JWT_SECRET", "your-secret-key-change-in-production"),
+			AccessTokenExpiry:  getEnvInt("JWT_ACCESS_EXPIRY", 15),  // 15 minutes
+			RefreshTokenExpiry: getEnvInt("JWT_REFRESH_EXPIRY", 72), // 3 days
+		},
+		Email: EmailConfig{
+			Provider: getEnv("EMAIL_PROVIDER", "ses"),
+			APIKey:   getEnv("EMAIL_API_KEY", ""),
+			From:     getEnv("EMAIL_FROM", "noreply@bookstore.com"),
 		},
 	}
 
-	// Validate required fields
+	// Validate critical config
 	if err := cfg.Validate(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("config validation failed: %w", err)
 	}
 
 	return cfg, nil
 }
 
+// Validate kiểm tra config có hợp lệ không
 func (c *Config) Validate() error {
-	if c.Database.Host == "" {
-		return fmt.Errorf("DB_HOST is required")
+	// Production environment phải có JWT secret
+	if c.App.Environment == "production" {
+		if c.JWT.Secret == "your-secret-key-change-in-production" {
+			return fmt.Errorf("JWT_SECRET must be set in production")
+		}
+		if c.Database.Password == "" {
+			return fmt.Errorf("DB_PASSWORD must be set in production")
+		}
 	}
-	if c.Database.User == "" {
-		return fmt.Errorf("DB_USER is required")
-	}
-	if c.JWT.Secret == "change-this-secret" && c.App.Environment == "production" {
-		return fmt.Errorf("JWT_SECRET must be set in production")
-	}
+
 	return nil
 }
 
@@ -120,25 +121,13 @@ func getEnv(key, defaultValue string) string {
 }
 
 func getEnvInt(key string, defaultValue int) int {
-	value := os.Getenv(key)
-	if value == "" {
+	valueStr := os.Getenv(key)
+	if valueStr == "" {
 		return defaultValue
 	}
-	intValue, err := strconv.Atoi(value)
+	value, err := strconv.Atoi(valueStr)
 	if err != nil {
 		return defaultValue
 	}
-	return intValue
-}
-
-func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
-	value := os.Getenv(key)
-	if value == "" {
-		return defaultValue
-	}
-	duration, err := time.ParseDuration(value)
-	if err != nil {
-		return defaultValue
-	}
-	return duration
+	return value
 }

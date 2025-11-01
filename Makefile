@@ -27,15 +27,41 @@ build: ## Build the application
 	$(GO) build $(GOFLAGS) -o $(BUILD_DIR)/worker cmd/worker/main.go
 	$(GO) build $(GOFLAGS) -o $(BUILD_DIR)/migrate cmd/migrate/main.go
 
-test: ## Run tests
-	$(GO) test -v -race -coverprofile=coverage.out ./...
-	$(GO) tool cover -html=coverage.out -o coverage.html
 
-test-unit: ## Run unit tests only
-	$(GO) test -v ./tests/unit/...
+# ========================================
+# TEST COMMANDS
+# ========================================
 
-test-integration: ## Run integration tests
-	$(GO) test -v ./tests/integration/...
+migrate-test-up: ## Run migrations on test database
+	migrate -path migrations \
+	  -database "postgresql://bookstore:secret@localhost:5439/bookstore_test?sslmode=disable" \
+	  up
+
+migrate-test-down: ## Rollback test migrations
+	migrate -path migrations \
+	  -database "postgresql://bookstore:secret@localhost:5439/bookstore_test?sslmode=disable" \
+	  down 1
+
+migrate-test-reset: ## Reset test database (drop + up)
+	migrate -path migrations \
+	  -database "postgresql://bookstore:secret@localhost:5439/bookstore_test?sslmode=disable" \
+	  drop -f
+	migrate -path migrations \
+	  -database "postgresql://bookstore:secret@localhost:5439/bookstore_test?sslmode=disable" \
+	  up
+
+test: ## Run all tests
+	go test ./tests/... -v
+
+test-coverage: ## Run tests with coverage
+	go test ./tests/... -cover -coverprofile=coverage.out
+	go tool cover -html=coverage.out -o coverage.html
+	@echo "Coverage report: coverage.html"
+
+test-clean: ## Clean test database and run tests
+	@make migrate-test-reset
+	go test ./tests/... -v -count=1
+
 
 # Database connection string
 DB_URL=postgresql://bookstore:secret@localhost:5439/bookstore_dev?sslmode=disable
@@ -88,3 +114,7 @@ lint: ## Run linters
 	golangci-lint run
 
 .DEFAULT_GOAL := help
+
+# Show table in postgresql - user
+
+#   docker exec -it bookstore_postgres psql -U bookstore -d bookstore_dev -c "\d users"

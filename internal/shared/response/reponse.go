@@ -4,84 +4,39 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-type Response struct {
-	Success bool        `json:"success"`
-	Data    interface{} `json:"data,omitempty"`
-	Error   *Error      `json:"error,omitempty"`
-	Meta    *Meta       `json:"meta,omitempty"`
+// Success response structure
+// Cấu trúc JSON chuẩn cho success response
+type SuccessResponse struct {
+	Success bool        `json:"success"`        // Always true for success
+	Message string      `json:"message"`        // Human-readable message
+	Data    interface{} `json:"data,omitempty"` // Payload (nullable)
 }
 
-type Error struct {
-	Code    string      `json:"code"`
-	Message string      `json:"message"`
-	Details interface{} `json:"details,omitempty"`
+// Error response structure
+// Cấu trúc JSON chuẩn cho error response
+type ErrorResponse struct {
+	Success bool        `json:"success"`         // Always false for errors
+	Message string      `json:"message"`         // User-friendly error message
+	Error   interface{} `json:"error,omitempty"` // Technical error details (nullable)
 }
 
-type Meta struct {
-	Page  int `json:"page,omitempty"`
-	Limit int `json:"limit,omitempty"`
-	Total int `json:"total,omitempty"`
-}
-
-// Success responses
-func Success(c *gin.Context, statusCode int, data interface{}) {
-	c.JSON(statusCode, Response{
+// Success gửi success response
+// Sử dụng trong handlers: response.Success(c, 200, "OK", data)
+func Success(c *gin.Context, statusCode int, message string, data interface{}) {
+	c.JSON(statusCode, SuccessResponse{
 		Success: true,
+		Message: message,
 		Data:    data,
 	})
 }
 
-func SuccessWithMeta(c *gin.Context, statusCode int, data interface{}, meta *Meta) {
-	c.JSON(statusCode, Response{
-		Success: true,
-		Data:    data,
-		Meta:    meta,
-	})
-}
-
-// Error responses
-func ErrorResponse(c *gin.Context, statusCode int, code, message string) {
-	c.JSON(statusCode, Response{
+// Error gửi error response
+// Sử dụng trong handlers: response.Error(c, 400, "Bad request", err)
+func Error(c *gin.Context, statusCode int, message string, err interface{}) {
+	// Abort: stop execution chain (không chạy handlers tiếp theo)
+	c.AbortWithStatusJSON(statusCode, ErrorResponse{
 		Success: false,
-		Error: &Error{
-			Code:    code,
-			Message: message,
-		},
+		Message: message,
+		Error:   err,
 	})
-}
-
-func ErrorWithDetails(c *gin.Context, statusCode int, code, message string, details interface{}) {
-	c.JSON(statusCode, Response{
-		Success: false,
-		Error: &Error{
-			Code:    code,
-			Message: message,
-			Details: details,
-		},
-	})
-}
-
-// Common error responses
-func BadRequest(c *gin.Context, message string) {
-	ErrorResponse(c, 400, "BAD_REQUEST", message)
-}
-
-func Unauthorized(c *gin.Context, message string) {
-	ErrorResponse(c, 401, "UNAUTHORIZED", message)
-}
-
-func Forbidden(c *gin.Context, message string) {
-	ErrorResponse(c, 403, "FORBIDDEN", message)
-}
-
-func NotFound(c *gin.Context, message string) {
-	ErrorResponse(c, 404, "NOT_FOUND", message)
-}
-
-func Conflict(c *gin.Context, message string) {
-	ErrorResponse(c, 409, "CONFLICT", message)
-}
-
-func InternalServerError(c *gin.Context, message string) {
-	ErrorResponse(c, 500, "INTERNAL_SERVER_ERROR", message)
 }

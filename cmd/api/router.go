@@ -1,0 +1,234 @@
+package main
+
+import (
+	"bookstore-backend/internal/shared/middleware"
+	"bookstore-backend/pkg/container"
+	"context"
+	"fmt"
+	"net/http"
+	"time"
+
+	"github.com/gin-gonic/gin"
+)
+
+func SetupRouter(c *container.Container) *gin.Engine {
+	router := gin.New()
+
+	// ... middlewares giữ nguyên ...
+	router.Use(
+		middleware.Recovery(),
+		middleware.RequestID(),
+		middleware.Logger(),
+		middleware.CORS(),
+	)
+	// ========================================
+	// API V1 ROUTES
+	// ========================================
+	v1 := router.Group("/api/v1")
+	{
+		// Health check
+		v1.GET("/health", healthCheckHandler(c))
+		v1.GET("/db-test", databaseTestHandler(c))
+
+		// ========================================
+		// AUTH ROUTES (PUBLIC)
+		// ========================================
+		auth := v1.Group("/auth")
+		{
+			// FR-AUTH-001: User Registration
+			auth.POST("/register", c.UserHandler.Register)
+
+			// FR-AUTH-002: User Login
+			auth.POST("/login", c.UserHandler.Login)
+
+			// FR-AUTH-001: Email Verification
+			auth.GET("/verify-email", c.UserHandler.VerifyEmail)
+
+			// FR-AUTH-003: Password Reset
+			auth.POST("/forgot-password", c.UserHandler.ForgotPassword)
+			auth.POST("/reset-password", c.UserHandler.ResetPassword)
+		}
+
+		// ========================================
+		// USER ROUTES (PROTECTED)
+		// ========================================
+		users := v1.Group("/users")
+		// TODO: Add Auth middleware
+		// users.Use(middleware.Auth())
+		{
+			// Profile endpoints
+			users.GET("/me", c.UserHandler.GetProfile)
+			users.PUT("/me", c.UserHandler.UpdateProfile)
+			users.PUT("/me/password", c.UserHandler.ChangePassword)
+		}
+
+		// ========================================
+		// ADMIN ROUTES (PROTECTED + ADMIN ROLE)
+		// ========================================
+		admin := v1.Group("/admin")
+		// TODO: Add Auth + Role middleware
+		// admin.Use(middleware.Auth())
+		// admin.Use(middleware.RequireRole("admin"))
+		{
+			// FR-ADM-003: User Management
+			admin.GET("/users", c.UserHandler.ListUsers)
+			admin.PUT("/users/:id/role", c.UserHandler.UpdateUserRole)
+			admin.PUT("/users/:id/status", c.UserHandler.UpdateUserStatus)
+		}
+	}
+
+	return router
+}
+
+// ========================================
+// HEALTH CHECK HANDLER
+// ========================================
+// healthCheckHandler trả về handler function với closure over appCtx
+// Pattern này cho phép inject dependencies vào handler
+func healthCheckHandler(appCtx *container.Container) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Response structure
+		health := gin.H{
+			"status":    "ok",
+			"timestamp": time.Now().Format(time.RFC3339),
+			"version":   getEnv("APP_VERSION", "1.0.0"),
+			"services":  gin.H{},
+		}
+
+		// ========================================
+		// CHECK DATABASE
+		// ========================================
+		dbStatus := "ok"
+		if appCtx.DB == nil || appCtx.DB.Pool == nil {
+			dbStatus = "disconnected"
+			health["status"] = "degraded"
+		} else {
+			// Tạo context với timeout 2s cho health check
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+			defer cancel()
+
+			if err := appCtx.DB.HealthCheck(ctx); err != nil {
+				dbStatus = fmt.Sprintf("error: %v", err)
+				health["status"] = "degraded"
+			}
+		}
+
+		// ========================================
+		// CHECK REDIS
+		// ========================================
+		redisStatus := "ok"
+		if appCtx.Cache == nil {
+			redisStatus = "disconnected"
+			// Redis failure không làm service unhealthy (non-critical)
+		} else {
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+			defer cancel()
+
+			// Ping qua cache interface
+			if err := appCtx.Cache.Ping(ctx); err != nil {
+				redisStatus = fmt.Sprintf("error: %v", err)
+				// Redis failure không làm status = "degraded"
+				// Vì cache là optional, service vẫn hoạt động được
+			}
+		}
+
+		// Aggregate service statuses
+		health["services"] = gin.H{
+			"database": dbStatus,
+			"redis":    redisStatus,
+		}
+
+		// ========================================
+		// RETURN RESPONSE
+		// ========================================
+		// 503 Service Unavailable nếu database down (critical)
+		// 200 OK nếu database up (Redis down vẫn OK)
+		statusCode := http.StatusOK
+		if dbStatus != "ok" {
+			statusCode = http.StatusServiceUnavailable
+		}
+
+		c.JSON(statusCode, health)
+	}
+}
+
+// ========================================
+// DATABASE TEST HANDLER
+// ========================================
+// databaseTestHandler test raw database queries (development/debugging only)
+func databaseTestHandler(appCtx *container.Container) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Guard: check database availability
+		if appCtx.DB == nil || appCtx.DB.Pool == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"error": "Database not connected",
+			})
+			return
+		}
+
+		// ========================================
+		// TEST QUERY: Get PostgreSQL Version
+		// ========================================
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+		defer cancel()
+
+		var version string
+		err := appCtx.DB.Pool.QueryRow(ctx, "SELECT version()").Scan(&version)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": fmt.Sprintf("Query failed: %v", err),
+			})
+			return
+		}
+
+		// ========================================
+		// GET CONNECTION POOL STATS
+		// ========================================
+		stats := appCtx.DB.Pool.Stat()
+
+		// ========================================
+		// TEST REDIS CACHE
+		// ========================================
+		redisTest := "not tested"
+		if appCtx.Cache != nil {
+			// Test Set
+			testKey := "test:connection"
+			testValue := map[string]string{"test": "data", "timestamp": time.Now().Format(time.RFC3339)}
+
+			if err := appCtx.Cache.Set(ctx, testKey, testValue, 10*time.Second); err == nil {
+				// Test Get
+				var retrieved map[string]string
+				found, _ := appCtx.Cache.Get(ctx, testKey, &retrieved)
+				if found {
+					redisTest = "ok - set/get working"
+				} else {
+					redisTest = "warning - set ok but get failed"
+				}
+
+				// Cleanup
+				_ = appCtx.Cache.Delete(ctx, testKey)
+			} else {
+				redisTest = fmt.Sprintf("error: %v", err)
+			}
+		}
+
+		// ========================================
+		// RETURN TEST RESULTS
+		// ========================================
+		c.JSON(http.StatusOK, gin.H{
+			"message": "Database test successful",
+			"database": gin.H{
+				"postgres_version": version,
+				"pool_stats": gin.H{
+					"total_connections":    stats.TotalConns(),
+					"idle_connections":     stats.IdleConns(),
+					"acquired_connections": stats.AcquiredConns(),
+					"max_connections":      stats.MaxConns(),
+				},
+			},
+			"cache": gin.H{
+				"status": redisTest,
+			},
+		})
+	}
+}
