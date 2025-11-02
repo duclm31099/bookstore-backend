@@ -299,9 +299,6 @@ func (s *userService) ResendVerification(ctx context.Context, email string) erro
 }
 
 // UpdateVerificationToken - Generate and update verification token
-// Used when:
-// 1. ResendVerification - User wants new verification token
-// 2. Register - Generate initial verification token
 func (s *userService) UpdateVerificationToken(
 	ctx context.Context,
 	userID string,

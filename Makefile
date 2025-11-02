@@ -30,7 +30,7 @@ install: ## Install dependencies
 
 dev: ## Run with hot reload using Air (requires: go install github.com/air-verse/air@latest)
 	@echo "🔥 Starting development server with hot reload..."
-	air
+	$(shell go env GOPATH)/bin/air
 
 dev-db: ## Start Docker containers (PostgreSQL + Redis)
 	@echo "🚀 Starting Docker containers..."

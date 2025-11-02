@@ -11,6 +11,7 @@ import (
 
 	// Import cache interface từ pkg
 	pkgCache "bookstore-backend/pkg/cache"
+	"bookstore-backend/pkg/logger"
 )
 
 // RedisCache implements pkg/cache.Cache interface
@@ -96,7 +97,10 @@ func (r *RedisCache) Get(ctx context.Context, key string, dest interface{}) (boo
 	if err != nil {
 		// Log error nhưng KHÔNG return error
 		// Tránh cache failure làm crash application
-		log.Printf("[REDIS] Get error for key %s: %v", key, err)
+		message := fmt.Sprintf("[REDIS] Get error for key %s: %v", key, err)
+		logger.Info("Get Redis error", map[string]interface{}{
+			"error": message,
+		})
 		return false, nil // Treat as cache miss
 	}
 

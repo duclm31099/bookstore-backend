@@ -18,6 +18,12 @@ import (
 	userHandler "bookstore-backend/internal/domains/user/handler"
 	userRepo "bookstore-backend/internal/domains/user/repository"
 	userService "bookstore-backend/internal/domains/user/service"
+
+	// Category domain imports ◄── NEW
+	category "bookstore-backend/internal/domains/category"
+	categoryHandler "bookstore-backend/internal/domains/category/handler"
+	categoryRepo "bookstore-backend/internal/domains/category/repository"
+	categoryService "bookstore-backend/internal/domains/category/service"
 	// TODO: Import other domains khi implement
 	// "bookstore/internal/domains/book"
 	// bookHandler "bookstore/internal/domains/book/handler"
@@ -41,47 +47,32 @@ type Container struct {
 	DB         *database.PostgresDB // Database connection pool
 	Cache      cache.Cache          // Redis cache (interface)
 	JWTManager *jwt.Manager
+
 	// ========================================
 	// REPOSITORY LAYER (DATA ACCESS)
 	// ========================================
-	// Repository interfaces - domain data access
-	// Lifecycle: Singleton (stateless, can be reused)
-
-	UserRepo user.Repository // User data access
-	// TODO: Add more repositories
-	// BookRepo book.Repository
-	// OrderRepo order.Repository
+	UserRepo     user.Repository
+	CategoryRepo category.CategoryRepository
 
 	// ========================================
 	// SERVICE LAYER (BUSINESS LOGIC)
 	// ========================================
-	// Service interfaces - domain business logic
-	// Lifecycle: Singleton (stateless)
 
-	UserService user.Service // User business logic
-	// TODO: Add more services
-	// BookService book.Service
-	// OrderService order.Service
+	UserService     user.Service
+	CategoryService category.CategoryService
 
 	// ========================================
 	// HANDLER LAYER (HTTP)
 	// ========================================
-	// HTTP handlers - thin layer delegates to services
-	// Lifecycle: Singleton (stateless)
-
-	UserHandler *userHandler.UserHandler
-	// TODO: Add more handlers
-	// BookHandler *bookHandler.BookHandler
-	// OrderHandler *orderHandler.OrderHandler
+	UserHandler     *userHandler.UserHandler
+	CategoryHandler *categoryHandler.CategoryHandler
 }
 
 // ========================================
 // CONSTRUCTOR: BUILD CONTAINER
 // ========================================
-
 // NewContainer tạo và initialize toàn bộ dependency graph
 // Đây là entry point của DI container
-//
 // QUAN TRỌNG: Thứ tự initialization:
 // 1. Config (không phụ thuộc gì)
 // 2. Infrastructure (DB, Cache) - phụ thuộc Config
@@ -207,87 +198,31 @@ func NewContainer() (*Container, error) {
 // ========================================
 // PRIVATE INITIALIZATION METHODS
 // ========================================
-// Các methods này tách logic initialization thành từng layer
-// Giúp code dễ đọc và maintain hơn
-
-// initRepositories khởi tạo tất cả repositories
-// Pattern: Constructor Injection
 func (c *Container) initRepositories() error {
 	// Chuẩn bị sql.DB từ pgxpool
 	// userRepo.NewPostgresRepository cần *sql.DB, không phải *pgxpool.Pool
 	pool := c.DB.Pool
 
-	// ----------------------------------------
-	// USER REPOSITORY
-	// ----------------------------------------
-	// Inject dependencies: DB và Cache
-	// Constructor: func NewPostgresRepository(db *sql.DB, cache cache.Cache) user.Repository
 	c.UserRepo = userRepo.NewPostgresRepository(pool, c.Cache)
-
-	// ----------------------------------------
-	// TODO: BOOK REPOSITORY
-	// ----------------------------------------
-	// c.BookRepo = bookRepo.NewPostgresRepository(sqlDB, c.Cache)
-
-	// ----------------------------------------
-	// TODO: ORDER REPOSITORY
-	// ----------------------------------------
-	// c.OrderRepo = orderRepo.NewPostgresRepository(sqlDB, c.Cache)
-
+	c.CategoryRepo = categoryRepo.NewPostgresRepository(pool, c.Cache)
 	return nil
 }
 
 // initServices khởi tạo tất cả services
 func (c *Container) initServices() error {
-	// ----------------------------------------
-	// USER SERVICE
-	// ----------------------------------------
-	// Inject dependencies: Repository và JWT secret
-	// Constructor: func NewUserService(repo user.Repository, jwtSecret string) user.Service
 	c.UserService = userService.NewUserService(
 		c.UserRepo,   // Inject repository
 		c.JWTManager, // Inject JWT secret từ config
 	)
 
-	// ----------------------------------------
-	// TODO: BOOK SERVICE
-	// ----------------------------------------
-	// c.BookService = bookService.NewBookService(
-	//     c.BookRepo,
-	//     c.UserRepo, // Cross-domain dependency
-	// )
-
-	// ----------------------------------------
-	// TODO: ORDER SERVICE
-	// ----------------------------------------
-	// c.OrderService = orderService.NewOrderService(
-	//     c.OrderRepo,
-	//     c.BookRepo,     // Cross-domain
-	//     c.UserRepo,     // Cross-domain
-	//     c.PaymentClient, // External service
-	// )
-
+	c.CategoryService = categoryService.NewCategoryService(c.CategoryRepo)
 	return nil
 }
 
 // initHandlers khởi tạo tất cả HTTP handlers
 func (c *Container) initHandlers() error {
-	// ----------------------------------------
-	// USER HANDLER
-	// ----------------------------------------
-	// Inject dependency: Service
-	// Constructor: func NewUserHandler(service user.Service) *UserHandler
 	c.UserHandler = userHandler.NewUserHandler(c.UserService)
-
-	// ----------------------------------------
-	// TODO: BOOK HANDLER
-	// ----------------------------------------
-	// c.BookHandler = bookHandler.NewBookHandler(c.BookService)
-
-	// ----------------------------------------
-	// TODO: ORDER HANDLER
-	// ----------------------------------------
-	// c.OrderHandler = orderHandler.NewOrderHandler(c.OrderService)
+	c.CategoryHandler = categoryHandler.NewCategoryHandler(c.CategoryService)
 
 	return nil
 }
@@ -295,7 +230,6 @@ func (c *Container) initHandlers() error {
 // ========================================
 // HELPER METHODS
 // ========================================
-
 // getSQLDB convert pgxpool.Pool sang *sql.DB
 // Một số libraries cần *sql.DB thay vì *pgxpool.Pool
 func (c *Container) getSQLDB() *sql.DB {

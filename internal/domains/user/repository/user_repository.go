@@ -52,13 +52,12 @@ func NewPostgresRepository(pool *pgxpool.Pool, cache cache.Cache) user.Repositor
 // Context: cho phép cancel operation, set timeout, pass metadata qua request chain
 func (r *postgresRepository) Create(ctx context.Context, u *user.User) error {
 	// SQL query - sử dụng $1, $2, ... placeholders để tránh SQL injection
-	expiresAt := time.Now().Add(24 * time.Hour)
 	query := `
 		INSERT INTO users (
 			id, email, password_hash, full_name, phone, role,
 			is_active, points, is_verified, 
 			verification_token, verification_sent_at,
-			created_at, updated_at, verification_token_expires_at
+			verification_token_expires_at, created_at, updated_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6,
 			$7, $8, $9,
@@ -82,9 +81,9 @@ func (r *postgresRepository) Create(ctx context.Context, u *user.User) error {
 		u.IsVerified,
 		u.VerificationToken,
 		u.VerificationSentAt,
+		u.VerificationTokenExpiresAt,
 		u.CreatedAt,
 		u.UpdatedAt,
-		expiresAt,
 	)
 
 	if err != nil {

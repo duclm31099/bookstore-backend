@@ -34,12 +34,6 @@ func NewUserHandler(service user.Service) *UserHandler {
 // @Summary      Register new user
 // @Description  Create new user account with email verification
 // @Tags         Authentication
-// @Accept       json
-// @Produce      json
-// @Param        request body user.RegisterRequest true "Registration details"
-// @Success      201 {object} response.Success{data=user.UserDTO}
-// @Failure      400 {object} response.Error
-// @Failure      409 {object} response.Error "Email already exists"
 // @Router       /auth/register [post]
 func (h *UserHandler) Register(c *gin.Context) {
 	// STEP 1: PARSE REQUEST BODY
@@ -104,14 +98,6 @@ func (h *UserHandler) RefreshToken(c *gin.Context) {
 // ResendVerification xử lý POST /auth/resend-verification
 // @Summary      Resend verification email
 // @Description  Send verification email again to user email
-// @Tags         Authentication
-// @Accept       json
-// @Produce      json
-// @Param        request body user.ResendVerificationRequest true "Email address"
-// @Success      200 {object} response.Success
-// @Failure      400 {object} response.Error
-// @Failure      404 {object} response.Error "User not found"
-// @Failure      409 {object} response.Error "Already verified"
 // @Router       /auth/resend-verification [post]
 func (h *UserHandler) ResendVerification(c *gin.Context) {
 	// STEP 1: PARSE REQUEST
@@ -133,13 +119,6 @@ func (h *UserHandler) ResendVerification(c *gin.Context) {
 // Login xử lý POST /auth/login - FR-AUTH-002
 // @Summary      User login
 // @Description  Authenticate user and return JWT tokens
-// @Tags         Authentication
-// @Accept       json
-// @Produce      json
-// @Param        request body user.LoginRequest true "Login credentials"
-// @Success      200 {object} response.Success{data=user.LoginResponse}
-// @Failure      400 {object} response.Error
-// @Failure      401 {object} response.Error "Invalid credentials"
 // @Router       /auth/login [post]
 func (h *UserHandler) Login(c *gin.Context) {
 	// STEP 1: PARSE REQUEST
@@ -184,11 +163,7 @@ func (h *UserHandler) Login(c *gin.Context) {
 // VerifyEmail xử lý GET /auth/verify-email?token=xxx - FR-AUTH-001
 // @Summary      Verify email address
 // @Description  Confirm email verification token
-// @Tags         Authentication
-// @Param        token query string true "Verification token"
-// @Success      200 {object} response.Success
-// @Failure      400 {object} response.Error "Invalid or expired token"
-// @Router       /auth/verify-email [get]
+// @Router       /auth/verify-email
 func (h *UserHandler) VerifyEmail(c *gin.Context) {
 	// STEP 1: GET TOKEN FROM QUERY PARAMS
 	// c.Query("token"): lấy ?token=xxx từ URL
@@ -216,12 +191,7 @@ func (h *UserHandler) VerifyEmail(c *gin.Context) {
 // ForgotPassword xử lý POST /auth/forgot-password - FR-AUTH-003
 // @Summary      Request password reset
 // @Description  Send password reset link to email
-// @Tags         Authentication
-// @Accept       json
-// @Produce      json
-// @Param        request body user.ForgotPasswordRequest true "Email address"
-// @Success      200 {object} response.Success
-// @Router       /auth/forgot-password [post]
+// @Router       /auth/forgot-password
 func (h *UserHandler) ForgotPassword(c *gin.Context) {
 	// STEP 1: PARSE REQUEST
 	var req user.ForgotPasswordRequest
@@ -251,13 +221,7 @@ func (h *UserHandler) ForgotPassword(c *gin.Context) {
 // ResetPassword xử lý POST /auth/reset-password - FR-AUTH-003
 // @Summary      Reset password
 // @Description  Set new password using reset token
-// @Tags         Authentication
-// @Accept       json
-// @Produce      json
-// @Param        request body user.ResetPasswordRequest true "Reset token and new password"
-// @Success      200 {object} response.Success
-// @Failure      400 {object} response.Error "Invalid or expired token"
-// @Router       /auth/reset-password [post]
+// @Router       /auth/reset-password
 func (h *UserHandler) ResetPassword(c *gin.Context) {
 	// STEP 1: PARSE REQUEST
 	var req user.ResetPasswordRequest
@@ -291,12 +255,8 @@ func (h *UserHandler) ResetPassword(c *gin.Context) {
 // GetProfile xử lý GET /users/me
 // @Summary      Get current user profile
 // @Description  Get authenticated user's profile
-// @Tags         Users
 // @Security     BearerAuth
-// @Produce      json
-// @Success      200 {object} response.Success{data=user.UserDTO}
-// @Failure      401 {object} response.Error "Unauthorized"
-// @Router       /users/me [get]
+// @Router       /users/me
 func (h *UserHandler) GetProfile(c *gin.Context) {
 	// STEP 1: GET USER ID FROM CONTEXT
 	// Middleware Auth() đã parse JWT và set userID vào context
@@ -324,15 +284,8 @@ func (h *UserHandler) GetProfile(c *gin.Context) {
 // UpdateProfile xử lý PUT /users/me
 // @Summary      Update user profile
 // @Description  Update authenticated user's profile (name, phone)
-// @Tags         Users
 // @Security     BearerAuth
-// @Accept       json
-// @Produce      json
-// @Param        request body user.UpdateProfileRequest true "Profile updates"
-// @Success      200 {object} response.Success{data=user.UserDTO}
-// @Failure      400 {object} response.Error
-// @Failure      401 {object} response.Error
-// @Router       /users/me [put]
+// @Router       /users/me
 func (h *UserHandler) UpdateProfile(c *gin.Context) {
 	// STEP 1: GET USER ID
 	userID, err := getUserIDFromContext(c)
@@ -368,15 +321,8 @@ func (h *UserHandler) UpdateProfile(c *gin.Context) {
 // ChangePassword xử lý PUT /users/me/password
 // @Summary      Change password
 // @Description  Change authenticated user's password
-// @Tags         Users
 // @Security     BearerAuth
-// @Accept       json
-// @Produce      json
-// @Param        request body user.ChangePasswordRequest true "Current and new password"
-// @Success      200 {object} response.Success
-// @Failure      400 {object} response.Error
-// @Failure      401 {object} response.Error "Invalid current password"
-// @Router       /users/me/password [put]
+// @Router       /users/me/password
 func (h *UserHandler) ChangePassword(c *gin.Context) {
 	// STEP 1: GET USER ID
 	userID, err := getUserIDFromContext(c)
@@ -420,17 +366,6 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 // @Tags         Admin
 // @Security     BearerAuth
 // @Produce      json
-// @Param        role query string false "Filter by role"
-// @Param        is_verified query bool false "Filter by verification status"
-// @Param        is_active query bool false "Filter by active status"
-// @Param        search query string false "Search by email or name"
-// @Param        page query int false "Page number" default(1)
-// @Param        limit query int false "Items per page" default(20)
-// @Param        sort_by query string false "Sort field" default(created_at)
-// @Param        sort_order query string false "Sort order (asc/desc)" default(desc)
-// @Success      200 {object} response.Success{data=user.ListUsersResponse}
-// @Failure      400 {object} response.Error
-// @Failure      403 {object} response.Error "Forbidden"
 // @Router       /admin/users [get]
 func (h *UserHandler) ListUsers(c *gin.Context) {
 	// STEP 1: PARSE QUERY PARAMS
@@ -465,14 +400,6 @@ func (h *UserHandler) ListUsers(c *gin.Context) {
 // @Description  Change user's role (admin only)
 // @Tags         Admin
 // @Security     BearerAuth
-// @Accept       json
-// @Produce      json
-// @Param        id path string true "User ID (UUID)"
-// @Param        request body user.UpdateRoleRequest true "New role"
-// @Success      200 {object} response.Success
-// @Failure      400 {object} response.Error
-// @Failure      403 {object} response.Error
-// @Failure      404 {object} response.Error
 // @Router       /admin/users/{id}/role [put]
 func (h *UserHandler) UpdateUserRole(c *gin.Context) {
 	// STEP 1: GET USER ID FROM URL PATH
@@ -511,15 +438,7 @@ func (h *UserHandler) UpdateUserRole(c *gin.Context) {
 // @Description  Activate or deactivate user account
 // @Tags         Admin
 // @Security     BearerAuth
-// @Accept       json
-// @Produce      json
-// @Param        id path string true "User ID (UUID)"
-// @Param        request body user.UpdateStatusRequest true "Active status"
-// @Success      200 {object} response.Success
-// @Failure      400 {object} response.Error
-// @Failure      403 {object} response.Error
-// @Failure      404 {object} response.Error
-// @Router       /admin/users/{id}/status [put]
+// @Router       /admin/users/{id}/status
 func (h *UserHandler) UpdateUserStatus(c *gin.Context) {
 	// STEP 1: GET USER ID
 	userID, err := uuid.Parse(c.Param("id"))

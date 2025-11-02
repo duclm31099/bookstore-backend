@@ -77,6 +77,36 @@ func SetupRouter(c *container.Container) *gin.Engine {
 			admin.PUT("/users/:id/role", c.UserHandler.UpdateUserRole)
 			admin.PUT("/users/:id/status", c.UserHandler.UpdateUserStatus)
 		}
+
+		category := v1.Group("/categories")
+
+		// Create
+		category.POST("", c.CategoryHandler.Create)
+
+		// Read
+		category.GET("", c.CategoryHandler.GetAll)                       // List
+		category.GET("/tree", c.CategoryHandler.GetTree)                 // Tree
+		category.GET("/:id", c.CategoryHandler.GetByID)                  // Get by ID
+		category.GET("/:id/breadcrumb", c.CategoryHandler.GetBreadcrumb) // Breadcrumb
+		category.GET("/by-slug/:slug", c.CategoryHandler.GetBySlug)      // Get by slug
+
+		// Update
+		category.PUT("/:id", c.CategoryHandler.Update)                 // Update
+		category.PATCH("/:id/parent", c.CategoryHandler.MoveToParent)  // Move to parent
+		category.POST("/:id/activate", c.CategoryHandler.Activate)     // Activate
+		category.POST("/:id/deactivate", c.CategoryHandler.Deactivate) // Deactivate
+
+		// Delete
+		category.DELETE("/:id", c.CategoryHandler.Delete)      // Delete single
+		category.DELETE("/bulk", c.CategoryHandler.BulkDelete) // Bulk delete
+
+		// Bulk operations
+		category.POST("/bulk/activate", c.CategoryHandler.BulkActivate)     // Bulk activate
+		category.POST("/bulk/deactivate", c.CategoryHandler.BulkDeactivate) // Bulk deactivate
+
+		// Book-related
+		category.GET("/:id/books", c.CategoryHandler.GetBooksInCategory)        // Get books
+		category.GET("/:id/book-count", c.CategoryHandler.GetCategoryBookCount) // Book count
 	}
 
 	return router
