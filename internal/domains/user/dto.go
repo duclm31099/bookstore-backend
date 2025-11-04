@@ -186,14 +186,14 @@ func (r UpdateProfileRequest) Validate() error {
 
 // ListUsersRequest - FR-ADM-003: List users with filters
 type ListUsersRequest struct {
-	Role       *Role  `form:"role"`
-	IsVerified *bool  `form:"is_verified"`
-	IsActive   *bool  `form:"is_active"`
-	Search     string `form:"search"` // Search by email or name
-	Page       int    `form:"page" binding:"min=1"`
-	Limit      int    `form:"limit" binding:"min=1,max=100"`
-	SortBy     string `form:"sort_by"`    // "created_at", "points", "last_login_at"
-	SortOrder  string `form:"sort_order"` // "asc", "desc"
+	Role       *Role  `json:"role"`
+	IsVerified *bool  `json:"is_verified"`
+	IsActive   *bool  `json:"is_active"`
+	Search     string `json:"search"` // Search by email or name
+	Page       int    `json:"page" binding:"min=1"`
+	Limit      int    `json:"limit" binding:"min=1,max=100"`
+	SortBy     string `json:"sort_by"`    // "created_at", "points", "last_login_at"
+	SortOrder  string `json:"sort_order"` // "asc", "desc"
 }
 
 // SetDefaults sets default values for pagination

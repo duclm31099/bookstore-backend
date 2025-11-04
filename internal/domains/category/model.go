@@ -1,9 +1,9 @@
 package category
 
 import (
+	"bookstore-backend/internal/shared/utils"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
@@ -289,7 +289,7 @@ func NewCategory(
 	// 5. "tieu-thuyet" (remove special chars)
 	//
 	// OUTPUT: "tieu-thuyet" (URL-friendly)
-	slug := GenerateSlug(name)
+	slug := utils.GenerateSlug(name)
 
 	// ========== CREATE INSTANCE ==========
 	now := time.Now()
@@ -354,7 +354,7 @@ func (c *Category) Update(
 
 	// Update fields
 	c.Name = strings.TrimSpace(name)
-	c.Slug = GenerateSlug(name)
+	c.Slug = utils.GenerateSlug(name)
 	c.Description = description
 	c.IconURL = iconURL
 	c.SortOrder = sortOrder
@@ -423,60 +423,6 @@ func (c *Category) GetLevel() int {
 }
 
 // ============================================================
-// UTILITY FUNCTION: GenerateSlug
-// ============================================================
-// GenerateSlug tạo slug từ name
-// Slug là URL-friendly version của name
-//
-// KHÁI NIỆM - Slug là gì?
-// Slug là phần text trong URL thay vì ID
-// VÍ DỤ:
-//
-//	❌ /category/550e8400-e29b-41d4-a716-446655440000 (ugly)
-//	✅ /category/tieu-thuyet (beautiful, SEO-friendly)
-//
-// ALGORITHM:
-// 1. Trim spaces
-// 2. Lowercase
-// 3. Remove Vietnamese diacritics (á, à, ả, ã, ạ => a)
-// 4. Replace spaces with dashes
-// 5. Remove special characters (keep only a-z, 0-9, -)
-// 6. Remove multiple dashes
-// 7. Trim leading/trailing dashes
-//
-// VÍ DỤ:
-// - "Tiểu Thuyết" => "tieu-thuyet"
-// - "Sách Kỹ Năng!!!" => "sach-ky-nang"
-// - "Hello---World" => "hello-world"
-func GenerateSlug(name string) string {
-	// Step 1: Trim
-	slug := strings.TrimSpace(name)
-
-	// Step 2: Lowercase
-	slug = strings.ToLower(slug)
-
-	// Step 3: Remove diacritics
-	slug = RemoveDiacritics(slug)
-
-	// Step 4: Replace spaces with dashes
-	slug = strings.ReplaceAll(slug, " ", "-")
-
-	// Step 5: Remove special characters
-	// Regex: [^a-z0-9-]+ (match anything NOT a-z, 0-9, -)
-	reg := regexp.MustCompile("[^a-z0-9-]+")
-	slug = reg.ReplaceAllString(slug, "")
-
-	// Step 6: Remove multiple dashes
-	// Regex: -+ (match multiple dashes)
-	slug = regexp.MustCompile("-+").ReplaceAllString(slug, "-")
-
-	// Step 7: Trim leading/trailing dashes
-	slug = strings.Trim(slug, "-")
-
-	return slug
-}
-
-// ============================================================
 // UTILITY FUNCTION: RemoveDiacritics
 // ============================================================
 // RemoveDiacritics loại bỏ diacritics từ tiếng Việt
@@ -498,78 +444,6 @@ func GenerateSlug(name string) string {
 // á => a
 // à => a
 // ả => a
-// (tất cả các tone của "a" => "a")
-func RemoveDiacritics(input string) string {
-	// Mapping diacritics tới base character
-	// Các key là ký tự với diacritic
-	// Các value là ký tự base
-	mappings := map[rune]rune{
-		// Vowel A
-		'á': 'a', 'à': 'a', 'ả': 'a', 'ã': 'a', 'ạ': 'a',
-		'ă': 'a', 'ắ': 'a', 'ằ': 'a', 'ẳ': 'a', 'ẵ': 'a', 'ặ': 'a',
-		'â': 'a', 'ấ': 'a', 'ầ': 'a', 'ẩ': 'a', 'ẫ': 'a', 'ậ': 'a',
-
-		// Vowel E
-		'é': 'e', 'è': 'e', 'ẻ': 'e', 'ẽ': 'e', 'ẹ': 'e',
-		'ê': 'e', 'ế': 'e', 'ề': 'e', 'ể': 'e', 'ễ': 'e', 'ệ': 'e',
-
-		// Vowel I
-		'í': 'i', 'ì': 'i', 'ỉ': 'i', 'ĩ': 'i', 'ị': 'i',
-
-		// Vowel O
-		'ó': 'o', 'ò': 'o', 'ỏ': 'o', 'õ': 'o', 'ọ': 'o',
-		'ô': 'o', 'ố': 'o', 'ồ': 'o', 'ổ': 'o', 'ỗ': 'o', 'ộ': 'o',
-		'ơ': 'o', 'ớ': 'o', 'ờ': 'o', 'ở': 'o', 'ỡ': 'o', 'ợ': 'o',
-
-		// Vowel U
-		'ú': 'u', 'ù': 'u', 'ủ': 'u', 'ũ': 'u', 'ụ': 'u',
-		'ư': 'u', 'ứ': 'u', 'ừ': 'u', 'ử': 'u', 'ữ': 'u', 'ự': 'u',
-
-		// Vowel Y
-		'ý': 'y', 'ỳ': 'y', 'ỷ': 'y', 'ỹ': 'y', 'ỵ': 'y',
-
-		// Consonant D
-		'đ': 'd',
-
-		// UPPERCASE
-		'Á': 'A', 'À': 'A', 'Ả': 'A', 'Ã': 'A', 'Ạ': 'A',
-		'Ă': 'A', 'Ắ': 'A', 'Ằ': 'A', 'Ẳ': 'A', 'Ẵ': 'A', 'Ặ': 'A',
-		'Â': 'A', 'Ấ': 'A', 'Ầ': 'A', 'Ẩ': 'A', 'Ẫ': 'A', 'Ậ': 'A',
-
-		'É': 'E', 'È': 'E', 'Ẻ': 'E', 'Ẽ': 'E', 'Ẹ': 'E',
-		'Ê': 'E', 'Ế': 'E', 'Ề': 'E', 'Ể': 'E', 'Ễ': 'E', 'Ệ': 'E',
-
-		'Í': 'I', 'Ì': 'I', 'Ỉ': 'I', 'Ĩ': 'I', 'Ị': 'I',
-
-		'Ó': 'O', 'Ò': 'O', 'Ỏ': 'O', 'Õ': 'O', 'Ọ': 'O',
-		'Ô': 'O', 'Ố': 'O', 'Ồ': 'O', 'Ổ': 'O', 'Ỗ': 'O', 'Ộ': 'O',
-		'Ơ': 'O', 'Ớ': 'O', 'Ờ': 'O', 'Ở': 'O', 'Ỡ': 'O', 'Ợ': 'O',
-
-		'Ú': 'U', 'Ù': 'U', 'Ủ': 'U', 'Ũ': 'U', 'Ụ': 'U',
-		'Ư': 'U', 'Ứ': 'U', 'Ừ': 'U', 'Ử': 'U', 'Ữ': 'U', 'Ự': 'U',
-
-		'Ý': 'Y', 'Ỳ': 'Y', 'Ỷ': 'Y', 'Ỹ': 'Y', 'Ỵ': 'Y',
-
-		'Đ': 'D',
-	}
-
-	// Convert string to rune array
-	// Dùng rune vì Vietnamese ký tự không phải ASCII (multi-byte)
-	result := make([]rune, 0, len(input))
-
-	// Iterate qua mỗi character (rune)
-	for _, r := range input {
-		// Nếu char có trong mapping, replace
-		if replacement, ok := mappings[r]; ok {
-			result = append(result, replacement)
-		} else {
-			// Nếu không, giữ nguyên
-			result = append(result, r)
-		}
-	}
-
-	return string(result)
-}
 
 // ============================================================
 // STRING REPRESENTATION

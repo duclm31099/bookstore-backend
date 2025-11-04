@@ -39,11 +39,6 @@ func (h *CategoryHandler) Create(c *gin.Context) {
 		return
 	}
 
-	// ========== Call Service ==========
-	// Service handles business logic
-	// - Validate input
-	// - Check business rules
-	// - Save to DB
 	resp, err := h.service.Create(c.Request.Context(), &req)
 	if err != nil {
 		// Map error to HTTP status
@@ -52,31 +47,15 @@ func (h *CategoryHandler) Create(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, http.StatusCreated, "SUCCESS", resp)
+	response.Success(c, http.StatusCreated, "Create a category successfully", resp)
 }
 
-// ========== READ: GetByID ==========
-// GET /v1/categories/:id
-// Params: id (UUID)
-//
-// FLOW:
-// 1. Extract ID from URL path
-// 2. Parse UUID
-// 3. Call service.GetByID()
-// 4. Return response 200 OK
+// ==========  GetByID - GET /v1/categories/:id ==========
 func (h *CategoryHandler) GetByID(c *gin.Context) {
-	// ========== Extract ID from Path ==========
-	// GET /v1/categories/550e8400-e29b-41d4-a716-446655440000
-	// c.Param("id") => "550e8400-e29b-41d4-a716-446655440000"
 	idStr := c.Param("id")
 
-	// ========== Parse UUID ==========
-	// idStr => UUID object
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		logger.Info("GetByID: invalid uuid", map[string]interface{}{
-			"id": idStr,
-		})
 		response.Error(c, http.StatusBadRequest, "Bad Request", err.Error())
 		return
 	}

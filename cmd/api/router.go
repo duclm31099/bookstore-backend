@@ -78,11 +78,9 @@ func SetupRouter(c *container.Container) *gin.Engine {
 			admin.PUT("/users/:id/status", c.UserHandler.UpdateUserStatus)
 		}
 
+		// // --------------------------------------- CATEGORIES --------------------------------------
 		category := v1.Group("/categories")
-
-		// Create
 		category.POST("", c.CategoryHandler.Create)
-
 		// Read
 		category.GET("", c.CategoryHandler.GetAll)                       // List
 		category.GET("/tree", c.CategoryHandler.GetTree)                 // Tree
@@ -107,6 +105,30 @@ func SetupRouter(c *container.Container) *gin.Engine {
 		// Book-related
 		category.GET("/:id/books", c.CategoryHandler.GetBooksInCategory)        // Get books
 		category.GET("/:id/book-count", c.CategoryHandler.GetCategoryBookCount) // Book count
+
+		// --------------------------------------- AUTHORS --------------------------------------
+		author := v1.Group("/authors")
+		// Create
+		author.POST("", c.AuthorHandler.Create)
+
+		// Read single
+		author.GET("/:id", c.AuthorHandler.GetByID)
+		author.GET("/slug/:slug", c.AuthorHandler.GetBySlug)
+
+		// Read multiple
+		author.GET("", c.AuthorHandler.GetAll)
+		author.GET("/search", c.AuthorHandler.Search)
+
+		// Update
+		author.PUT("/:id", c.AuthorHandler.Update)
+
+		// Delete
+		author.DELETE("/:id", c.AuthorHandler.Delete)
+		author.DELETE("/bulk", c.AuthorHandler.BulkDelete)
+
+		// Books
+		author.GET("/:id/books", c.AuthorHandler.GetWithBookCount)
+
 	}
 
 	return router

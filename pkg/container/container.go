@@ -14,12 +14,16 @@ import (
 	"bookstore-backend/pkg/jwt"
 
 	// User domain imports
+	"bookstore-backend/internal/domains/author"
 	"bookstore-backend/internal/domains/user"
 	userHandler "bookstore-backend/internal/domains/user/handler"
 	userRepo "bookstore-backend/internal/domains/user/repository"
 	userService "bookstore-backend/internal/domains/user/service"
 
 	// Category domain imports ◄── NEW
+	authorHandler "bookstore-backend/internal/domains/author/handler"
+	authorRepository "bookstore-backend/internal/domains/author/repository"
+	authorService "bookstore-backend/internal/domains/author/service"
 	category "bookstore-backend/internal/domains/category"
 	categoryHandler "bookstore-backend/internal/domains/category/handler"
 	categoryRepo "bookstore-backend/internal/domains/category/repository"
@@ -53,6 +57,7 @@ type Container struct {
 	// ========================================
 	UserRepo     user.Repository
 	CategoryRepo category.CategoryRepository
+	AuthorRepo   author.Repository
 
 	// ========================================
 	// SERVICE LAYER (BUSINESS LOGIC)
@@ -60,12 +65,14 @@ type Container struct {
 
 	UserService     user.Service
 	CategoryService category.CategoryService
+	AuthorService   author.Service
 
 	// ========================================
 	// HANDLER LAYER (HTTP)
 	// ========================================
 	UserHandler     *userHandler.UserHandler
 	CategoryHandler *categoryHandler.CategoryHandler
+	AuthorHandler   *authorHandler.AuthorHandler
 }
 
 // ========================================
@@ -205,6 +212,7 @@ func (c *Container) initRepositories() error {
 
 	c.UserRepo = userRepo.NewPostgresRepository(pool, c.Cache)
 	c.CategoryRepo = categoryRepo.NewPostgresRepository(pool, c.Cache)
+	c.AuthorRepo = authorRepository.NewPostgresRepository(pool, c.Cache)
 	return nil
 }
 
@@ -216,6 +224,7 @@ func (c *Container) initServices() error {
 	)
 
 	c.CategoryService = categoryService.NewCategoryService(c.CategoryRepo)
+	c.AuthorService = authorService.NewAuthorService(c.AuthorRepo)
 	return nil
 }
 
@@ -223,7 +232,7 @@ func (c *Container) initServices() error {
 func (c *Container) initHandlers() error {
 	c.UserHandler = userHandler.NewUserHandler(c.UserService)
 	c.CategoryHandler = categoryHandler.NewCategoryHandler(c.CategoryService)
-
+	c.AuthorHandler = authorHandler.NewAuthorHandler(c.AuthorService)
 	return nil
 }
 

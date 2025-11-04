@@ -22,4 +22,6 @@ type Cache interface {
 
 	// Ping kiểm tra connection
 	Ping(ctx context.Context) error
+
+	DeletePattern(ctx context.Context, pattern string) error // ← THÊM METHOD MỚI
 }

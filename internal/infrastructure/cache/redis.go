@@ -196,3 +196,48 @@ func (r *RedisCache) SetNX(ctx context.Context, key string, value interface{}, t
 	}
 	return r.client.SetNX(ctx, key, jsonData, ttl).Result()
 }
+func (r *RedisCache) DeletePattern(ctx context.Context, pattern string) error {
+	var cursor uint64 = 0 // Bắt đầu từ cursor 0
+	var deletedCount int
+
+	// Loop cho đến khi cursor quay về 0 (đã scan hết)
+	for {
+		// SCAN command: cursor hiện tại, pattern match, số keys mỗi batch
+		keys, nextCursor, err := r.client.Scan(ctx, cursor, pattern, 100).Result()
+
+		if err != nil {
+			log.Printf("[REDIS] SCAN error: %v", err)
+			return nil // Fail silently - cache failure không nên crash app
+		}
+
+		// Nếu batch này có keys, delete chúng
+		if len(keys) > 0 {
+			// Sử dụng PIPELINE để batch delete - giảm network round-trips
+			pipe := r.client.Pipeline()
+
+			for _, key := range keys {
+				pipe.Del(ctx, key) // Queue delete command
+			}
+
+			// Execute tất cả DEL commands trong một network call
+			_, err := pipe.Exec(ctx)
+			if err != nil {
+				log.Printf("[REDIS] Pipeline delete error: %v", err)
+				// Continue anyway - không cần fail toàn bộ operation
+			}
+
+			deletedCount += len(keys)
+		}
+
+		// Update cursor cho lần scan tiếp theo
+		cursor = nextCursor
+
+		// cursor = 0 nghĩa là đã iterate hết keyspace
+		if cursor == 0 {
+			break
+		}
+	}
+
+	log.Printf("[REDIS] DeletePattern: deleted %d keys matching %s", deletedCount, pattern)
+	return nil
+}
