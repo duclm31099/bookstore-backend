@@ -80,55 +80,81 @@ func SetupRouter(c *container.Container) *gin.Engine {
 
 		// // --------------------------------------- CATEGORIES --------------------------------------
 		category := v1.Group("/categories")
-		category.POST("", c.CategoryHandler.Create)
-		// Read
-		category.GET("", c.CategoryHandler.GetAll)                       // List
-		category.GET("/tree", c.CategoryHandler.GetTree)                 // Tree
-		category.GET("/:id", c.CategoryHandler.GetByID)                  // Get by ID
-		category.GET("/:id/breadcrumb", c.CategoryHandler.GetBreadcrumb) // Breadcrumb
-		category.GET("/by-slug/:slug", c.CategoryHandler.GetBySlug)      // Get by slug
+		{
+			category.POST("", c.CategoryHandler.Create)
+			// Read
+			category.GET("", c.CategoryHandler.GetAll)                       // List
+			category.GET("/tree", c.CategoryHandler.GetTree)                 // Tree
+			category.GET("/:id", c.CategoryHandler.GetByID)                  // Get by ID
+			category.GET("/:id/breadcrumb", c.CategoryHandler.GetBreadcrumb) // Breadcrumb
+			category.GET("/by-slug/:slug", c.CategoryHandler.GetBySlug)      // Get by slug
 
-		// Update
-		category.PUT("/:id", c.CategoryHandler.Update)                 // Update
-		category.PATCH("/:id/parent", c.CategoryHandler.MoveToParent)  // Move to parent
-		category.POST("/:id/activate", c.CategoryHandler.Activate)     // Activate
-		category.POST("/:id/deactivate", c.CategoryHandler.Deactivate) // Deactivate
+			// Update
+			category.PUT("/:id", c.CategoryHandler.Update)                 // Update
+			category.PATCH("/:id/parent", c.CategoryHandler.MoveToParent)  // Move to parent
+			category.POST("/:id/activate", c.CategoryHandler.Activate)     // Activate
+			category.POST("/:id/deactivate", c.CategoryHandler.Deactivate) // Deactivate
 
-		// Delete
-		category.DELETE("/:id", c.CategoryHandler.Delete)      // Delete single
-		category.DELETE("/bulk", c.CategoryHandler.BulkDelete) // Bulk delete
+			// Delete
+			category.DELETE("/:id", c.CategoryHandler.Delete)      // Delete single
+			category.DELETE("/bulk", c.CategoryHandler.BulkDelete) // Bulk delete
 
-		// Bulk operations
-		category.POST("/bulk/activate", c.CategoryHandler.BulkActivate)     // Bulk activate
-		category.POST("/bulk/deactivate", c.CategoryHandler.BulkDeactivate) // Bulk deactivate
+			// Bulk operations
+			category.POST("/bulk/activate", c.CategoryHandler.BulkActivate)     // Bulk activate
+			category.POST("/bulk/deactivate", c.CategoryHandler.BulkDeactivate) // Bulk deactivate
 
-		// Book-related
-		category.GET("/:id/books", c.CategoryHandler.GetBooksInCategory)        // Get books
-		category.GET("/:id/book-count", c.CategoryHandler.GetCategoryBookCount) // Book count
+			// Book-related
+			category.GET("/:id/books", c.CategoryHandler.GetBooksInCategory)        // Get books
+			category.GET("/:id/book-count", c.CategoryHandler.GetCategoryBookCount) // Book count
+		}
 
 		// --------------------------------------- AUTHORS --------------------------------------
 		author := v1.Group("/authors")
-		// Create
-		author.POST("", c.AuthorHandler.Create)
+		{
+			// Create
+			author.POST("", c.AuthorHandler.Create)
+			// Read single
+			author.GET("/:id", c.AuthorHandler.GetByID)
+			author.GET("/slug/:slug", c.AuthorHandler.GetBySlug)
+			// Read multiple
+			author.GET("", c.AuthorHandler.GetAll)
+			author.GET("/search", c.AuthorHandler.Search)
+			// Update
+			author.PUT("/:id", c.AuthorHandler.Update)
+			// Delete
+			author.DELETE("/:id", c.AuthorHandler.Delete)
+			author.DELETE("/bulk", c.AuthorHandler.BulkDelete)
+			// Books
+			author.GET("/:id/books", c.AuthorHandler.GetWithBookCount)
+		}
 
-		// Read single
-		author.GET("/:id", c.AuthorHandler.GetByID)
-		author.GET("/slug/:slug", c.AuthorHandler.GetBySlug)
+		//  --------------------------------------- PUBLISHER ------------------------
+		publisherGroup := router.Group("/api/v1/publishers")
+		{
+			// Create publisher
+			publisherGroup.POST("", c.PublisherHandler.CreatePublisher)
 
-		// Read multiple
-		author.GET("", c.AuthorHandler.GetAll)
-		author.GET("/search", c.AuthorHandler.Search)
+			// Get all publishers with pagination
+			publisherGroup.GET("", c.PublisherHandler.ListPublishers)
 
-		// Update
-		author.PUT("/:id", c.AuthorHandler.Update)
+			// Get publisher with books (needs to come BEFORE /:id)
+			publisherGroup.GET("/books", c.PublisherHandler.ListPublishersWithBooks)
 
-		// Delete
-		author.DELETE("/:id", c.AuthorHandler.Delete)
-		author.DELETE("/bulk", c.AuthorHandler.BulkDelete)
+			// Get publisher by slug
+			publisherGroup.GET("/slug/:slug", c.PublisherHandler.GetPublisherBySlug)
 
-		// Books
-		author.GET("/:id/books", c.AuthorHandler.GetWithBookCount)
+			// Get publisher by ID
+			publisherGroup.GET("/:id", c.PublisherHandler.GetPublisher)
 
+			// Get publisher with books by ID
+			publisherGroup.GET("/:id/books", c.PublisherHandler.GetPublisherWithBooks)
+
+			// Update publisher
+			publisherGroup.PUT("/:id", c.PublisherHandler.UpdatePublisher)
+
+			// Delete publisher
+			publisherGroup.DELETE("/:id", c.PublisherHandler.DeletePublisher)
+		}
 	}
 
 	return router

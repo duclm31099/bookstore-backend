@@ -2,7 +2,6 @@ package container
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log"
 	"time"
@@ -15,38 +14,30 @@ import (
 
 	// User domain imports
 	"bookstore-backend/internal/domains/author"
+	"bookstore-backend/internal/domains/publisher"
 	"bookstore-backend/internal/domains/user"
 	userHandler "bookstore-backend/internal/domains/user/handler"
 	userRepo "bookstore-backend/internal/domains/user/repository"
 	userService "bookstore-backend/internal/domains/user/service"
 
-	// Category domain imports ◄── NEW
+	// AUTHOR
 	authorHandler "bookstore-backend/internal/domains/author/handler"
 	authorRepository "bookstore-backend/internal/domains/author/repository"
 	authorService "bookstore-backend/internal/domains/author/service"
+
+	// CATEGORY
 	category "bookstore-backend/internal/domains/category"
 	categoryHandler "bookstore-backend/internal/domains/category/handler"
 	categoryRepo "bookstore-backend/internal/domains/category/repository"
 	categoryService "bookstore-backend/internal/domains/category/service"
-	// TODO: Import other domains khi implement
-	// "bookstore/internal/domains/book"
-	// bookHandler "bookstore/internal/domains/book/handler"
+
+	// PUBLISHER
+	publisherHandler "bookstore-backend/internal/domains/publisher/handler"
+	publisherRepo "bookstore-backend/internal/domains/publisher/repository"
+	publisherService "bookstore-backend/internal/domains/publisher/service"
 )
 
-// ========================================
-// CONTAINER STRUCT
-// ========================================
-
-// Container chứa TẤT CẢ dependencies của application
-// Struct này là "root" của dependency graph
-// Pattern: Service Locator + Dependency Injection
 type Container struct {
-	// ========================================
-	// INFRASTRUCTURE LAYER
-	// ========================================
-	// Infrastructure components - shared across all domains
-	// Lifecycle: Singleton (1 instance duy nhất trong app lifetime)
-
 	Config     *config.Config       // Application config
 	DB         *database.PostgresDB // Database connection pool
 	Cache      cache.Cache          // Redis cache (interface)
@@ -55,24 +46,26 @@ type Container struct {
 	// ========================================
 	// REPOSITORY LAYER (DATA ACCESS)
 	// ========================================
-	UserRepo     user.Repository
-	CategoryRepo category.CategoryRepository
-	AuthorRepo   author.Repository
+	UserRepo      user.Repository
+	CategoryRepo  category.CategoryRepository
+	AuthorRepo    author.Repository
+	PublisherRepo publisher.Repository
 
 	// ========================================
 	// SERVICE LAYER (BUSINESS LOGIC)
 	// ========================================
 
-	UserService     user.Service
-	CategoryService category.CategoryService
-	AuthorService   author.Service
-
+	UserService      user.Service
+	CategoryService  category.CategoryService
+	AuthorService    author.Service
+	PublisherService publisher.Service
 	// ========================================
 	// HANDLER LAYER (HTTP)
 	// ========================================
-	UserHandler     *userHandler.UserHandler
-	CategoryHandler *categoryHandler.CategoryHandler
-	AuthorHandler   *authorHandler.AuthorHandler
+	UserHandler      *userHandler.UserHandler
+	CategoryHandler  *categoryHandler.CategoryHandler
+	AuthorHandler    *authorHandler.AuthorHandler
+	PublisherHandler *publisherHandler.PublisherHandler
 }
 
 // ========================================
@@ -89,30 +82,14 @@ type Container struct {
 //
 // Nếu thứ tự sai → panic (nil pointer dereference)
 func NewContainer() (*Container, error) {
-	log.Println("🔧 Initializing DI Container...")
 
-	// Tạo empty container
-	// Các fields sẽ được populate dần theo thứ tự
 	c := &Container{}
-
-	// ========================================
-	// STEP 1: LOAD CONFIGURATION
-	// ========================================
-	// Config không phụ thuộc vào ai - tạo đầu tiên
-	log.Println("📋 Loading configuration...")
 
 	cfg, err := config.Load()
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
 	c.Config = cfg
-	log.Printf("✅ Config loaded (Environment: %s)", cfg.App.Environment)
-
-	// ========================================
-	// STEP 2: INITIALIZE DATABASE
-	// ========================================
-	// Database phụ thuộc Config
-	log.Println("🗄️  Connecting to PostgreSQL...")
 
 	dbConfig, err := config.LoadDatabaseConfig()
 	if err != nil {
@@ -135,13 +112,6 @@ func NewContainer() (*Container, error) {
 	}
 
 	c.DB = db
-	log.Println("✅ Database connected")
-
-	// ========================================
-	// STEP 3: INITIALIZE CACHE
-	// ========================================
-	// Cache phụ thuộc Config
-	log.Println("🔴 Connecting to Redis...")
 
 	redisCache := infraCache.NewRedisCache(
 		cfg.Redis.Host,
@@ -149,8 +119,6 @@ func NewContainer() (*Container, error) {
 		cfg.Redis.DB,
 	)
 
-	// Connect Redis
-	// Type assertion để gọi Connect method (không có trong interface)
 	if rc, ok := redisCache.(*infraCache.RedisCache); ok {
 		if err := rc.Connect(context.Background()); err != nil {
 			// Redis failure không critical - log warning và continue
@@ -165,40 +133,18 @@ func NewContainer() (*Container, error) {
 	jwtSecret := cfg.JWT.Secret // Use from config
 	c.JWTManager = jwt.NewManager(jwtSecret)
 
-	// ========================================
-	// STEP 4: INITIALIZE REPOSITORIES
-	// ========================================
-	// Repositories phụ thuộc DB và Cache
-	log.Println("📦 Initializing repositories...")
-
 	if err := c.initRepositories(); err != nil {
 		return nil, fmt.Errorf("failed to init repositories: %w", err)
 	}
-	log.Println("✅ Repositories initialized")
-
-	// ========================================
-	// STEP 5: INITIALIZE SERVICES
-	// ========================================
-	// Services phụ thuộc Repositories và Config
-	log.Println("⚙️  Initializing services...")
 
 	if err := c.initServices(); err != nil {
 		return nil, fmt.Errorf("failed to init services: %w", err)
 	}
-	log.Println("✅ Services initialized")
-
-	// ========================================
-	// STEP 6: INITIALIZE HANDLERS
-	// ========================================
-	// Handlers phụ thuộc Services
-	log.Println("🎯 Initializing handlers...")
 
 	if err := c.initHandlers(); err != nil {
 		return nil, fmt.Errorf("failed to init handlers: %w", err)
 	}
-	log.Println("✅ Handlers initialized")
 
-	log.Println("🎉 DI Container initialized successfully")
 	return c, nil
 }
 
@@ -213,6 +159,7 @@ func (c *Container) initRepositories() error {
 	c.UserRepo = userRepo.NewPostgresRepository(pool, c.Cache)
 	c.CategoryRepo = categoryRepo.NewPostgresRepository(pool, c.Cache)
 	c.AuthorRepo = authorRepository.NewPostgresRepository(pool, c.Cache)
+	c.PublisherRepo = publisherRepo.NewPostgresRepository(pool, c.Cache)
 	return nil
 }
 
@@ -225,6 +172,7 @@ func (c *Container) initServices() error {
 
 	c.CategoryService = categoryService.NewCategoryService(c.CategoryRepo)
 	c.AuthorService = authorService.NewAuthorService(c.AuthorRepo)
+	c.PublisherService = publisherService.NewPublisherService(c.PublisherRepo)
 	return nil
 }
 
@@ -233,22 +181,8 @@ func (c *Container) initHandlers() error {
 	c.UserHandler = userHandler.NewUserHandler(c.UserService)
 	c.CategoryHandler = categoryHandler.NewCategoryHandler(c.CategoryService)
 	c.AuthorHandler = authorHandler.NewAuthorHandler(c.AuthorService)
+	c.PublisherHandler = publisherHandler.NewPublisherHandler(c.PublisherService)
 	return nil
-}
-
-// ========================================
-// HELPER METHODS
-// ========================================
-// getSQLDB convert pgxpool.Pool sang *sql.DB
-// Một số libraries cần *sql.DB thay vì *pgxpool.Pool
-func (c *Container) getSQLDB() *sql.DB {
-	// Note: Đây là workaround
-	// Nếu repository accept *pgxpool.Pool thì không cần method này
-	// TODO: Refactor repository để dùng pgxpool.Pool directly
-
-	// Tạm thời return nil, sẽ implement sau
-	// Hoặc dùng stdlib/sql wrapper
-	return nil // FIXME
 }
 
 // Cleanup dọn dẹp resources khi shutdown
