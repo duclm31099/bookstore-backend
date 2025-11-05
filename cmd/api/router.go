@@ -129,7 +129,7 @@ func SetupRouter(c *container.Container) *gin.Engine {
 		}
 
 		//  --------------------------------------- PUBLISHER ------------------------
-		publisherGroup := router.Group("/api/v1/publishers")
+		publisherGroup := v1.Group("/publishers")
 		{
 			// Create publisher
 			publisherGroup.POST("", c.PublisherHandler.CreatePublisher)
@@ -154,6 +154,47 @@ func SetupRouter(c *container.Container) *gin.Engine {
 
 			// Delete publisher
 			publisherGroup.DELETE("/:id", c.PublisherHandler.DeletePublisher)
+		}
+
+		// ---------------------------------- ADDRESS ----------------------------------
+		addressGroup := v1.Group("/addresses")
+		addressGroup.Use(middleware.AuthMiddleware(c.Config.JWT.Secret)) // User must be authenticated
+		{
+			// Create address
+			addressGroup.POST("", c.AddressHandler.CreateAddress)
+
+			// Get all user addresses
+			addressGroup.GET("", c.AddressHandler.ListUserAddresses)
+
+			// Get default address
+			addressGroup.GET("/default", c.AddressHandler.GetDefaultAddress)
+
+			// Get address by ID
+			addressGroup.GET("/:id", c.AddressHandler.GetAddressById)
+
+			// Update address
+			addressGroup.PUT("/:id", c.AddressHandler.UpdateAddress)
+
+			// Set address as default
+			addressGroup.PUT("/:id/set-default", c.AddressHandler.SetDefaultAddress)
+
+			// Unset default (remove default flag)
+			addressGroup.PUT("/:id/unset-default", c.AddressHandler.UnsetDefaultAddress)
+
+			// Delete address
+			addressGroup.DELETE("/:id", c.AddressHandler.DeleteAddress)
+		}
+
+		// ========== ADMIN ADDRESS ROUTES ==========
+		adminAddressGroup := v1.Group("/admin/addresses")
+		// adminAddressGroup.Use(middleware.AuthMiddleware(c.Config.JWT.Secret))
+		// adminAddressGroup.Use(middleware.AdminMiddleware()) // Only admin
+		{
+			// Get all addresses (paginated)
+			adminAddressGroup.GET("", c.AddressHandler.ListAllAddresses)
+
+			// Get address with user info
+			adminAddressGroup.GET("/:id", c.AddressHandler.GetAddressWithUser)
 		}
 	}
 

@@ -13,9 +13,12 @@ import (
 	"bookstore-backend/pkg/jwt"
 
 	// User domain imports
+	"bookstore-backend/internal/domains/address"
 	"bookstore-backend/internal/domains/author"
+	"bookstore-backend/internal/domains/category"
 	"bookstore-backend/internal/domains/publisher"
 	"bookstore-backend/internal/domains/user"
+
 	userHandler "bookstore-backend/internal/domains/user/handler"
 	userRepo "bookstore-backend/internal/domains/user/repository"
 	userService "bookstore-backend/internal/domains/user/service"
@@ -26,7 +29,7 @@ import (
 	authorService "bookstore-backend/internal/domains/author/service"
 
 	// CATEGORY
-	category "bookstore-backend/internal/domains/category"
+
 	categoryHandler "bookstore-backend/internal/domains/category/handler"
 	categoryRepo "bookstore-backend/internal/domains/category/repository"
 	categoryService "bookstore-backend/internal/domains/category/service"
@@ -35,12 +38,17 @@ import (
 	publisherHandler "bookstore-backend/internal/domains/publisher/handler"
 	publisherRepo "bookstore-backend/internal/domains/publisher/repository"
 	publisherService "bookstore-backend/internal/domains/publisher/service"
+
+	// ADDRESS
+	addressHandler "bookstore-backend/internal/domains/address/handler"
+	addressRepo "bookstore-backend/internal/domains/address/repository"
+	addressService "bookstore-backend/internal/domains/address/service"
 )
 
 type Container struct {
-	Config     *config.Config       // Application config
-	DB         *database.PostgresDB // Database connection pool
-	Cache      cache.Cache          // Redis cache (interface)
+	Config     *config.Config
+	DB         *database.PostgresDB
+	Cache      cache.Cache
 	JWTManager *jwt.Manager
 
 	// ========================================
@@ -50,6 +58,7 @@ type Container struct {
 	CategoryRepo  category.CategoryRepository
 	AuthorRepo    author.Repository
 	PublisherRepo publisher.Repository
+	AddressRepo   address.Repository
 
 	// ========================================
 	// SERVICE LAYER (BUSINESS LOGIC)
@@ -59,6 +68,7 @@ type Container struct {
 	CategoryService  category.CategoryService
 	AuthorService    author.Service
 	PublisherService publisher.Service
+	AddressService   address.Service
 	// ========================================
 	// HANDLER LAYER (HTTP)
 	// ========================================
@@ -66,6 +76,7 @@ type Container struct {
 	CategoryHandler  *categoryHandler.CategoryHandler
 	AuthorHandler    *authorHandler.AuthorHandler
 	PublisherHandler *publisherHandler.PublisherHandler
+	AddressHandler   *addressHandler.AddressHandler
 }
 
 // ========================================
@@ -160,6 +171,7 @@ func (c *Container) initRepositories() error {
 	c.CategoryRepo = categoryRepo.NewPostgresRepository(pool, c.Cache)
 	c.AuthorRepo = authorRepository.NewPostgresRepository(pool, c.Cache)
 	c.PublisherRepo = publisherRepo.NewPostgresRepository(pool, c.Cache)
+	c.AddressRepo = addressRepo.NewPostgresRepository(pool)
 	return nil
 }
 
@@ -173,6 +185,7 @@ func (c *Container) initServices() error {
 	c.CategoryService = categoryService.NewCategoryService(c.CategoryRepo)
 	c.AuthorService = authorService.NewAuthorService(c.AuthorRepo)
 	c.PublisherService = publisherService.NewPublisherService(c.PublisherRepo)
+	c.AddressService = addressService.NewAddressService(c.AddressRepo)
 	return nil
 }
 
@@ -182,6 +195,7 @@ func (c *Container) initHandlers() error {
 	c.CategoryHandler = categoryHandler.NewCategoryHandler(c.CategoryService)
 	c.AuthorHandler = authorHandler.NewAuthorHandler(c.AuthorService)
 	c.PublisherHandler = publisherHandler.NewPublisherHandler(c.PublisherService)
+	c.AddressHandler = addressHandler.NewAddressHandler(c.AddressService)
 	return nil
 }
 
