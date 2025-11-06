@@ -196,6 +196,17 @@ func SetupRouter(c *container.Container) *gin.Engine {
 			// Get address with user info
 			adminAddressGroup.GET("/:id", c.AddressHandler.GetAddressWithUser)
 		}
+
+		// ------------------------------ BOOK ROUTES ---------------------------------------
+		bookRouter := v1.Group("/books")
+		{
+			bookRouter.GET("", c.BookHandler.ListBooks)
+			bookRouter.GET("/:id", c.BookHandler.GetBookDetail)
+			bookRouter.PUT("/:id", c.BookHandler.UpdateBook)
+			bookRouter.DELETE("/:id", c.BookHandler.DeleteBook)
+			bookRouter.POST("", c.BookHandler.CreateBook)
+			bookRouter.GET("/search", c.BookHandler.SearchBooks)
+		}
 	}
 
 	return router

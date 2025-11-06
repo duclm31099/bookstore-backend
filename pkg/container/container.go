@@ -15,6 +15,7 @@ import (
 	// User domain imports
 	"bookstore-backend/internal/domains/address"
 	"bookstore-backend/internal/domains/author"
+	"bookstore-backend/internal/domains/book"
 	"bookstore-backend/internal/domains/category"
 	"bookstore-backend/internal/domains/publisher"
 	"bookstore-backend/internal/domains/user"
@@ -43,6 +44,11 @@ import (
 	addressHandler "bookstore-backend/internal/domains/address/handler"
 	addressRepo "bookstore-backend/internal/domains/address/repository"
 	addressService "bookstore-backend/internal/domains/address/service"
+
+	// BOOK
+	bookHandler "bookstore-backend/internal/domains/book/handler"
+	bookRepo "bookstore-backend/internal/domains/book/repository"
+	bookService "bookstore-backend/internal/domains/book/service"
 )
 
 type Container struct {
@@ -59,6 +65,7 @@ type Container struct {
 	AuthorRepo    author.Repository
 	PublisherRepo publisher.Repository
 	AddressRepo   address.Repository
+	BookRepo      book.RepositoryInterface
 
 	// ========================================
 	// SERVICE LAYER (BUSINESS LOGIC)
@@ -69,6 +76,7 @@ type Container struct {
 	AuthorService    author.Service
 	PublisherService publisher.Service
 	AddressService   address.Service
+	BookService      book.ServiceInterface
 	// ========================================
 	// HANDLER LAYER (HTTP)
 	// ========================================
@@ -77,6 +85,7 @@ type Container struct {
 	AuthorHandler    *authorHandler.AuthorHandler
 	PublisherHandler *publisherHandler.PublisherHandler
 	AddressHandler   *addressHandler.AddressHandler
+	BookHandler      *bookHandler.Handler
 }
 
 // ========================================
@@ -172,6 +181,7 @@ func (c *Container) initRepositories() error {
 	c.AuthorRepo = authorRepository.NewPostgresRepository(pool, c.Cache)
 	c.PublisherRepo = publisherRepo.NewPostgresRepository(pool, c.Cache)
 	c.AddressRepo = addressRepo.NewPostgresRepository(pool)
+	c.BookRepo = bookRepo.NewPostgresRepository(pool, c.Cache)
 	return nil
 }
 
@@ -186,6 +196,7 @@ func (c *Container) initServices() error {
 	c.AuthorService = authorService.NewAuthorService(c.AuthorRepo)
 	c.PublisherService = publisherService.NewPublisherService(c.PublisherRepo)
 	c.AddressService = addressService.NewAddressService(c.AddressRepo)
+	c.BookService = bookService.NewService(c.BookRepo, c.Cache)
 	return nil
 }
 
@@ -196,6 +207,7 @@ func (c *Container) initHandlers() error {
 	c.AuthorHandler = authorHandler.NewAuthorHandler(c.AuthorService)
 	c.PublisherHandler = publisherHandler.NewPublisherHandler(c.PublisherService)
 	c.AddressHandler = addressHandler.NewAddressHandler(c.AddressService)
+	c.BookHandler = bookHandler.NewHandler(c.BookService, c.Cache)
 	return nil
 }
 
