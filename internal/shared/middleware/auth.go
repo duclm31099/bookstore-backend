@@ -49,7 +49,7 @@ func AuthMiddleware(jwtSecret string) gin.HandlerFunc {
 			"claims": claims,
 		})
 		// 4. Extract userID từ claims
-		userIDStr, ok := claims["user_id"].(string) // "sub" = subject (user ID)
+		userIDStr, ok := claims["user_id"].(string)
 		if !ok {
 			c.JSON(401, gin.H{"error": "invalid user ID in token"})
 			c.Abort()
@@ -65,7 +65,8 @@ func AuthMiddleware(jwtSecret string) gin.HandlerFunc {
 		}
 
 		// 6. Set userID vào context ✓ ĐÂY LÀ CHÌA KHÓA
-		c.Set("userID", userID)
+		c.Set("is_authenticated", true)
+		c.Set("user_id", userID)
 
 		// Tiếp tục xử lý request
 		c.Next()

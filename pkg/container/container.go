@@ -15,7 +15,7 @@ import (
 	// User domain imports
 	"bookstore-backend/internal/domains/address"
 	"bookstore-backend/internal/domains/author"
-	"bookstore-backend/internal/domains/book"
+
 	"bookstore-backend/internal/domains/category"
 	"bookstore-backend/internal/domains/publisher"
 	"bookstore-backend/internal/domains/user"
@@ -49,6 +49,15 @@ import (
 	bookHandler "bookstore-backend/internal/domains/book/handler"
 	bookRepo "bookstore-backend/internal/domains/book/repository"
 	bookService "bookstore-backend/internal/domains/book/service"
+
+	// INVENTORY
+	inventoryHandler "bookstore-backend/internal/domains/inventory/handler"
+	inventoryRepo "bookstore-backend/internal/domains/inventory/repository"
+	inventoryService "bookstore-backend/internal/domains/inventory/service"
+
+	cartHandler "bookstore-backend/internal/domains/cart/handler"
+	cartRepo "bookstore-backend/internal/domains/cart/repository"
+	cartService "bookstore-backend/internal/domains/cart/service"
 )
 
 type Container struct {
@@ -65,8 +74,9 @@ type Container struct {
 	AuthorRepo    author.Repository
 	PublisherRepo publisher.Repository
 	AddressRepo   address.Repository
-	BookRepo      book.RepositoryInterface
-
+	BookRepo      bookRepo.RepositoryInterface
+	InventoryRepo inventoryRepo.RepositoryInterface
+	CartRepo      cartRepo.RepositoryInterface
 	// ========================================
 	// SERVICE LAYER (BUSINESS LOGIC)
 	// ========================================
@@ -75,8 +85,10 @@ type Container struct {
 	CategoryService  category.CategoryService
 	AuthorService    author.Service
 	PublisherService publisher.Service
-	AddressService   address.Service
-	BookService      book.ServiceInterface
+	AddressService   address.ServiceInterface
+	BookService      bookService.ServiceInterface
+	InventoryService inventoryService.ServiceInterface
+	CartService      cartService.ServiceInterface
 	// ========================================
 	// HANDLER LAYER (HTTP)
 	// ========================================
@@ -86,6 +98,9 @@ type Container struct {
 	PublisherHandler *publisherHandler.PublisherHandler
 	AddressHandler   *addressHandler.AddressHandler
 	BookHandler      *bookHandler.Handler
+	InventoryHandler *inventoryHandler.Handler
+
+	CartHandler *cartHandler.Handler
 }
 
 // ========================================
@@ -182,6 +197,8 @@ func (c *Container) initRepositories() error {
 	c.PublisherRepo = publisherRepo.NewPostgresRepository(pool, c.Cache)
 	c.AddressRepo = addressRepo.NewPostgresRepository(pool)
 	c.BookRepo = bookRepo.NewPostgresRepository(pool, c.Cache)
+	c.InventoryRepo = inventoryRepo.NewRepository(pool)
+	c.CartRepo = cartRepo.NewPostgresRepository(pool, c.Cache)
 	return nil
 }
 
@@ -197,17 +214,21 @@ func (c *Container) initServices() error {
 	c.PublisherService = publisherService.NewPublisherService(c.PublisherRepo)
 	c.AddressService = addressService.NewAddressService(c.AddressRepo)
 	c.BookService = bookService.NewService(c.BookRepo, c.Cache)
+	c.InventoryService = inventoryService.NewService(c.InventoryRepo)
+	c.CartService = cartService.NewCartService(c.CartRepo, c.InventoryRepo, c.AddressService)
 	return nil
 }
 
 // initHandlers khởi tạo tất cả HTTP handlers
 func (c *Container) initHandlers() error {
-	c.UserHandler = userHandler.NewUserHandler(c.UserService)
+	c.UserHandler = userHandler.NewUserHandler(c.UserService, c.CartService)
 	c.CategoryHandler = categoryHandler.NewCategoryHandler(c.CategoryService)
 	c.AuthorHandler = authorHandler.NewAuthorHandler(c.AuthorService)
 	c.PublisherHandler = publisherHandler.NewPublisherHandler(c.PublisherService)
 	c.AddressHandler = addressHandler.NewAddressHandler(c.AddressService)
 	c.BookHandler = bookHandler.NewHandler(c.BookService, c.Cache)
+	c.InventoryHandler = inventoryHandler.NewHandler(c.InventoryService)
+	c.CartHandler = cartHandler.NewHandler(c.CartService)
 	return nil
 }
 

@@ -1,4 +1,4 @@
-package book
+package handler
 
 import (
 	"errors"
@@ -7,7 +7,8 @@ import (
 	"strconv"
 	"time"
 
-	book "bookstore-backend/internal/domains/book"
+	"bookstore-backend/internal/domains/book/model"
+	service "bookstore-backend/internal/domains/book/service"
 	"bookstore-backend/internal/shared/response"
 	"bookstore-backend/internal/shared/utils"
 	"bookstore-backend/pkg/cache"
@@ -17,12 +18,12 @@ import (
 
 // Handler - HTTP Handler (single file)
 type Handler struct {
-	service book.ServiceInterface
+	service service.ServiceInterface
 	cache   cache.Cache
 }
 
 // NewHandler - Constructor with DI
-func NewHandler(service book.ServiceInterface, cache cache.Cache) *Handler {
+func NewHandler(service service.ServiceInterface, cache cache.Cache) *Handler {
 	return &Handler{
 		service: service,
 		cache:   cache,
@@ -33,7 +34,7 @@ func NewHandler(service book.ServiceInterface, cache cache.Cache) *Handler {
 // Query params: search, category, price_min, price_max, language, sort, page, limit
 func (h *Handler) ListBooks(c *gin.Context) {
 	// Parse query parameters
-	req := book.ListBooksRequest{
+	req := model.ListBooksRequest{
 		Search:     c.Query("search"),
 		CategoryID: c.Query("category"),
 		Language:   c.Query("language"),
@@ -68,7 +69,7 @@ func (h *Handler) ListBooks(c *gin.Context) {
 	}
 
 	// Validate and call service
-	if err := book.ValidateListRequest(req); err != nil {
+	if err := model.ValidateListRequest(req); err != nil {
 		log.Printf("Validation error: %v", err)
 		response.Error(c, http.StatusInternalServerError, "Internal server error", err.Error())
 		return
@@ -80,7 +81,7 @@ func (h *Handler) ListBooks(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, http.StatusOK, "Get book successfully", book.ListBooksAPIResponse{
+	response.Success(c, http.StatusOK, "Get book successfully", model.ListBooksAPIResponse{
 		Books:      data,
 		Pagination: *meta,
 	})
@@ -98,8 +99,8 @@ func (h *Handler) GetBookDetail(c *gin.Context) {
 	}
 
 	// 2. Check cache first
-	cacheKey := book.GenerateBookDetailCacheKey(id)
-	var cachedDetail book.BookDetailResponse
+	cacheKey := model.GenerateBookDetailCacheKey(id)
+	var cachedDetail model.BookDetailResponse
 	found, err := h.cache.Get(c.Request.Context(), cacheKey, &cachedDetail)
 
 	// Cache hit - return immediately
@@ -116,7 +117,7 @@ func (h *Handler) GetBookDetail(c *gin.Context) {
 	// 3. Cache MISS - fetch from service
 	detail, err := h.service.GetBookDetail(c.Request.Context(), id)
 
-	isInvalid := book.HandleBookError(c, err)
+	isInvalid := model.HandleBookError(c, err)
 	if !isInvalid {
 		return
 	}
@@ -133,7 +134,7 @@ func (h *Handler) GetBookDetail(c *gin.Context) {
 // CreateBook - POST /v1/admin/books
 // Yêu cầu: Admin role (middleware check trước khi vào handler)
 func (h *Handler) CreateBook(c *gin.Context) {
-	var req book.CreateBookRequest
+	var req model.CreateBookRequest
 
 	// 1. Bind và validate request
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -143,7 +144,7 @@ func (h *Handler) CreateBook(c *gin.Context) {
 	}
 
 	// 2. Business validation
-	if err := book.ValidateCreateRequest(&req); err != nil {
+	if err := model.ValidateCreateRequest(&req); err != nil {
 		log.Printf("[Handler] Validation failed: %v", err)
 		response.Error(c, http.StatusBadRequest, "Validation failed", err.Error())
 		return
@@ -153,7 +154,7 @@ func (h *Handler) CreateBook(c *gin.Context) {
 	err := h.service.CreateBook(c.Request.Context(), req)
 
 	// Handle specific business errors
-	isInvalid := book.HandleBookError(c, err)
+	isInvalid := model.HandleBookError(c, err)
 	if !isInvalid {
 		return
 	}
@@ -172,7 +173,7 @@ func (h *Handler) UpdateBook(c *gin.Context) {
 	}
 
 	// 2. Bind request
-	var req book.UpdateBookRequest
+	var req model.UpdateBookRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		log.Printf("[Handler] Invalid update book request: %v", err)
 		response.Error(c, http.StatusBadRequest, "Invalid request data", err.Error())
@@ -180,7 +181,7 @@ func (h *Handler) UpdateBook(c *gin.Context) {
 	}
 
 	// 3. Business validation
-	if err := book.ValidateUpdateRequest(&req); err != nil {
+	if err := model.ValidateUpdateRequest(&req); err != nil {
 		response.Error(c, http.StatusBadRequest, "Validation failed", err.Error())
 		return
 	}
@@ -188,7 +189,7 @@ func (h *Handler) UpdateBook(c *gin.Context) {
 	// 4. Call service
 	detail, err := h.service.UpdateBook(c.Request.Context(), id, req)
 
-	invalid := book.HandleBookError(c, err)
+	invalid := model.HandleBookError(c, err)
 	if invalid == true {
 		return
 	}
@@ -210,7 +211,7 @@ func (h *Handler) DeleteBook(c *gin.Context) {
 		return
 	}
 	deleteResponse, err := h.service.DeleteBook(c.Request.Context(), bookId)
-	isInvalid := book.HandleBookError(c, err)
+	isInvalid := model.HandleBookError(c, err)
 	if isInvalid == true {
 		return
 	}
@@ -223,7 +224,7 @@ func (h *Handler) DeleteBook(c *gin.Context) {
 func (h *Handler) SearchBooks(c *gin.Context) {
 	startTime := time.Now()
 
-	var req book.SearchBooksRequest
+	var req model.SearchBooksRequest
 
 	// 1. Bind and validate query params
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -255,7 +256,7 @@ func (h *Handler) SearchBooks(c *gin.Context) {
 	tookMs := time.Since(startTime).Milliseconds()
 
 	// 6. Return results
-	meta := &book.SearchMeta{
+	meta := &model.SearchMeta{
 		Query:       req.Query,
 		ResultCount: len(results),
 		TookMs:      tookMs,

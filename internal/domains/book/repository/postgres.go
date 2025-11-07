@@ -1,8 +1,7 @@
-package book
+package repository
 
 import (
-	"bookstore-backend/internal/domains/book"
-	model "bookstore-backend/internal/domains/book"
+	"bookstore-backend/internal/domains/book/model"
 	"bookstore-backend/pkg/cache"
 	"bookstore-backend/pkg/logger"
 	"context"
@@ -24,7 +23,7 @@ type postgresRepository struct {
 }
 
 // NewPostgresRepository - Constructor
-func NewPostgresRepository(pool *pgxpool.Pool, cache cache.Cache) model.RepositoryInterface {
+func NewPostgresRepository(pool *pgxpool.Pool, cache cache.Cache) RepositoryInterface {
 	return &postgresRepository{
 		pool:  pool,
 		cache: cache,
@@ -33,7 +32,7 @@ func NewPostgresRepository(pool *pgxpool.Pool, cache cache.Cache) model.Reposito
 
 // ========================= SEARCH BOOK =====================
 // SearchBooks - Full-text search using PostgreSQL tsvector + GIN index
-func (r *postgresRepository) SearchBooks(ctx context.Context, req book.SearchBooksRequest) ([]book.BookSearchResponse, error) {
+func (r *postgresRepository) SearchBooks(ctx context.Context, req model.SearchBooksRequest) ([]model.BookSearchResponse, error) {
 	// Build WHERE clause
 	whereConditions := []string{
 		"b.deleted_at IS NULL",
@@ -87,9 +86,9 @@ func (r *postgresRepository) SearchBooks(ctx context.Context, req book.SearchBoo
 	defer rows.Close()
 
 	// Scan results
-	results := make([]book.BookSearchResponse, 0, req.Limit)
+	results := make([]model.BookSearchResponse, 0, req.Limit)
 	for rows.Next() {
-		var result book.BookSearchResponse
+		var result model.BookSearchResponse
 		err := rows.Scan(
 			&result.ID,
 			&result.Title,
@@ -119,7 +118,7 @@ func (r *postgresRepository) SearchBooks(ctx context.Context, req book.SearchBoo
 // ============================================
 
 // ListBooks - Get list of books with filters, pagination, caching
-func (r *postgresRepository) ListBooks(ctx context.Context, filter *book.BookFilter) ([]book.Book, int, error) {
+func (r *postgresRepository) ListBooks(ctx context.Context, filter *model.BookFilter) ([]model.Book, int, error) {
 	// Build WHERE clause & args
 	whereClause, args := r.buildWhereClause(filter)
 
@@ -201,7 +200,7 @@ func (r *postgresRepository) CheckISBNExistsExcept(ctx context.Context, isbn, ex
 
 // buildWhereClause - Construct WHERE clause dynamically
 // Returns: (whereClause string, args []interface{})
-func (r *postgresRepository) buildWhereClause(filter *book.BookFilter) (string, []interface{}) {
+func (r *postgresRepository) buildWhereClause(filter *model.BookFilter) (string, []interface{}) {
 	conditions := []string{
 		"b.deleted_at IS NULL",
 		"b.is_active = true",
@@ -303,7 +302,7 @@ func (r *postgresRepository) getBookCount(ctx context.Context, whereClause strin
 }
 
 // executeListQuery - Execute query & map rows to Book struct using pgx.CollectRows
-func (r *postgresRepository) executeListQuery(ctx context.Context, query string, args []interface{}) ([]book.Book, error) {
+func (r *postgresRepository) executeListQuery(ctx context.Context, query string, args []interface{}) ([]model.Book, error) {
 	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
 		log.Printf("[BookRepo] Query error: %v", err)
@@ -311,7 +310,7 @@ func (r *postgresRepository) executeListQuery(ctx context.Context, query string,
 	}
 
 	// Use pgx.CollectRows for cleaner scanning
-	books, err := pgx.CollectRows(rows, pgx.RowToStructByName[book.Book])
+	books, err := pgx.CollectRows(rows, pgx.RowToStructByName[model.Book])
 	if err != nil {
 		log.Printf("[BookRepo] Collect rows error: %v", err)
 		return nil, fmt.Errorf("collect rows failed: %w", err)
@@ -361,7 +360,7 @@ func (r *postgresRepository) GetBookByID(ctx context.Context, id string) (*model
 			`
 	row := r.pool.QueryRow(ctx, query, id)
 	var inventoriesJson string
-	var book book.Book // entity struct
+	var book model.Book // entity struct
 	err := row.Scan(&book)
 	if err == pgx.ErrNoRows {
 		return nil, nil, model.ErrBookNotFound
@@ -375,7 +374,7 @@ func (r *postgresRepository) GetBookByID(ctx context.Context, id string) (*model
 }
 
 // UpdateBook - Update book with optimistic locking
-func (r *postgresRepository) UpdateBook(ctx context.Context, book *book.Book) error {
+func (r *postgresRepository) UpdateBook(ctx context.Context, book *model.Book) error {
 	query := `
 		UPDATE books
 		SET title = $1, slug = $2, isbn = $3, author_id = $4, publisher_id = $5, category_id = $6,
@@ -528,10 +527,10 @@ func (r *postgresRepository) CheckISBNExists(ctx context.Context, isbn string) (
 	}
 	return exists, nil
 }
-func (r *postgresRepository) GetBaseBookByID(ctx context.Context, id string) (*book.BaseBookResponse, error) {
+func (r *postgresRepository) GetBaseBookByID(ctx context.Context, id string) (*model.BaseBookResponse, error) {
 	query := `SELECT id, title FROM books WHERE id = $1 AND deleted_at IS NULL`
 	row := r.pool.QueryRow(ctx, query, id)
-	var book book.BaseBookResponse
+	var book model.BaseBookResponse
 	err := row.Scan(&book.ID, &book.Title)
 	if err != nil {
 		return nil, err
@@ -576,7 +575,7 @@ func (r *postgresRepository) GenerateUniqueSlug(ctx context.Context, baseSlug st
 // STUB METHODS (API 3, 4)
 // ============================================
 
-func (r *postgresRepository) GetBookBySlug(ctx context.Context, slug string) (*book.Book, error) {
+func (r *postgresRepository) GetBookBySlug(ctx context.Context, slug string) (*model.Book, error) {
 	return nil, nil
 }
 
@@ -584,7 +583,7 @@ func (r *postgresRepository) DeleteBook(ctx context.Context, id string) error {
 	return nil
 }
 
-func (r *postgresRepository) SearchByFullText(ctx context.Context, query string, limit int) ([]book.Book, error) {
+func (r *postgresRepository) SearchByFullText(ctx context.Context, query string, limit int) ([]model.Book, error) {
 	return nil, nil
 }
 

@@ -7,7 +7,7 @@ import (
 )
 
 // Service defines all business logic operations for Address domain
-type Service interface {
+type ServiceInterface interface {
 	// CreateAddress creates a new address for user
 	CreateAddress(ctx context.Context, userID uuid.UUID, req *AddressCreateRequest) (*AddressResponse, error)
 

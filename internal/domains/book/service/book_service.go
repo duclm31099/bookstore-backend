@@ -1,8 +1,8 @@
-package book
+package service
 
 import (
-	"bookstore-backend/internal/domains/book"
-	dto "bookstore-backend/internal/domains/book"
+	model "bookstore-backend/internal/domains/book/model"
+	"bookstore-backend/internal/domains/book/repository"
 	"bookstore-backend/internal/shared/utils"
 	"bookstore-backend/pkg/cache"
 	"context"
@@ -17,12 +17,12 @@ import (
 
 // Service - Implements ServiceInterface
 type BookService struct {
-	repo  book.RepositoryInterface
+	repo  repository.RepositoryInterface
 	cache cache.Cache
 }
 
 // NewService - Constructor with DI
-func NewService(repo book.RepositoryInterface, cache cache.Cache) book.ServiceInterface {
+func NewService(repo repository.RepositoryInterface, cache cache.Cache) ServiceInterface {
 	return &BookService{
 		repo:  repo,
 		cache: cache,
@@ -30,17 +30,17 @@ func NewService(repo book.RepositoryInterface, cache cache.Cache) book.ServiceIn
 }
 
 // ListBooks - Business logic for listing books
-func (s *BookService) ListBooks(ctx context.Context, req dto.ListBooksRequest) ([]dto.ListBooksResponse, *dto.PaginationMeta, error) {
+func (s *BookService) ListBooks(ctx context.Context, req model.ListBooksRequest) ([]model.ListBooksResponse, *model.PaginationMeta, error) {
 	// Validate input
-	if err := dto.ValidateListRequest(req); err != nil {
+	if err := model.ValidateListRequest(req); err != nil {
 		return nil, nil, err
 	}
 
 	// Generate cache key from request parameters
-	cacheKey := dto.GenerateCacheKey("books:list", req)
+	cacheKey := model.GenerateCacheKey("books:list", req)
 	var result struct {
-		Data       []dto.ListBooksResponse
-		Pagination dto.PaginationMeta
+		Data       []model.ListBooksResponse
+		Pagination model.PaginationMeta
 	}
 	_, err := s.cache.Get(ctx, cacheKey, &result)
 	// Try to get from cache first
@@ -52,7 +52,7 @@ func (s *BookService) ListBooks(ctx context.Context, req dto.ListBooksRequest) (
 	log.Printf("Cache MISS for key: %s", cacheKey)
 
 	// Build filter for repository
-	filter := &dto.BookFilter{
+	filter := &model.BookFilter{
 		Search:     req.Search,
 		CategoryID: req.CategoryID,
 		PriceMin:   req.PriceMin,
@@ -66,18 +66,21 @@ func (s *BookService) ListBooks(ctx context.Context, req dto.ListBooksRequest) (
 	// Query database
 	books, totalCount, err := s.repo.ListBooks(ctx, filter)
 	if err != nil {
+		if totalCount == 0 {
+			return []model.ListBooksResponse{}, &model.PaginationMeta{}, nil
+		}
 		return nil, nil, fmt.Errorf("list books error: %w", err)
 	}
 
 	// Map entities to DTOs
-	responses := make([]dto.ListBooksResponse, len(books))
+	responses := make([]model.ListBooksResponse, len(books))
 	for i, book := range books {
-		responses[i] = dto.BookToListDTO(book)
+		responses[i] = model.BookToListDTO(book)
 	}
 
 	// Calculate pagination metadata
 	totalPages := (totalCount + req.Limit - 1) / req.Limit
-	meta := &dto.PaginationMeta{
+	meta := &model.PaginationMeta{
 		Page:      req.Page,
 		PageSize:  req.Limit,
 		Total:     totalCount,
@@ -86,8 +89,8 @@ func (s *BookService) ListBooks(ctx context.Context, req dto.ListBooksRequest) (
 
 	// Cache the result
 	cacheData := struct {
-		Data []dto.ListBooksResponse
-		Meta dto.PaginationMeta
+		Data []model.ListBooksResponse
+		Meta model.PaginationMeta
 	}{
 		Data: responses,
 		Meta: *meta,
@@ -101,7 +104,7 @@ func (s *BookService) ListBooks(ctx context.Context, req dto.ListBooksRequest) (
 
 	return responses, meta, nil
 }
-func (s *BookService) GetBookDetail(ctx context.Context, id string) (*dto.BookDetailResponse, error) {
+func (s *BookService) GetBookDetail(ctx context.Context, id string) (*model.BookDetailResponse, error) {
 	// Lấy dữ liệu chi tiết sách
 	b, inventories, err := s.repo.GetBookByID(ctx, id)
 	if err != nil {
@@ -110,12 +113,12 @@ func (s *BookService) GetBookDetail(ctx context.Context, id string) (*dto.BookDe
 	// Lấy review nổi bật
 	reviews, _ := s.repo.GetReviewsHighlight(ctx, id)
 	// Build DTO cha
-	detail := &dto.BookDetailResponse{
+	detail := &model.BookDetailResponse{
 		ID:            b.ID,
 		Title:         b.Title,
-		Author:        &dto.AuthorDTO{ID: b.AuthorID, Name: b.AuthorName},
-		Category:      &dto.CategoryDTO{ID: b.CategoryID, Name: b.CategoryName},
-		Publisher:     &dto.PublisherDTO{ID: b.PublisherID, Name: b.PublisherName},
+		Author:        &model.AuthorDTO{ID: b.AuthorID, Name: b.AuthorName},
+		Category:      &model.CategoryDTO{ID: b.CategoryID, Name: b.CategoryName},
+		Publisher:     &model.PublisherDTO{ID: b.PublisherID, Name: b.PublisherName},
 		Description:   b.Description,
 		Price:         b.Price.InexactFloat64(),
 		Language:      b.Language,
@@ -134,28 +137,28 @@ func (s *BookService) GetBookDetail(ctx context.Context, id string) (*dto.BookDe
 }
 
 // CreateBook - Business logic for creating book
-func (s *BookService) CreateBook(ctx context.Context, req book.CreateBookRequest) error {
+func (s *BookService) CreateBook(ctx context.Context, req model.CreateBookRequest) error {
 	// 1. Validate foreign keys exist
 	if exists, err := s.repo.ValidateAuthor(ctx, req.AuthorID); err != nil || !exists {
-		return book.ErrAuthorNotFound
+		return model.ErrAuthorNotFound
 	}
 
 	if req.CategoryID != "" {
 		if exists, err := s.repo.ValidateCategory(ctx, req.CategoryID); err != nil || !exists {
-			return book.ErrCategoryNotFound
+			return model.ErrCategoryNotFound
 		}
 	}
 
 	if req.PublisherID != "" {
 		if exists, err := s.repo.ValidatePublisher(ctx, req.PublisherID); err != nil || !exists {
-			return book.ErrPublisherNotFound
+			return model.ErrPublisherNotFound
 		}
 	}
 
 	// 2. Check ISBN uniqueness (nếu có ISBN)
 	if req.ISBN != "" {
 		if exists, err := s.repo.CheckISBNExists(ctx, req.ISBN); err != nil || exists {
-			return book.ErrISBNAlreadyExists
+			return model.ErrISBNAlreadyExists
 		}
 	}
 
@@ -171,7 +174,7 @@ func (s *BookService) CreateBook(ctx context.Context, req book.CreateBookRequest
 	// 5. Build Book entity
 	now := time.Now()
 
-	book := &book.Book{
+	book := &model.Book{
 		Title:           req.Title,
 		Slug:            finalSlug,
 		ISBN:            req.ISBN,
@@ -223,7 +226,7 @@ func (s *BookService) CreateBook(ctx context.Context, req book.CreateBookRequest
 
 // UPDATE BOOK
 // UpdateBook - Business logic for updating book
-func (s *BookService) UpdateBook(ctx context.Context, id string, req book.UpdateBookRequest) (*book.BookDetailResponse, error) {
+func (s *BookService) UpdateBook(ctx context.Context, id string, req model.UpdateBookRequest) (*model.BookDetailResponse, error) {
 	// 1. Get existing book
 	existing, err := s.repo.GetBookByIDForUpdate(ctx, id)
 	if err != nil {
@@ -232,32 +235,32 @@ func (s *BookService) UpdateBook(ctx context.Context, id string, req book.Update
 
 	// 2. Check version (Optimistic Locking)
 	if existing.Version != req.Version {
-		return nil, book.ErrVersionConflict
+		return nil, model.ErrVersionConflict
 	}
 
 	// 3. Validate foreign keys if changed
 	if req.AuthorID != nil && *req.AuthorID != existing.AuthorID.String() {
 		if exists, err := s.repo.ValidateAuthor(ctx, *req.AuthorID); err != nil || !exists {
-			return nil, book.ErrAuthorNotFound
+			return nil, model.ErrAuthorNotFound
 		}
 	}
 
 	if req.CategoryID != nil {
 		if exists, err := s.repo.ValidateCategory(ctx, *req.CategoryID); err != nil || !exists {
-			return nil, book.ErrCategoryNotFound
+			return nil, model.ErrCategoryNotFound
 		}
 	}
 
 	if req.PublisherID != nil {
 		if exists, err := s.repo.ValidatePublisher(ctx, *req.PublisherID); err != nil || !exists {
-			return nil, book.ErrPublisherNotFound
+			return nil, model.ErrPublisherNotFound
 		}
 	}
 
 	// 4. Check ISBN uniqueness (nếu thay đổi ISBN)
 	if req.ISBN != nil && (existing.ISBN == "" || *req.ISBN != existing.ISBN) {
 		if exists, err := s.repo.CheckISBNExistsExcept(ctx, *req.ISBN, id); err != nil || exists {
-			return nil, book.ErrISBNAlreadyExists
+			return nil, model.ErrISBNAlreadyExists
 		}
 	}
 
@@ -273,7 +276,7 @@ func (s *BookService) UpdateBook(ctx context.Context, id string, req book.Update
 	}
 
 	// 6. Apply updates to existing book
-	book.ApplyUpdates(*existing, req, newSlug)
+	model.ApplyUpdates(*existing, req, newSlug)
 
 	// 7. Save changes
 	if err := s.repo.UpdateBook(ctx, existing); err != nil {
@@ -281,7 +284,7 @@ func (s *BookService) UpdateBook(ctx context.Context, id string, req book.Update
 	}
 
 	// 8. Invalidate cache
-	cacheKey := book.GenerateBookDetailCacheKey(id)
+	cacheKey := model.GenerateBookDetailCacheKey(id)
 	if err := s.cache.Delete(ctx, cacheKey); err != nil {
 		log.Printf("[Service] Failed to delete cache: %v", err)
 	}
@@ -294,7 +297,7 @@ func (s *BookService) UpdateBook(ctx context.Context, id string, req book.Update
 }
 
 // DELETE
-func (s *BookService) DeleteBook(c context.Context, bookID string) (*book.DeleteBookResponse, error) {
+func (s *BookService) DeleteBook(c context.Context, bookID string) (*model.DeleteBookResponse, error) {
 	book, err := s.repo.GetBaseBookByID(c, bookID)
 	if err != nil {
 		return nil, err
@@ -304,7 +307,7 @@ func (s *BookService) DeleteBook(c context.Context, bookID string) (*book.Delete
 		return nil, fmt.Errorf("failed to check active orders: %w", err)
 	}
 	if hasActiveOrders {
-		return nil, dto.ErrBookHasActiveOrders
+		return nil, model.ErrBookHasActiveOrders
 	}
 	// 3. Check if book has reserved inventory
 	hasReservedInventory, err := s.repo.CheckBookHasReservedInventory(c, bookID)
@@ -312,7 +315,7 @@ func (s *BookService) DeleteBook(c context.Context, bookID string) (*book.Delete
 		return nil, fmt.Errorf("failed to check reserved inventory: %w", err)
 	}
 	if hasReservedInventory {
-		return nil, dto.ErrBookHasReservedInventory
+		return nil, model.ErrBookHasReservedInventory
 	}
 
 	// 4. Perform soft delete
@@ -322,7 +325,7 @@ func (s *BookService) DeleteBook(c context.Context, bookID string) (*book.Delete
 	}
 
 	// 6. Invalidate cache
-	cacheKey := dto.GenerateBookDetailCacheKey(bookID)
+	cacheKey := model.GenerateBookDetailCacheKey(bookID)
 	if err := s.cache.Delete(c, cacheKey); err != nil {
 		log.Printf("[Service] Failed to delete cache: %v", err)
 	}
@@ -333,7 +336,7 @@ func (s *BookService) DeleteBook(c context.Context, bookID string) (*book.Delete
 	}
 
 	// 7. Return deleted book info
-	return &dto.DeleteBookResponse{
+	return &model.DeleteBookResponse{
 		ID:        bookID,
 		Title:     book.Title,
 		DeletedAt: deletedAt,
@@ -341,12 +344,12 @@ func (s *BookService) DeleteBook(c context.Context, bookID string) (*book.Delete
 }
 
 // ====================== SEARCH BOOK SERVICE ==============================
-func (s *BookService) SearchBooks(ctx context.Context, req dto.SearchBooksRequest) ([]dto.BookSearchResponse, error) {
+func (s *BookService) SearchBooks(ctx context.Context, req model.SearchBooksRequest) ([]model.BookSearchResponse, error) {
 	// 1. Generate cache key
 	cacheKey := generateSearchCacheKey(req)
 
 	// 2. Try to get from cache
-	var cachedResults []dto.BookSearchResponse
+	var cachedResults []model.BookSearchResponse
 	found, err := s.cache.Get(ctx, cacheKey, &cachedResults)
 	if found {
 		log.Printf("[Service] Search cache HIT: %s", cacheKey)
@@ -373,7 +376,7 @@ func (s *BookService) SearchBooks(ctx context.Context, req dto.SearchBooksReques
 }
 
 // generateSearchCacheKey - Create consistent cache key for search params
-func generateSearchCacheKey(req dto.SearchBooksRequest) string {
+func generateSearchCacheKey(req model.SearchBooksRequest) string {
 	// Create hash from query params
 	data := fmt.Sprintf("q=%s|lang=%s|limit=%d", req.Query, req.Language, req.Limit)
 	hash := md5.Sum([]byte(data))

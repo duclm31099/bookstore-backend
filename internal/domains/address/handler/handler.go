@@ -13,10 +13,10 @@ import (
 )
 
 type AddressHandler struct {
-	service address.Service
+	service address.ServiceInterface
 }
 
-func NewAddressHandler(service address.Service) *AddressHandler {
+func NewAddressHandler(service address.ServiceInterface) *AddressHandler {
 	return &AddressHandler{
 		service: service,
 	}

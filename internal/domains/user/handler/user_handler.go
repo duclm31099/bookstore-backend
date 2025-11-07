@@ -7,7 +7,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"bookstore-backend/internal/domains/cart/service"
 	"bookstore-backend/internal/domains/user"
+	"bookstore-backend/internal/shared/middleware"
 	"bookstore-backend/internal/shared/response"
 	"bookstore-backend/pkg/logger"
 )
@@ -15,14 +17,16 @@ import (
 // UserHandler xử lý HTTP requests cho user domain
 // Struct này là stateless - chỉ chứa dependencies
 type UserHandler struct {
-	service user.Service // Business logic layer
+	service     user.Service // Business logic layer
+	cartService service.ServiceInterface
 }
 
 // NewUserHandler tạo handler instance
 // Constructor injection - nhận service qua parameter
-func NewUserHandler(service user.Service) *UserHandler {
+func NewUserHandler(service user.Service, cartService service.ServiceInterface) *UserHandler {
 	return &UserHandler{
-		service: service,
+		service:     service,
+		cartService: cartService,
 	}
 }
 
@@ -136,28 +140,45 @@ func (h *UserHandler) Login(c *gin.Context) {
 
 	// STEP 3: AUTHENTICATE
 	// Service verify password, generate JWT tokens
-	loginResp, err := h.service.Login(c.Request.Context(), req)
+	res, err := h.service.Login(c.Request.Context(), req)
 	if err != nil {
 		h.handleError(c, err)
 		return
 	}
 	// ✅ STEP 4: SET REFRESH TOKEN IN HTTPONLYCOOKIE
 	c.SetCookie(
-		"refresh_token",        // Cookie name
-		loginResp.RefreshToken, // Cookie value
-		7*24*3600,              // Max age (7 days in seconds)
-		"/",                    // Path
-		"",                     // Domain (empty = auto-detect)
-		true,                   // Secure (HTTPS only)
-		true,                   // HttpOnly (JavaScript cannot access)
+		"refresh_token",  // Cookie name
+		res.RefreshToken, // Cookie value
+		7*24*3600,        // Max age (7 days in seconds)
+		"/",              // Path
+		"",               // Domain (empty = auto-detect)
+		true,             // Secure (HTTPS only)
+		true,             // HttpOnly (JavaScript cannot access)
 	)
 
 	// ✅ STEP 5: REMOVE REFRESH TOKEN FROM RESPONSE BODY
-	loginResp.RefreshToken = "" // ← Đừng trả về body nữa
+	res.RefreshToken = "" // ← Đừng trả về body nữa
+
+	sessionID := middleware.GetSessionID(c)
+	if sessionID != "" {
+		// User had anonymous cart before login
+		_ = h.cartService.MergeCart(c.Request.Context(), sessionID, res.User.ID)
+
+		// Clear session cookie (no longer needed)
+		c.SetCookie(
+			middleware.SessionCookieName,
+			"",
+			-1,
+			"/",
+			"",
+			true,
+			true,
+		)
+	}
 
 	// STEP 6: SUCCESS
 	// Return JWT tokens để client lưu (localStorage/cookie)
-	response.Success(c, http.StatusOK, "Login successful", loginResp)
+	response.Success(c, http.StatusOK, "Login successful", res)
 }
 
 // VerifyEmail xử lý GET /auth/verify-email?token=xxx - FR-AUTH-001
@@ -473,7 +494,7 @@ func (h *UserHandler) UpdateUserStatus(c *gin.Context) {
 func getUserIDFromContext(c *gin.Context) (uuid.UUID, error) {
 	// c.Get("userID"): lấy value từ context
 	// Returns: (interface{}, bool) - value và existence flag
-	value, exists := c.Get("userID")
+	value, exists := c.Get("user_id")
 	if !exists {
 		return uuid.Nil, errors.New("user ID not found in context")
 	}

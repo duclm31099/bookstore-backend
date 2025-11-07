@@ -8,29 +8,6 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-// Cart represents shopping cart for authenticated and anonymous users
-type Cart struct {
-	ID         uuid.UUID       `json:"id" db:"id"`
-	UserID     *uuid.UUID      `json:"user_id" db:"user_id"`
-	SessionID  *string         `json:"session_id" db:"session_id"`
-	ItemsCount int             `json:"items_count" db:"items_count"`
-	Subtotal   decimal.Decimal `json:"subtotal" db:"subtotal"`
-	CreatedAt  time.Time       `json:"created_at" db:"created_at"`
-	UpdatedAt  time.Time       `json:"updated_at" db:"updated_at"`
-	ExpiresAt  time.Time       `json:"expires_at" db:"expires_at"`
-}
-
-// CartItem represents items in shopping cart
-type CartItem struct {
-	ID        uuid.UUID       `json:"id" db:"id"`
-	CartID    uuid.UUID       `json:"cart_id" db:"cart_id"`
-	BookID    uuid.UUID       `json:"book_id" db:"book_id"`
-	Quantity  int             `json:"quantity" db:"quantity"`
-	Price     decimal.Decimal `json:"price" db:"price"` // Snapshot price at time of adding
-	CreatedAt time.Time       `json:"created_at" db:"created_at"`
-	UpdatedAt time.Time       `json:"updated_at" db:"updated_at"`
-}
-
 // AddToCartRequest represents request to add item to cart
 type AddToCartRequest struct {
 	BookID   uuid.UUID `json:"book_id" validate:"required"`
@@ -40,11 +17,6 @@ type AddToCartRequest struct {
 // UpdateCartItemRequest represents request to update cart item quantity
 type UpdateCartItemRequest struct {
 	Quantity int `json:"quantity" validate:"required,gte=1,lte=100"`
-}
-
-// ApplyPromoRequest represents request to apply promo code
-type ApplyPromoRequest struct {
-	PromoCode string `json:"promo_code" validate:"required,min=3,max=50"`
 }
 
 // CartResponse represents the full cart response with items

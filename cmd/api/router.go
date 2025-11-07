@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -21,6 +22,13 @@ func SetupRouter(c *container.Container) *gin.Engine {
 		middleware.Logger(),
 		middleware.CORS(),
 	)
+	// Cart middleware configuration
+	cartMiddlewareConfig := middleware.DefaultCartMiddlewareConfig(c.CartService)
+
+	// For development: disable Secure flag
+	if os.Getenv("ENV") == "development" {
+		cartMiddlewareConfig.CookieSecure = false
+	}
 	// ========================================
 	// API V1 ROUTES
 	// ========================================
@@ -206,6 +214,60 @@ func SetupRouter(c *container.Container) *gin.Engine {
 			bookRouter.DELETE("/:id", c.BookHandler.DeleteBook)
 			bookRouter.POST("", c.BookHandler.CreateBook)
 			bookRouter.GET("/search", c.BookHandler.SearchBooks)
+		}
+
+		// ---------------------------------- INVENTORY ROUTES ------------------------------------
+
+		inventoryRouter := v1.Group("/inventories")
+
+		{
+			inventoryRouter.POST("", c.InventoryHandler.CreateInventory)
+
+			// Read
+			inventoryRouter.GET("/:id", c.InventoryHandler.GetInventoryByID)
+			inventoryRouter.GET("/search", c.InventoryHandler.SearchInventory)
+			inventoryRouter.GET("", c.InventoryHandler.ListInventories)
+			inventoryRouter.PUT("/:id", c.InventoryHandler.UpdateInventory)
+			inventoryRouter.DELETE("/:id", c.InventoryHandler.DeleteInventory)
+
+			inventoryRouter.POST("/reverse", c.InventoryHandler.ReserveStock)
+			inventoryRouter.POST("/release", c.InventoryHandler.ReleaseStock)
+
+			inventoryRouter.POST("/check-availability", c.InventoryHandler.CheckAvailability)
+			inventoryRouter.GET("/summary", c.InventoryHandler.GetStockSummary)
+
+			inventoryRouter.POST("/:inventory_id/movements", c.InventoryHandler.CreateMovement)
+			inventoryRouter.GET("/movements", c.InventoryHandler.ListMovements)
+			inventoryRouter.GET("/movements/stats", c.InventoryHandler.GetMovementStats)
+
+			inventoryRouter.GET("/dashboard", c.InventoryHandler.GetInventoryDashboard)
+			inventoryRouter.GET("/alerts/low-stock", c.InventoryHandler.GetLowStockAlerts)
+			inventoryRouter.GET("/alerts/out-of-stock", c.InventoryHandler.GetOutOfStockItems)
+		}
+
+		// ===================== CART =========================
+		cartRoutes := v1.Group("/cart")
+		// 🔑 KEY: Use OptionalAuthMiddleware instead of AuthMiddleware
+		// This allows both authenticated and anonymous users
+		cartRoutes.Use(middleware.OptionalAuthMiddleware(c.Config.JWT.Secret))
+
+		// 🛒 Then apply CartMiddleware
+		// CartMiddleware handles user_id (from OptionalAuth) + session_id
+		cartRoutes.Use(middleware.CartMiddleware(cartMiddlewareConfig))
+		{
+			// Step 1 APIs
+			cartRoutes.GET("", c.CartHandler.GetCart)
+			cartRoutes.POST("/items", c.CartHandler.AddItem)
+			cartRoutes.GET("/items", c.CartHandler.ListItems)
+
+			cartRoutes.PUT("/items/:item_id", c.CartHandler.UpdateItemQuantity) // Update qty
+			cartRoutes.DELETE("/items/:item_id", c.CartHandler.RemoveItem)      // Remove item
+			cartRoutes.DELETE("", c.CartHandler.ClearCart)
+
+			cartRoutes.POST("/validate", c.CartHandler.ValidateCart)
+			cartRoutes.POST("/promo", c.CartHandler.ApplyPromoCode)
+			cartRoutes.DELETE("/promo", c.CartHandler.RemovePromoCode)
+			cartRoutes.POST("/checkout", c.CartHandler.Checkout)
 		}
 	}
 

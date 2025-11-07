@@ -1,4 +1,4 @@
-package book
+package model
 
 import (
 	"bookstore-backend/internal/shared/response"

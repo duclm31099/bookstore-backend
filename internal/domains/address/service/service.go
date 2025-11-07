@@ -14,7 +14,7 @@ type addressService struct {
 	repo a.Repository
 }
 
-func NewAddressService(repo a.Repository) a.Service {
+func NewAddressService(repo a.Repository) a.ServiceInterface {
 	return &addressService{
 		repo: repo,
 	}

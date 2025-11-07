@@ -1,4 +1,4 @@
-package book
+package model
 
 import (
 	"bookstore-backend/internal/shared/utils"
@@ -529,6 +529,17 @@ type BookDetailResponse struct {
 	RatingAverage float64              `json:"rating_average"`
 	RatingCount   int                  `json:"rating_count"`
 	Reviews       []ReviewDTO          `json:"reviews"`
+}
+type BookFilter struct {
+	Search     string
+	CategoryID string
+	PriceMin   float64
+	PriceMax   float64
+	Language   string
+	Sort       string
+	Offset     int
+	Limit      int
+	IsActive   *bool
 }
 
 // các DTO liên kết
