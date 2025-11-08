@@ -6,31 +6,21 @@ import (
 	"github.com/google/uuid"
 )
 
-// Inventory represents the database entity for inventories table
-// Maps directly to PostgreSQL schema
-type Inventory struct {
-	// Identity
-	ID     uuid.UUID `db:"id"`
-	BookID uuid.UUID `db:"book_id"`
+// New structs for new schema
+type NearestWarehouse struct {
+	BookID            uuid.UUID `json:"book_id"`
+	WarehouseID       uuid.UUID `json:"warehouse_id"`
+	WarehouseName     string    `json:"warehouse_name"`
+	AvailableQuantity int       `json:"available_quantity"`
+	DistanceKM        float64   `json:"distance_km"`
+}
 
-	// Location (Vietnam warehouses: HN, HCM, DN, CT)
-	WarehouseLocation string `db:"warehouse_location"`
-
-	// Stock levels
-	Quantity          int `db:"quantity"`
-	ReservedQuantity  int `db:"reserved_quantity"`
-	AvailableQuantity int `db:"available_quantity"` // GENERATED ALWAYS AS (quantity - reserved_quantity) STORED
-
-	// Alerts
-	LowStockThreshold int  `db:"low_stock_threshold"`
-	IsLowStock        bool `db:"is_low_stock"` // GENERATED ALWAYS AS (quantity - reserved_quantity <= low_stock_threshold) STORED
-
-	// Optimistic locking
-	Version int `db:"version"`
-
-	// Timestamps
-	LastRestockAt *time.Time `db:"last_restock_at"`
-	UpdatedAt     time.Time  `db:"updated_at"`
+type TotalStockResponse struct {
+	BookID         uuid.UUID `json:"book_id"`
+	TotalQuantity  int       `json:"total_quantity"`
+	TotalReserved  int       `json:"total_reserved"`
+	TotalAvailable int       `json:"total_available"`
+	WarehouseCount int       `json:"warehouse_count"`
 }
 
 // ValidWarehouseLocations defines allowed warehouse locations in Vietnam
@@ -59,4 +49,77 @@ type InventoryMovement struct {
 	Notes          *string
 	CreatedBy      *uuid.UUID
 	CreatedAt      time.Time
+}
+
+// Inventory represents warehouse_inventory table
+type Inventory struct {
+	ID uuid.UUID `json:"id" db:"id"`
+	// Composite Primary Key
+	WarehouseID uuid.UUID `json:"warehouse_id" db:"warehouse_id"`
+	BookID      uuid.UUID `json:"book_id" db:"book_id"`
+
+	// Stock columns
+	Quantity       int  `json:"quantity" db:"quantity"`
+	Reserved       int  `json:"reserved" db:"reserved"`
+	AlertThreshold int  `json:"alert_threshold" db:"alert_threshold"`
+	IsLowStock     bool `json:"is_low_stock"`
+	// Metadata
+	Version       int        `json:"version" db:"version"`
+	LastRestockAt *time.Time `json:"last_restocked_at,omitempty" db:"last_restocked_at"`
+	UpdatedAt     time.Time  `json:"updated_at" db:"updated_at"`
+	UpdatedBy     *uuid.UUID `json:"updated_by,omitempty" db:"updated_by"`
+
+	// Computed fields (not in DB)
+	AvailableQuantity int    `json:"available" db:"-"`
+	WarehouseName     string `json:"warehouse_name,omitempty" db:"-"` // Join field
+}
+
+// Warehouse represents warehouses table
+type Warehouse struct {
+	ID        uuid.UUID  `json:"id" db:"id"`
+	Name      string     `json:"name" db:"name"`
+	Code      string     `json:"code" db:"code"`
+	Address   string     `json:"address" db:"address"`
+	Province  string     `json:"province" db:"province"`
+	Latitude  *float64   `json:"latitude,omitempty" db:"latitude"`
+	Longitude *float64   `json:"longitude,omitempty" db:"longitude"`
+	IsActive  bool       `json:"is_active" db:"is_active"`
+	Version   int        `json:"version" db:"version"`
+	CreatedAt time.Time  `json:"created_at" db:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at" db:"updated_at"`
+	DeletedAt *time.Time `json:"deleted_at,omitempty" db:"deleted_at"`
+}
+
+// LowStockAlert represents low_stock_alerts table
+type LowStockAlert struct {
+	ID              uuid.UUID  `json:"id" db:"id"`
+	WarehouseID     uuid.UUID  `json:"warehouse_id" db:"warehouse_id"`
+	BookID          uuid.UUID  `json:"book_id" db:"book_id"`
+	CurrentQuantity int        `json:"current_quantity" db:"current_quantity"`
+	AlertThreshold  int        `json:"alert_threshold" db:"alert_threshold"`
+	IsResolved      bool       `json:"is_resolved" db:"is_resolved"`
+	ResolvedAt      *time.Time `json:"resolved_at,omitempty" db:"resolved_at"`
+	CreatedAt       time.Time  `json:"created_at" db:"created_at"`
+
+	// Join fields
+	WarehouseName string `json:"warehouse_name,omitempty" db:"-"`
+	BookTitle     string `json:"book_title,omitempty" db:"-"`
+	Priority      string `json:"priority" db:"-"` // critical/high/medium
+}
+
+// AuditLogEntry represents inventory_audit_log table
+type AuditLogEntry struct {
+	ID             uuid.UUID  `json:"id" db:"id"`
+	WarehouseID    uuid.UUID  `json:"warehouse_id" db:"warehouse_id"`
+	BookID         uuid.UUID  `json:"book_id" db:"book_id"`
+	Action         string     `json:"action" db:"action"` // RESTOCK, RESERVE, RELEASE, ADJUSTMENT, SALE
+	OldQuantity    int        `json:"old_quantity" db:"old_quantity"`
+	NewQuantity    int        `json:"new_quantity" db:"new_quantity"`
+	OldReserved    int        `json:"old_reserved" db:"old_reserved"`
+	NewReserved    int        `json:"new_reserved" db:"new_reserved"`
+	QuantityChange int        `json:"quantity_change" db:"quantity_change"`
+	Reason         *string    `json:"reason,omitempty" db:"reason"`
+	ChangedBy      *uuid.UUID `json:"changed_by,omitempty" db:"changed_by"`
+	IPAddress      *string    `json:"ip_address,omitempty" db:"ip_address"`
+	CreatedAt      time.Time  `json:"created_at" db:"created_at"`
 }

@@ -18,7 +18,6 @@ type RepositoryInterface interface {
 	UpdateBook(ctx context.Context, book *model.Book) error
 	CheckBookHasReservedInventory(ctx context.Context, bookID string) (bool, error)
 	CheckBookHasActiveOrders(ctx context.Context, bookID string) (bool, error)
-	DeleteBook(ctx context.Context, id string) error
 	SoftDeleteBook(ctx context.Context, bookID string, deletedAt time.Time) error
 	SearchBooks(ctx context.Context, req model.SearchBooksRequest) ([]model.BookSearchResponse, error)
 	CheckISBNExists(ctx context.Context, isbn string) (bool, error)

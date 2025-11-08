@@ -3,90 +3,182 @@ package repository
 import (
 	"bookstore-backend/internal/domains/inventory/model"
 	"context"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
-// Repository defines the contract for inventory data access
+// RepositoryInterface defines the contract for inventory data access
+// Tương tác trực tiếp với schema warehouse_inventory mới
 type RepositoryInterface interface {
-	// Create inserts a new inventory record
-	// Returns ErrInventoryAlreadyExists if duplicate (book_id, warehouse_location) exists
+	// ========================================
+	// CORE CRUD OPERATIONS
+	// ========================================
+
+	// Create inserts a new inventory record for one warehouse + one book
+	// PRIMARY KEY: (warehouse_id, book_id)
+	// Returns ErrInventoryAlreadyExists if duplicate exists
+	// Returns ErrBookNotFound or ErrWarehouseNotFound if FK violation
 	Create(ctx context.Context, inventory *model.Inventory) error
 
-	// CreateBatch inserts multiple inventory records in a single transaction
-	// Used when creating inventory for all warehouses (warehouse_location = "ALL")
+	// CreateBatch inserts multiple inventory records in single transaction
+	// Used for bulk import from CSV (FR-INV-006)
+	// All-or-nothing: rollback if any row fails
 	CreateBatch(ctx context.Context, inventories []model.Inventory) error
 
-	// GetByID retrieves inventory by primary key
+	// GetByWarehouseAndBook retrieves inventory by composite primary key
 	// Returns ErrInventoryNotFound if not exists
-	GetByID(ctx context.Context, id uuid.UUID) (*model.Inventory, error)
-
-	// GetByBookAndWarehouse retrieves inventory by unique constraint (book_id, warehouse_location)
-	// Returns ErrInventoryNotFound if not exists
-	GetByBookAndWarehouse(ctx context.Context, bookID uuid.UUID, warehouse string) (*model.Inventory, error)
+	GetByWarehouseAndBook(ctx context.Context, warehouseID, bookID uuid.UUID) (*model.Inventory, error)
 
 	// Update updates inventory with optimistic locking
+	// Uses version column to prevent concurrent modification (FR-INV-001)
 	// Returns ErrOptimisticLockFailed if version mismatch
 	// Returns ErrInventoryNotFound if not exists
-	Update(ctx context.Context, id uuid.UUID, inventory *model.Inventory) error
+	// Trigger tự động tạo audit log entry
+	Update(ctx context.Context, warehouseID, bookID uuid.UUID, inventory *model.Inventory) error
 
 	// Delete removes inventory record
-	// Should validate quantity = 0 and reserved_quantity = 0 before deletion
-	// Returns ErrInventoryNotFound if not exists
-	Delete(ctx context.Context, id uuid.UUID) error
+	// Only allowed if quantity = 0 AND reserved = 0
+	// Returns ErrCannotDeleteNonEmptyInventory if validation fails
+	Delete(ctx context.Context, warehouseID, bookID uuid.UUID) error
 
 	// List retrieves paginated inventory records with filters
-	// Returns empty slice if no records match
+	// Supports filters: book_id, warehouse_id, is_low_stock, has_available_stock
+	// Joins with warehouses table to get warehouse name
 	List(ctx context.Context, filter model.ListInventoryRequest) ([]model.Inventory, int, error)
 
-	// ExistsByBookID checks if any inventory exists for a book
-	// ExistsByBookID(ctx context.Context, bookID uuid.UUID) (bool, error)
+	// ========================================
+	// STOCK RESERVATION (FR-INV-003)
+	// ========================================
 
-	// ReserveStock atomically reserves stock with row-level locking
+	// ReserveStock calls DB function reserve_stock()
+	// Uses pessimistic locking (SELECT FOR UPDATE NOWAIT)
+	// Atomically increases reserved quantity
 	// Returns updated inventory after reservation
-	// Returns ErrInsufficientStock if not enough available stock
-	ReserveStock(ctx context.Context, bookID uuid.UUID, warehouse string, quantity int, referenceType string, referenceID uuid.UUID) (*model.Inventory, error)
+	// Returns ErrInsufficientStock if not enough available
+	// Returns ErrOptimisticLockFailed if concurrent modification
+	ReserveStock(ctx context.Context, warehouseID, bookID uuid.UUID, quantity int, userID *uuid.UUID) (*model.Inventory, error)
 
-	// ReleaseStock atomically releases reserved stock
-	// Returns updated inventory after release
-	// Returns ErrInvalidReleaseQuantity if trying to release more than reserved
-	ReleaseStock(ctx context.Context, bookID uuid.UUID, warehouse string, quantity int, referenceID uuid.UUID) (*model.Inventory, error)
+	// ReleaseStock calls DB function release_stock()
+	// Atomically decreases reserved quantity
+	// Used when order cancelled/expired (timeout 15m)
+	// Returns updated inventory
+	ReleaseStock(ctx context.Context, warehouseID, bookID uuid.UUID, quantity int, userID *uuid.UUID) (*model.Inventory, error)
 
-	// GetInventoriesByBook retrieves all warehouse inventories for a specific book
-	// Returns sorted by warehouse location for consistent ordering
+	// CompleteSale calls DB function complete_sale()
+	// Decreases both quantity AND reserved
+	// Used when payment success
+	// Returns updated inventory
+	CompleteSale(ctx context.Context, warehouseID, bookID uuid.UUID, quantity int, userID *uuid.UUID) (*model.Inventory, error)
+
+	// ========================================
+	// WAREHOUSE SELECTION (FR-INV-002)
+	// ========================================
+
+	// FindNearestWarehouse calls DB function find_nearest_warehouse()
+	// Uses Haversine formula to calculate distance
+	// Returns warehouse nearest to customer address with sufficient stock
+	// Returns error if no warehouse has enough stock
+	FindNearestWarehouse(ctx context.Context, bookID uuid.UUID, latitude, longitude float64, requiredQuantity int) (*model.NearestWarehouse, error)
+
+	// GetInventoriesByBook retrieves all warehouse inventories for a book
+	// Sorted by available stock DESC (most stock first)
+	// Only includes active warehouses (is_active = true, deleted_at IS NULL)
 	GetInventoriesByBook(ctx context.Context, bookID uuid.UUID) ([]model.Inventory, error)
 
-	// GetInventoriesByBooks retrieves inventories for multiple books (single query for efficiency)
-	// Returns map of bookID -> []Inventory for quick lookup
-	GetInventoriesByBooks(ctx context.Context, bookIDs []uuid.UUID) (map[uuid.UUID][]model.Inventory, error)
+	// GetTotalStockForBook queries VIEW books_total_stock
+	// Aggregates total quantity, reserved, available across all warehouses
+	// Returns 0 values if book has no inventory
+	GetTotalStockForBook(ctx context.Context, bookID uuid.UUID) (*model.TotalStockResponse, error)
 
-	// CreateMovement creates inventory movement record
-	CreateMovement(ctx context.Context, movement *model.InventoryMovement) error
+	// ========================================
+	// LOW STOCK ALERTS (FR-INV-004)
+	// ========================================
 
-	// ListMovements lists movements with filters and pagination
-	ListMovements(ctx context.Context, filter model.ListMovementsRequest) ([]model.InventoryMovement, int, error)
+	// GetLowStockAlerts queries low_stock_alerts table
+	// Filters by is_resolved status
+	// Trigger tự động tạo alerts khi quantity < alert_threshold
+	// Trigger tự động resolve khi restocked
+	GetLowStockAlerts(ctx context.Context, resolved bool) ([]model.LowStockAlert, error)
 
-	// GetMovementsByInventoryID gets all movements for specific inventory
-	// GetMovementsByInventoryID(ctx context.Context, inventoryID uuid.UUID, page, limit int) ([]model.InventoryMovement, int, error)
+	// ========================================
+	// AUDIT TRAIL (FR-INV-005)
+	// ========================================
 
-	// GetMovementStatsForBook gets aggregated stats for all movements of a book across warehouses
-	GetMovementStatsForBook(ctx context.Context, bookID uuid.UUID) (*model.MovementStatsResponse, error)
+	// GetAuditLog queries partitioned table inventory_audit_log
+	// Supports filters: warehouse_id, book_id, date range
+	// Ordered by created_at DESC
+	// Trigger tự động tạo log entries khi inventory thay đổi
+	GetAuditLog(ctx context.Context, warehouseID, bookID *uuid.UUID, startDate, endDate *time.Time, limit, offset int) ([]model.AuditLogEntry, int, error)
 
-	// GetDashboardMetrics retrieves all metrics for dashboard
+	// ========================================
+	// DASHBOARD & ANALYTICS
+	// ========================================
+
+	// GetDashboardMetrics returns aggregated metrics
+	// - Total books, quantity, reserved, available
+	// - Low stock count, out of stock count
+	// - Health score calculation
 	GetDashboardMetrics(ctx context.Context) (*model.DashboardSummary, error)
 
-	// GetWarehouseMetrics retrieves metrics for all warehouses
+	// GetWarehouseMetrics returns per-warehouse breakdown
+	// - Book count, quantity, reserved per warehouse
+	// - Utilization rate, reservation rate
+	// - Health score per warehouse
 	GetWarehouseMetrics(ctx context.Context) ([]model.WarehouseMetrics, error)
 
-	// GetLowStockItems retrieves all items below threshold
-	GetLowStockItems(ctx context.Context) ([]model.LowStockItem, error)
+	// ... (các methods hiện tại)
 
-	// GetOutOfStockItems retrieves all zero-quantity items
-	GetOutOfStockItems(ctx context.Context) ([]model.OutOfStockItem, error)
+	// ========================================
+	// WAREHOUSE MANAGEMENT (BỔ SUNG)
+	// ========================================
 
-	// GetReservedAnalysis retrieves reserved stock analysis
-	GetReservedAnalysis(ctx context.Context) (*model.ReservedStockAnalysis, error)
+	// ListWarehouses retrieves all warehouses with filters
+	// Filters: is_active, province
+	// Sorted by name ASC
+	ListWarehouses(ctx context.Context, req model.ListWarehousesRequest) ([]model.Warehouse, error)
 
-	// GetMovementTrends retrieves movement trends (last 7-30 days)
+	// GetWarehouseByID retrieves warehouse by ID
+	// Returns ErrWarehouseNotFound if not exists or deleted
+	GetWarehouseByID(ctx context.Context, warehouseID uuid.UUID) (*model.Warehouse, error)
+
+	// CreateWarehouse creates new warehouse
+	// Returns ErrWarehouseCodeExists if code already exists
+	CreateWarehouse(ctx context.Context, warehouse *model.Warehouse) error
+
+	// UpdateWarehouse updates warehouse with optimistic locking
+	// Returns ErrOptimisticLockFailed if version mismatch
+	UpdateWarehouse(ctx context.Context, warehouseID uuid.UUID, warehouse *model.Warehouse) error
+
+	// DeactivateWarehouse soft deletes warehouse (sets deleted_at)
+	// Validates: all inventory quantities = 0 before deletion
+	DeactivateWarehouse(ctx context.Context, warehouseID uuid.UUID) error
+
+	// ========================================
+	// ANALYTICS & METRICS (BỔ SUNG)
+	// ========================================
+
+	// GetMovementTrends returns daily movement trends
+	// Aggregates inbound/outbound movements over specified days
+	// Used for dashboard charts and forecasting
 	GetMovementTrends(ctx context.Context, days int) ([]model.MovementTrend, error)
+
+	// GetReservationMetrics returns reservation-specific metrics
+	// - Total reserved, reservation rate
+	// - Average reservation duration
+	// - Breakdown by warehouse
+	GetReservationMetrics(ctx context.Context) (*model.ReservationMetrics, error)
+
+	// ReserveStockWithTx reserves stock using provided transaction
+	ReserveStockWithTx(
+		ctx context.Context, tx pgx.Tx,
+		warehouseID uuid.UUID, bookID uuid.UUID, quantity int, userid *uuid.UUID,
+	) error
+
+	// ReleaseStockWithTx releases stock using provided transaction
+	ReleaseStockWithTx(ctx context.Context, tx pgx.Tx,
+		warehouseID uuid.UUID, bookID uuid.UUID, quantity int, userid *uuid.UUID) error
+	// GetAvailableQuantity returns available quantity (quantity - reserved)
+	GetAvailableQuantity(ctx context.Context, warehouseID uuid.UUID, bookID uuid.UUID) (int, error)
 }

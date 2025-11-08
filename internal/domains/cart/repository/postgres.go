@@ -167,7 +167,6 @@ func (r *postgresRepository) AddItem(ctx context.Context, item *model.CartItem) 
 	return nil
 }
 
-// GetItemsWithBooks implements RepositoryInterface.GetItemsWithBooks
 func (r *postgresRepository) GetItemsWithBooks(ctx context.Context, cartID uuid.UUID, page int, limit int) ([]model.CartItemWithBook, int, error) {
 	// Get total count
 	countQuery := `SELECT COUNT(*) FROM cart_items WHERE cart_id = $1`
@@ -178,22 +177,31 @@ func (r *postgresRepository) GetItemsWithBooks(ctx context.Context, cartID uuid.
 	}
 
 	// Get paginated items with book details
+	// Uses new warehouse_inventory schema with aggregated stock across all warehouses
 	query := `
 		SELECT 
-			ci.id, ci.cart_id, ci.book_id, ci.quantity, ci.price, ci.created_at, ci.updated_at,
+			ci.id, 
+			ci.cart_id, 
+			ci.book_id, 
+			ci.quantity, 
+			ci.price, 
+			ci.created_at, 
+			ci.updated_at,
 			b.title as book_title,
 			b.slug as book_slug,
 			b.cover_url as book_cover_url,
 			a.name as book_author,
 			b.price as current_price,
 			b.is_active,
-			COALESCE(inv.available_quantity, 0) as total_stock
+			COALESCE(inv.total_available, 0) as total_stock
 		FROM cart_items ci
 		LEFT JOIN books b ON ci.book_id = b.id
 		LEFT JOIN authors a ON b.author_id = a.id
 		LEFT JOIN (
-			SELECT book_id, SUM(available_quantity) as available_quantity
-			FROM inventories
+			SELECT 
+				book_id, 
+				SUM(quantity - reserved) as total_available
+			FROM warehouse_inventory
 			GROUP BY book_id
 		) inv ON b.id = inv.book_id
 		WHERE ci.cart_id = $1

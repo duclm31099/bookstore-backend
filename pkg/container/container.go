@@ -55,16 +55,35 @@ import (
 	inventoryRepo "bookstore-backend/internal/domains/inventory/repository"
 	inventoryService "bookstore-backend/internal/domains/inventory/service"
 
+	// CART
 	cartHandler "bookstore-backend/internal/domains/cart/handler"
 	cartRepo "bookstore-backend/internal/domains/cart/repository"
 	cartService "bookstore-backend/internal/domains/cart/service"
+
+	// PROMOTION
+	promotionHandler "bookstore-backend/internal/domains/promotion/handler"
+	promotionRepo "bookstore-backend/internal/domains/promotion/repository"
+	promotionService "bookstore-backend/internal/domains/promotion/service"
+
+	// ORDER
+	orderHandler "bookstore-backend/internal/domains/order/handler"
+	orderRepo "bookstore-backend/internal/domains/order/repository"
+	orderService "bookstore-backend/internal/domains/order/service"
+
+	// PAYMENT
+	"bookstore-backend/internal/domains/payment/gateway"
+	paymentHandler "bookstore-backend/internal/domains/payment/handler"
+	paymentRepo "bookstore-backend/internal/domains/payment/repository"
+	paymentService "bookstore-backend/internal/domains/payment/service"
 )
 
 type Container struct {
-	Config     *config.Config
-	DB         *database.PostgresDB
-	Cache      cache.Cache
-	JWTManager *jwt.Manager
+	Config       *config.Config
+	DB           *database.PostgresDB
+	Cache        cache.Cache
+	JWTManager   *jwt.Manager
+	VNPayGateway gateway.VNPayGateway
+	MomoGateway  gateway.MomoGateway
 
 	// ========================================
 	// REPOSITORY LAYER (DATA ACCESS)
@@ -77,6 +96,12 @@ type Container struct {
 	BookRepo      bookRepo.RepositoryInterface
 	InventoryRepo inventoryRepo.RepositoryInterface
 	CartRepo      cartRepo.RepositoryInterface
+	PromotionRepo promotionRepo.PromotionRepository
+	OrderRepo     orderRepo.OrderRepository
+	PaymentRepo   paymentRepo.PaymentRepoInteface
+	RefundRepo    paymentRepo.RefundRepoInterface
+	WebHookRepo   paymentRepo.WebhookRepoInterface
+	TxManager     paymentRepo.TransactionManager
 	// ========================================
 	// SERVICE LAYER (BUSINESS LOGIC)
 	// ========================================
@@ -89,6 +114,10 @@ type Container struct {
 	BookService      bookService.ServiceInterface
 	InventoryService inventoryService.ServiceInterface
 	CartService      cartService.ServiceInterface
+	PromotionService promotionService.ServiceInterface
+	OrderSerivce     orderService.OrderService
+	PaymentService   paymentService.PaymentService
+	RefundService    paymentService.RefundInterface
 	// ========================================
 	// HANDLER LAYER (HTTP)
 	// ========================================
@@ -99,8 +128,11 @@ type Container struct {
 	AddressHandler   *addressHandler.AddressHandler
 	BookHandler      *bookHandler.Handler
 	InventoryHandler *inventoryHandler.Handler
-
-	CartHandler *cartHandler.Handler
+	CartHandler      *cartHandler.Handler
+	PublicProHandler *promotionHandler.PublicHandler
+	AdminProHandler  *promotionHandler.AdminHandler
+	OrderHandler     *orderHandler.OrderHandler
+	PaymentHandler   *paymentHandler.PaymentHandler
 }
 
 // ========================================
@@ -199,6 +231,11 @@ func (c *Container) initRepositories() error {
 	c.BookRepo = bookRepo.NewPostgresRepository(pool, c.Cache)
 	c.InventoryRepo = inventoryRepo.NewRepository(pool)
 	c.CartRepo = cartRepo.NewPostgresRepository(pool, c.Cache)
+	c.PromotionRepo = promotionRepo.NewPostgresRepository(pool)
+	c.OrderRepo = orderRepo.NewPostgresOrderRepository(pool)
+	c.PaymentRepo = paymentRepo.NewppRepository(pool)
+	c.RefundRepo = paymentRepo.NewRefundRepository(pool)
+	c.TxManager = paymentRepo.NewPostgresTransactionManager(pool)
 	return nil
 }
 
@@ -215,7 +252,17 @@ func (c *Container) initServices() error {
 	c.AddressService = addressService.NewAddressService(c.AddressRepo)
 	c.BookService = bookService.NewService(c.BookRepo, c.Cache)
 	c.InventoryService = inventoryService.NewService(c.InventoryRepo)
-	c.CartService = cartService.NewCartService(c.CartRepo, c.InventoryRepo, c.AddressService)
+	c.CartService = cartService.NewCartService(c.CartRepo, c.InventoryService, c.AddressService, c.InventoryRepo)
+	c.PromotionService = promotionService.NewPromotionService(c.PromotionRepo, c.DB.Pool, c.CartService)
+	c.OrderSerivce = orderService.NewOrderService(c.OrderRepo, nil, c.InventoryRepo, c.AddressRepo, c.CartRepo, c.PromotionRepo, c.InventoryService)
+	c.PaymentService = paymentService.NewPaymentService(
+		c.PaymentRepo, c.WebHookRepo, c.RefundRepo, c.TxManager,
+		c.VNPayGateway, c.MomoGateway, c.OrderSerivce,
+	)
+	c.RefundService = paymentService.NewRefundService(
+		c.PaymentRepo, c.RefundRepo, c.OrderRepo,
+		c.VNPayGateway, c.MomoGateway, c.OrderSerivce,
+	)
 	return nil
 }
 
@@ -229,6 +276,9 @@ func (c *Container) initHandlers() error {
 	c.BookHandler = bookHandler.NewHandler(c.BookService, c.Cache)
 	c.InventoryHandler = inventoryHandler.NewHandler(c.InventoryService)
 	c.CartHandler = cartHandler.NewHandler(c.CartService)
+	c.AdminProHandler = promotionHandler.NewAdminHandler(c.PromotionService)
+	c.PublicProHandler = promotionHandler.NewPublicHandler(c.PromotionService, c.CartService)
+	c.PaymentHandler = paymentHandler.NewPaymentHandler(c.PaymentService, c.RefundService)
 	return nil
 }
 

@@ -219,30 +219,132 @@ func SetupRouter(c *container.Container) *gin.Engine {
 		// ---------------------------------- INVENTORY ROUTES ------------------------------------
 
 		inventoryRouter := v1.Group("/inventories")
-
 		{
+			// ========================================
+			// INVENTORY CRUD
+			// ========================================
+
+			// Create inventory for warehouse(s)
 			inventoryRouter.POST("", c.InventoryHandler.CreateInventory)
 
-			// Read
-			inventoryRouter.GET("/:id", c.InventoryHandler.GetInventoryByID)
-			inventoryRouter.GET("/search", c.InventoryHandler.SearchInventory)
-			inventoryRouter.GET("", c.InventoryHandler.ListInventories)
-			inventoryRouter.PUT("/:id", c.InventoryHandler.UpdateInventory)
-			inventoryRouter.DELETE("/:id", c.InventoryHandler.DeleteInventory)
+			// Get inventory by composite key (warehouse_id + book_id)
+			inventoryRouter.GET("/:warehouse_id/:book_id", c.InventoryHandler.GetInventoryByWarehouseAndBook)
 
-			inventoryRouter.POST("/reverse", c.InventoryHandler.ReserveStock)
+			// List inventories with filters
+			inventoryRouter.GET("", c.InventoryHandler.ListInventories)
+
+			// Update inventory (composite key)
+			inventoryRouter.PATCH("/:warehouse_id/:book_id", c.InventoryHandler.UpdateInventory)
+
+			// Delete inventory (composite key)
+			inventoryRouter.DELETE("/:warehouse_id/:book_id", c.InventoryHandler.DeleteInventory)
+
+			// ========================================
+			// STOCK OPERATIONS (FR-INV-003)
+			// ========================================
+
+			// Reserve stock for checkout (15min timeout)
+			inventoryRouter.POST("/reserve", c.InventoryHandler.ReserveStock)
+
+			// Release reserved stock (cancel/timeout)
 			inventoryRouter.POST("/release", c.InventoryHandler.ReleaseStock)
 
+			// Complete sale after payment success
+			inventoryRouter.POST("/complete-sale", c.InventoryHandler.CompleteSale)
+
+			// ========================================
+			// WAREHOUSE SELECTION (FR-INV-002)
+			// ========================================
+
+			// Find nearest warehouse with stock
+			inventoryRouter.POST("/find-warehouse", c.InventoryHandler.FindOptimalWarehouse)
+
+			// Check availability for order items
 			inventoryRouter.POST("/check-availability", c.InventoryHandler.CheckAvailability)
-			inventoryRouter.GET("/summary", c.InventoryHandler.GetStockSummary)
 
-			inventoryRouter.POST("/:inventory_id/movements", c.InventoryHandler.CreateMovement)
-			inventoryRouter.GET("/movements", c.InventoryHandler.ListMovements)
-			inventoryRouter.GET("/movements/stats", c.InventoryHandler.GetMovementStats)
+			// Get total stock summary for book (all warehouses)
+			inventoryRouter.GET("/summary/:book_id", c.InventoryHandler.GetStockSummary)
 
-			inventoryRouter.GET("/dashboard", c.InventoryHandler.GetInventoryDashboard)
+			// ========================================
+			// STOCK ADJUSTMENT (FR-INV-005)
+			// ========================================
+
+			// Manual stock adjustment (admin only)
+			inventoryRouter.POST("/adjust", c.InventoryHandler.AdjustStock)
+
+			// Restock from supplier
+			inventoryRouter.POST("/restock", c.InventoryHandler.RestockInventory)
+
+			// Bulk update from CSV (FR-INV-006)
+			inventoryRouter.POST("/bulk-update", c.InventoryHandler.BulkUpdateStock)
+			inventoryRouter.GET("/bulk-update/:job_id", c.InventoryHandler.GetBulkUpdateStatus)
+
+			// ========================================
+			// AUDIT TRAIL (FR-INV-005)
+			// ========================================
+
+			// Get audit log with filters
+			inventoryRouter.GET("/audit", c.InventoryHandler.GetAuditTrail)
+
+			// Get inventory history for specific warehouse+book
+			inventoryRouter.GET("/:warehouse_id/:book_id/history", c.InventoryHandler.GetInventoryHistory)
+
+			// Export audit log to CSV/Excel
+			inventoryRouter.POST("/audit/export", c.InventoryHandler.ExportAuditLog)
+
+			// ========================================
+			// ALERTS (FR-INV-004)
+			// ========================================
+
+			// Get low stock alerts (unresolved)
 			inventoryRouter.GET("/alerts/low-stock", c.InventoryHandler.GetLowStockAlerts)
+
+			// Get out of stock items
 			inventoryRouter.GET("/alerts/out-of-stock", c.InventoryHandler.GetOutOfStockItems)
+
+			// Mark alert as resolved (admin)
+			inventoryRouter.PATCH("/alerts/:alert_id/resolve", c.InventoryHandler.MarkAlertResolved)
+
+			// ========================================
+			// DASHBOARD & ANALYTICS
+			// ========================================
+
+			// Comprehensive dashboard
+			inventoryRouter.GET("/dashboard", c.InventoryHandler.GetDashboardSummary)
+
+			// Movement trends (last N days)
+			// inventoryRouter.GET("/trends", c.InventoryHandler.GetMovementTrends)
+
+			// Reservation analytics
+			inventoryRouter.GET("/analysis/reservations", c.InventoryHandler.GetReservationAnalysis)
+
+			// Inventory value (financial reporting)
+			// inventoryRouter.GET("/value", c.InventoryHandler.GetInventoryValue)
+		}
+
+		// ========================================
+		// WAREHOUSE MANAGEMENT (Separate Group)
+		// ========================================
+
+		warehouseRouter := v1.Group("/warehouses")
+		{
+			// Create warehouse (admin only)
+			warehouseRouter.POST("", c.InventoryHandler.CreateWarehouse)
+
+			// List warehouses with filters
+			warehouseRouter.GET("", c.InventoryHandler.ListWarehouses)
+
+			// Get warehouse by ID
+			warehouseRouter.GET("/:id", c.InventoryHandler.GetWarehouseByID)
+
+			// Update warehouse (admin only)
+			warehouseRouter.PATCH("/:id", c.InventoryHandler.UpdateWarehouse)
+
+			// Deactivate warehouse (admin only)
+			warehouseRouter.DELETE("/:id", c.InventoryHandler.DeactivateWarehouse)
+
+			// Get warehouse performance metrics
+			warehouseRouter.GET("/:id/performance", c.InventoryHandler.GetWarehousePerformance)
 		}
 
 		// ===================== CART =========================
@@ -268,6 +370,200 @@ func SetupRouter(c *container.Container) *gin.Engine {
 			cartRoutes.POST("/promo", c.CartHandler.ApplyPromoCode)
 			cartRoutes.DELETE("/promo", c.CartHandler.RemovePromoCode)
 			cartRoutes.POST("/checkout", c.CartHandler.Checkout)
+			cartRoutes.POST("/promo", c.PublicProHandler.ApplyPromotionToCart) // POST /v1/cart/promo
+			cartRoutes.DELETE("/promo", c.PublicProHandler.RemovePromotionFromCart)
+		}
+
+		//  ======================== PROMOTION ========================================
+		promotion := v1.Group("/promotion")
+
+		// Public endpoints
+		promotion.POST("/validate", c.PublicProHandler.ValidatePromotion) // POST /v1/promotions/validate
+		promotion.GET("", c.PublicProHandler.ListActivePromotions)        // GET /v1/promotions
+
+		promotion.POST("", c.AdminProHandler.CreatePromotion)                   // POST /v1/admin/promotions
+		promotion.GET("", c.AdminProHandler.ListPromotions)                     // GET /v1/admin/promotions
+		promotion.GET("/:id", c.AdminProHandler.GetPromotionByID)               // GET /v1/admin/promotions/:id
+		promotion.PUT("/:id", c.AdminProHandler.UpdatePromotion)                // PUT /v1/admin/promotions/:id
+		promotion.PATCH("/:id/status", c.AdminProHandler.UpdatePromotionStatus) // PATCH /v1/admin/promotions/:id/status
+		promotion.DELETE("/:id", c.AdminProHandler.DeletePromotion)             // DELETE /v1/admin/promotions/:id
+		promotion.GET("/:id/usage", c.AdminProHandler.GetUsageHistory)          // GET /v1/admin/promotions/:id/usage
+		promotion.POST("/:id/export", c.AdminProHandler.ExportUsageReport)      // POST /v1/admin/promotions/:id/export
+
+		// ========================================
+		// 📦 ORDER ROUTES (USER - PROTECTED)
+		// ========================================
+		orderRoutes := v1.Group("/orders")
+		orderRoutes.Use(middleware.AuthMiddleware(c.Config.JWT.Secret))
+		{
+			// ========================================
+			// ORDER CREATION & MANAGEMENT
+			// ========================================
+
+			// Create order from cart
+			orderRoutes.POST("", c.OrderHandler.CreateOrder)
+
+			// Get order list for current user (with filters)
+			orderRoutes.GET("", c.OrderHandler.ListOrders)
+
+			// Get order detail by ID
+			orderRoutes.GET("/:id", c.OrderHandler.GetOrderDetail)
+
+			// Cancel order (user-initiated)
+			orderRoutes.POST("/:id/cancel", c.OrderHandler.CancelOrder)
+
+			// ========================================
+			// ORDER TRACKING
+			// ========================================
+
+			// Track order by order number
+			orderRoutes.GET("/track/:order_number", c.OrderHandler.GetOrderByNumber)
+
+			// Get order status history
+			// orderRoutes.GET("/:id/history", c.OrderHandler.GetOrderStatusHistory)
+
+		}
+
+		// ========================================
+		// 🛡️ ADMIN ORDER ROUTES (PROTECTED + ADMIN)
+		// ========================================
+		adminOrderRoutes := v1.Group("/admin/orders")
+		// TODO: Add admin middleware
+		// adminOrderRoutes.Use(middleware.AuthMiddleware(c.Config.JWT.Secret))
+		// adminOrderRoutes.Use(middleware.RequireRole("admin"))
+		{
+			// ========================================
+			// ORDER MANAGEMENT
+			// ========================================
+
+			// List all orders with filters & pagination
+			adminOrderRoutes.GET("", c.OrderHandler.ListAllOrders)
+
+			// Update order status
+			adminOrderRoutes.PATCH("/:id/status", c.OrderHandler.UpdateOrderStatus)
+
+			// ========================================
+			// SHIPPING MANAGEMENT
+			// ========================================
+
+			// // Assign order to warehouse
+			// adminOrderRoutes.PATCH("/:id/warehouse", c.OrderHandler.AssignWarehouse)
+
+			// // Update shipping information
+			// adminOrderRoutes.PATCH("/:id/shipping", c.OrderHandler.UpdateShippingInfo)
+
+			// // Mark as shipped
+			// adminOrderRoutes.POST("/:id/ship", c.OrderHandler.MarkAsShipped)
+
+			// // Mark as delivered
+			// adminOrderRoutes.POST("/:id/deliver", c.OrderHandler.MarkAsDelivered)
+
+			// // ========================================
+			// // ANALYTICS & REPORTING
+			// // ========================================
+
+			// // Get order statistics
+			// adminOrderRoutes.GET("/stats/summary", c.OrderHandler.GetOrderStatistics)
+
+			// // Get order analytics by date range
+			// adminOrderRoutes.GET("/stats/analytics", c.OrderHandler.GetOrderAnalytics)
+
+			// // Export orders to CSV/Excel
+			// adminOrderRoutes.POST("/export", c.OrderHandler.ExportOrders)
+		}
+
+		// ========================================
+		// 💳 PAYMENT ROUTES (USER - PROTECTED)
+		// ========================================
+		paymentRoutes := v1.Group("/payments")
+		paymentRoutes.Use(middleware.AuthMiddleware(c.Config.JWT.Secret))
+		{
+			// ========================================
+			// PAYMENT CREATION
+			// ========================================
+
+			// Create payment (initiate payment gateway)
+			paymentRoutes.POST("/create", c.PaymentHandler.CreatePayment)
+
+			// Get payment status (for polling)
+			paymentRoutes.GET("/:payment_id", c.PaymentHandler.GetPaymentStatus)
+
+			// List user's payment history
+			paymentRoutes.GET("", c.PaymentHandler.ListUserPayments)
+
+			// ========================================
+			// REFUND MANAGEMENT
+			// ========================================
+
+			// Request refund for a payment
+			paymentRoutes.POST("/:payment_id/refund-request", c.PaymentHandler.RequestRefund)
+
+			// Get refund request status
+			paymentRoutes.GET("/:payment_id/refund-request", c.PaymentHandler.GetRefundStatus)
+		}
+
+		// ========================================
+		// 🔔 WEBHOOK ROUTES (PUBLIC - NO AUTH)
+		// ========================================
+		webhookRoutes := v1.Group("/webhooks")
+		{
+			// VNPay IPN webhook
+			webhookRoutes.GET("/vnpay", c.PaymentHandler.VNPayWebhook)
+			webhookRoutes.POST("/vnpay", c.PaymentHandler.VNPayWebhook)
+
+			// Momo IPN webhook
+			webhookRoutes.POST("/momo", c.PaymentHandler.MomoWebhook)
+		}
+
+		// ========================================
+		// 🛡️ ADMIN PAYMENT ROUTES (PROTECTED + ADMIN)
+		// ========================================
+		adminPaymentRoutes := v1.Group("/admin/payments")
+		// TODO: Add admin middleware
+		// adminPaymentRoutes.Use(middleware.AuthMiddleware(c.Config.JWT.Secret))
+		// adminPaymentRoutes.Use(middleware.RequireRole("admin"))
+		{
+			// ========================================
+			// PAYMENT MANAGEMENT
+			// ========================================
+
+			// List all payments with filters
+			adminPaymentRoutes.GET("", c.PaymentHandler.AdminListPayments)
+
+			// Get payment detail (with full gateway info)
+			adminPaymentRoutes.GET("/:payment_id", c.PaymentHandler.AdminGetPaymentDetail)
+
+			// Manual reconciliation (fix failed webhook)
+			adminPaymentRoutes.POST("/:payment_id/reconcile", c.PaymentHandler.AdminReconcilePayment)
+
+			// ========================================
+			// REFUND MANAGEMENT
+			// ========================================
+
+			// List pending refund requests
+			adminPaymentRoutes.GET("/refunds/pending", c.PaymentHandler.AdminListPendingRefunds)
+
+			// Get refund request detail
+			adminPaymentRoutes.GET("/refunds/:refund_id", c.PaymentHandler.AdminGetRefundDetail)
+
+			// Approve refund request
+			adminPaymentRoutes.POST("/refunds/:refund_id/approve", c.PaymentHandler.AdminApproveRefund)
+
+			// Reject refund request
+			adminPaymentRoutes.POST("/refunds/:refund_id/reject", c.PaymentHandler.AdminRejectRefund)
+
+			// ========================================
+			// ANALYTICS & MONITORING
+			// ========================================
+
+			// // Payment analytics dashboard
+			// adminPaymentRoutes.GET("/stats/dashboard", c.PaymentHandler.GetPaymentDashboard)
+
+			// // Webhook logs (for debugging)
+			// adminPaymentRoutes.GET("/webhooks/logs", c.PaymentHandler.GetWebhookLogs)
+
+			// // Failed payments report
+			// adminPaymentRoutes.GET("/reports/failed", c.PaymentHandler.GetFailedPaymentsReport)
 		}
 	}
 

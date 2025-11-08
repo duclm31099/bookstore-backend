@@ -14,8 +14,29 @@ type Config struct {
 	Redis    RedisConfig
 	JWT      JWTConfig
 	Email    EmailConfig
+	VNPay    VNPayConfig
+	Momo     MomoConfig
+}
+type VNPayConfig struct {
+	TmnCode    string // Merchant Code (e.g., "DEMOV01")
+	HashSecret string // Secret key for HMAC-SHA512
+	APIURL     string // VNPay API base URL
+	ReturnURL  string // Frontend callback URL
+	IPNURL     string // Backend webhook URL
 }
 
+// =====================================================
+// MOMO CONFIGURATION
+// =====================================================
+
+type MomoConfig struct {
+	PartnerCode string // Partner Code
+	AccessKey   string // Access Key
+	SecretKey   string // Secret Key for HMAC-SHA256
+	APIURL      string // Momo API base URL
+	ReturnURL   string // Frontend callback URL
+	IPNURL      string // Backend webhook URL
+}
 type AppConfig struct {
 	Name        string
 	Environment string // development, staging, production
@@ -86,6 +107,25 @@ func Load() (*Config, error) {
 			APIKey:   getEnv("EMAIL_API_KEY", ""),
 			From:     getEnv("EMAIL_FROM", "noreply@bookstore.com"),
 		},
+		VNPay: VNPayConfig{
+			TmnCode:    getEnv("VNPAY_TMN_CODE", ""),
+			HashSecret: getEnv("VNPAY_HASH_SECRET", ""),
+			APIURL:     getEnv("VNPAY_API_URL", "https://sandbox.vnpayment.vn"),
+			ReturnURL:  getEnv("VNPAY_RETURN_URL", "http://localhost:3000/payment/callback"),
+			IPNURL:     getEnv("VNPAY_IPN_URL", "http://localhost:8080/api/v1/webhooks/vnpay"),
+		},
+
+		// ========================================
+		// MOMO CONFIGURATION
+		// ========================================
+		Momo: MomoConfig{
+			PartnerCode: getEnv("MOMO_PARTNER_CODE", ""),
+			AccessKey:   getEnv("MOMO_ACCESS_KEY", ""),
+			SecretKey:   getEnv("MOMO_SECRET_KEY", ""),
+			APIURL:      getEnv("MOMO_API_URL", "https://test-payment.momo.vn"),
+			ReturnURL:   getEnv("MOMO_RETURN_URL", "http://localhost:3000/payment/callback"),
+			IPNURL:      getEnv("MOMO_IPN_URL", "http://localhost:8080/api/v1/webhooks/momo"),
+		},
 	}
 
 	// Validate critical config
@@ -105,6 +145,14 @@ func (c *Config) Validate() error {
 		}
 		if c.Database.Password == "" {
 			return fmt.Errorf("DB_PASSWORD must be set in production")
+		}
+
+		// Payment gateway validation (optional - only warn if not set)
+		if c.VNPay.TmnCode == "" {
+			fmt.Println("WARNING: VNPay TmnCode not set - VNPay payment will not work")
+		}
+		if c.Momo.PartnerCode == "" {
+			fmt.Println("WARNING: Momo PartnerCode not set - Momo payment will not work")
 		}
 	}
 

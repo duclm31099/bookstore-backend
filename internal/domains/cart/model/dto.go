@@ -183,12 +183,18 @@ type CheckoutResponse struct {
 	PaymentInfo *PaymentCheckoutInfo `json:"payment_info,omitempty"`
 
 	// Next steps
-	NextActions []string `json:"next_actions"`
-
+	NextActions   []string               `json:"next_actions"`
+	WarehouseInfo *WarehouseCheckoutInfo `json:"warehouse_info,omitempty"`
 	// Timestamps
 	InitiatedAt time.Time  `json:"initiated_at"`
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
 	ExpiresAt   *time.Time `json:"expires_at,omitempty"` // If pending payment
+}
+type WarehouseCheckoutInfo struct {
+	WarehouseID       uuid.UUID `json:"warehouse_id"`
+	WarehouseName     string    `json:"warehouse_name"`
+	DistanceKM        float64   `json:"distance_km"`
+	EstimatedDelivery string    `json:"estimated_delivery"` // "1-2 days"
 }
 
 // CartCheckoutSummary represents cart state before checkout
@@ -238,18 +244,21 @@ type PricingBreakdown struct {
 
 // ItemCheckoutResult represents each item result
 type ItemCheckoutResult struct {
-	ItemID            uuid.UUID       `json:"item_id"`
-	BookID            uuid.UUID       `json:"book_id"`
-	BookTitle         string          `json:"book_title"`
-	QuantityRequested int             `json:"quantity_requested"`
-	QuantityReserved  int             `json:"quantity_reserved"` // May differ if partial
-	PriceAtCheckout   decimal.Decimal `json:"price_at_checkout"` // Snapshot
-	CurrentPrice      decimal.Decimal `json:"current_price"`
-	PriceChanged      bool            `json:"price_changed"`
-	ItemTotal         decimal.Decimal `json:"item_total"` // qty * price
-	InventoryReserved bool            `json:"inventory_reserved"`
-	Status            string          `json:"status"` // "reserved", "partial", "unavailable"
-	Warnings          []string        `json:"warnings,omitempty"`
+	ItemID               uuid.UUID       `json:"item_id"`
+	BookID               uuid.UUID       `json:"book_id"`
+	BookTitle            string          `json:"book_title"`
+	QuantityRequested    int             `json:"quantity_requested"`
+	QuantityReserved     int             `json:"quantity_reserved"` // May differ if partial
+	PriceAtCheckout      decimal.Decimal `json:"price_at_checkout"` // Snapshot
+	CurrentPrice         decimal.Decimal `json:"current_price"`
+	PriceChanged         bool            `json:"price_changed"`
+	ItemTotal            decimal.Decimal `json:"item_total"` // qty * price
+	InventoryReserved    bool            `json:"inventory_reserved"`
+	Status               string          `json:"status"` // "reserved", "partial", "unavailable"
+	Warnings             []string        `json:"warnings,omitempty"`
+	WarehouseID          *uuid.UUID      `json:"warehouse_id,omitempty"`
+	WarehouseName        string          `json:"warehouse_name,omitempty"`
+	ReservationExpiresAt *time.Time      `json:"reservation_expires_at,omitempty"` // 15
 }
 
 // PaymentCheckoutInfo contains payment processing info

@@ -74,6 +74,8 @@ type AddressResponse struct {
 	Notes         string    `json:"notes"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
+	Longitude     *string   `json:"longitude"`
+	Latitude      *string   `json:"latitude"`
 }
 
 // AddressWithUserResponse DTO - Address with user information

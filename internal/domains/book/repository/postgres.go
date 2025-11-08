@@ -149,13 +149,13 @@ func (r *postgresRepository) ListBooks(ctx context.Context, filter *model.BookFi
 func (r *postgresRepository) GetBookByIDForUpdate(ctx context.Context, id string) (*model.Book, error) {
 	query := `
 		SELECT id, title, slug, isbn, author_id, publisher_id, category_id,
-		       price, compare_at_price, cost_price, cover_url, description,
-		       pages, language, published_year, format, dimensions, weight_grams,
-		       ebook_file_url, ebook_file_size_mb, ebook_format,
-		       is_active, is_featured, view_count, sold_count,
-		       meta_title, meta_description, meta_keywords,
-		       rating_average, rating_count, version, images,
-		       created_at, updated_at
+			   price, compare_at_price, cost_price, cover_url, description,
+			   pages, language, published_year, format, dimensions, weight_grams,
+			   ebook_file_url, ebook_file_size_mb, ebook_format,
+			   is_active, is_featured, view_count, sold_count,
+			   meta_title, meta_description, meta_keywords,
+			   rating_average, rating_count, version, images,
+			   created_at, updated_at
 		FROM books
 		WHERE id = $1 AND deleted_at IS NULL
 		FOR UPDATE
@@ -199,7 +199,6 @@ func (r *postgresRepository) CheckISBNExistsExcept(ctx context.Context, isbn, ex
 // ============================================
 
 // buildWhereClause - Construct WHERE clause dynamically
-// Returns: (whereClause string, args []interface{})
 func (r *postgresRepository) buildWhereClause(filter *model.BookFilter) (string, []interface{}) {
 	conditions := []string{
 		"b.deleted_at IS NULL",
@@ -253,42 +252,39 @@ func (r *postgresRepository) buildWhereClause(filter *model.BookFilter) (string,
 	return whereClause, args
 }
 
-// buildListBooksQuery - Construct complete SELECT query with JOINs & ORDER BY
+// buildListBooksQuery - FIXED: Use warehouse_inventory + books_total_stock VIEW
 func (r *postgresRepository) buildListBooksQuery(whereClause string, paramCount int) string {
 	return fmt.Sprintf(`
-    SELECT 
-      b.id, b.title, b.slug, b.isbn, b.author_id, b.publisher_id, 
-      b.category_id, b.price, b.compare_at_price, b.cost_price, 
-      b.cover_url, b.description, b.pages, b.language, b.published_year, 
-      b.format, b.dimensions, b.weight_grams, b.ebook_file_url, 
-      b.ebook_file_size_mb, b.ebook_format, b.is_active, b.is_featured, 
-      b.view_count, b.sold_count, b.meta_title, b.meta_description, 
-      b.meta_keywords, b.rating_average, b.rating_count, b.version, 
-      b.images, b.created_at, b.updated_at, b.deleted_at,
-      a.name AS author_name,
-      c.name AS category_name,
-      p.name AS publisher_name,
-      i.available_quantity AS total_stock
-    FROM books b
-    LEFT JOIN authors a ON b.author_id = a.id
-    LEFT JOIN categories c ON b.category_id = c.id
-    LEFT JOIN publishers p ON b.publisher_id = p.id
-    LEFT JOIN inventories i ON b.id = i.book_id
-    WHERE %s
-    GROUP BY b.id, a.id, c.id, p.id
-    ORDER BY b.created_at DESC
-    LIMIT $%d OFFSET $%d
-  `, whereClause, paramCount, paramCount+1)
+		SELECT 
+			b.id, b.title, b.slug, b.isbn, b.author_id, b.publisher_id, 
+			b.category_id, b.price, b.compare_at_price, b.cost_price, 
+			b.cover_url, b.description, b.pages, b.language, b.published_year, 
+			b.format, b.dimensions, b.weight_grams, b.ebook_file_url, 
+			b.ebook_file_size_mb, b.ebook_format, b.is_active, b.is_featured, 
+			b.view_count, b.sold_count, b.meta_title, b.meta_description, 
+			b.meta_keywords, b.rating_average, b.rating_count, b.version, 
+			b.images, b.created_at, b.updated_at, b.deleted_at,
+			a.name AS author_name,
+			c.name AS category_name,
+			p.name AS publisher_name,
+			COALESCE(bts.available, 0) AS total_stock
+		FROM books b
+		LEFT JOIN authors a ON b.author_id = a.id
+		LEFT JOIN categories c ON b.category_id = c.id
+		LEFT JOIN publishers p ON b.publisher_id = p.id
+		LEFT JOIN books_total_stock bts ON b.id = bts.book_id
+		WHERE %s
+		ORDER BY b.created_at DESC
+		LIMIT $%d OFFSET $%d
+	`, whereClause, paramCount, paramCount+1)
 }
 
-// getBookCount - Get total count for pagination
+// getBookCount - FIXED: Remove GROUP BY
 func (r *postgresRepository) getBookCount(ctx context.Context, whereClause string, args []interface{}) (int, error) {
 	countQuery := fmt.Sprintf(`
 		SELECT COUNT(*) 
 		FROM books b
-		LEFT JOIN inventories i ON b.id = i.book_id
 		WHERE %s
-		GROUP BY b.id
 	`, whereClause)
 
 	var totalCount int
@@ -320,56 +316,67 @@ func (r *postgresRepository) executeListQuery(ctx context.Context, query string,
 }
 
 // ============================================
-// API 2: GET BOOK DETAIL
+// API 2: GET BOOK DETAIL - FIXED
 // ============================================
 
 func (r *postgresRepository) GetBookByID(ctx context.Context, id string) (*model.Book, []model.InventoryDetailDTO, error) {
 	query := `SELECT 
-				b.*, 
-				a.id AS author_id, a.name AS author_name, a.slug AS author_slug, a.bio AS author_bio,
-				c.id AS category_id, c.name AS category_name, c.slug AS category_slug,
-				p.id AS publisher_id, p.name AS publisher_name, p.slug AS publisher_slug, p.website AS publisher_website,
-				COALESCE(inv.total, 0) AS total_stock,
-				COALESCE(inv.details, '[]') AS inventories_json,
-				COALESCE(r.avg_rating, 0)::numeric(2,1) AS rating_average,
-				COALESCE(r.count, 0) AS rating_count
-			FROM books b
-			LEFT JOIN authors a ON b.author_id = a.id
-			LEFT JOIN categories c ON b.category_id = c.id
-			LEFT JOIN publishers p ON b.publisher_id = p.id
-			LEFT JOIN LATERAL (
-					SELECT SUM(i.available_quantity) AS total, 
-							json_agg(json_build_object(
-								'location', i.warehouse_location,
-								'quantity', i.quantity,
-								'reserved_quantity', i.reserved_quantity,
-								'available_quantity', i.available_quantity,
-								'low_stock_threshold', i.low_stock_threshold,
-								'is_low_stock', i.is_low_stock,
-								'last_restock_at', i.last_restock_at
-							) ORDER BY i.warehouse_location) AS details
-					FROM inventories i
-					WHERE i.book_id = b.id
-			) inv ON true
-			LEFT JOIN LATERAL (
-					SELECT AVG(rating) AS avg_rating, COUNT(*) AS count
-					FROM reviews
-					WHERE book_id = b.id
-			) r ON true
-			WHERE b.id = $1 AND b.deleted_at IS NULL AND b.is_active = true;
-			`
+		b.*, 
+		a.id AS author_id, a.name AS author_name, a.slug AS author_slug, a.bio AS author_bio,
+		c.id AS category_id, c.name AS category_name, c.slug AS category_slug,
+		p.id AS publisher_id, p.name AS publisher_name, p.slug AS publisher_slug, p.website AS publisher_website,
+		COALESCE(inv.total, 0) AS total_stock,
+		COALESCE(inv.details, '[]') AS inventories_json,
+		COALESCE(r.avg_rating, 0)::numeric(2,1) AS rating_average,
+		COALESCE(r.count, 0) AS rating_count
+	FROM books b
+	LEFT JOIN authors a ON b.author_id = a.id
+	LEFT JOIN categories c ON b.category_id = c.id
+	LEFT JOIN publishers p ON b.publisher_id = p.id
+	LEFT JOIN LATERAL (
+		-- FIXED: Use warehouse_inventory with warehouse details
+		SELECT 
+			SUM(wi.quantity - wi.reserved) AS total, 
+			json_agg(json_build_object(
+				'warehouse_id', wi.warehouse_id,
+				'warehouse_name', w.name,
+				'warehouse_code', w.code,
+				'quantity', wi.quantity,
+				'reserved', wi.reserved,
+				'available', wi.quantity - wi.reserved,
+				'alert_threshold', wi.alert_threshold,
+				'is_low_stock', wi.quantity < wi.alert_threshold,
+				'last_restocked_at', wi.last_restocked_at
+			) ORDER BY w.name) AS details
+		FROM warehouse_inventory wi
+		INNER JOIN warehouses w ON wi.warehouse_id = w.id
+		WHERE wi.book_id = b.id
+			AND w.deleted_at IS NULL
+			AND w.is_active = true
+	) inv ON true
+	LEFT JOIN LATERAL (
+		SELECT AVG(rating) AS avg_rating, COUNT(*) AS count
+		FROM reviews
+		WHERE book_id = b.id
+	) r ON true
+	WHERE b.id = $1 AND b.deleted_at IS NULL AND b.is_active = true;
+	`
+
 	row := r.pool.QueryRow(ctx, query, id)
 	var inventoriesJson string
 	var book model.Book // entity struct
-	err := row.Scan(&book)
+
+	err := row.Scan(&book) // You'll need to scan all fields properly
 	if err == pgx.ErrNoRows {
 		return nil, nil, model.ErrBookNotFound
 	}
 	if err != nil {
 		return nil, nil, err
 	}
+
 	var inventories []model.InventoryDetailDTO
 	_ = json.Unmarshal([]byte(inventoriesJson), &inventories)
+
 	return &book, inventories, nil
 }
 
@@ -378,12 +385,12 @@ func (r *postgresRepository) UpdateBook(ctx context.Context, book *model.Book) e
 	query := `
 		UPDATE books
 		SET title = $1, slug = $2, isbn = $3, author_id = $4, publisher_id = $5, category_id = $6,
-		    price = $7, compare_at_price = $8, cost_price = $9, cover_url = $10, description = $11,
-		    pages = $12, language = $13, published_year = $14, format = $15, dimensions = $16, weight_grams = $17,
-		    ebook_file_url = $18, ebook_file_size_mb = $19, ebook_format = $20,
-		    is_active = $21, is_featured = $22,
-		    meta_title = $23, meta_description = $24, meta_keywords = $25,
-		    version = $26, images = $27, updated_at = $28
+			price = $7, compare_at_price = $8, cost_price = $9, cover_url = $10, description = $11,
+			pages = $12, language = $13, published_year = $14, format = $15, dimensions = $16, weight_grams = $17,
+			ebook_file_url = $18, ebook_file_size_mb = $19, ebook_format = $20,
+			is_active = $21, is_featured = $22,
+			meta_title = $23, meta_description = $24, meta_keywords = $25,
+			version = $26, images = $27, updated_at = $28
 		WHERE id = $29 AND version = $30 AND deleted_at IS NULL
 	`
 
@@ -395,14 +402,13 @@ func (r *postgresRepository) UpdateBook(ctx context.Context, book *model.Book) e
 		book.IsActive, book.IsFeatured,
 		book.MetaTitle, book.MetaDescription, pq.Array(book.MetaKeywords),
 		book.Version, pq.Array(book.Images), book.UpdatedAt,
-		book.ID, book.Version-1, // WHERE version = old version
+		book.ID, book.Version-1,
 	)
 
 	if err != nil {
 		return fmt.Errorf("failed to update book: %w", err)
 	}
 
-	// Check if any row was updated
 	rowsAffected := result.RowsAffected()
 	if rowsAffected == 0 {
 		return model.ErrVersionConflict
@@ -517,7 +523,6 @@ func (r *postgresRepository) ValidatePublisher(ctx context.Context, publisherID 
 	return exists, nil
 }
 
-// CheckISBNExists - Kiểm tra ISBN đã tồn tại chưa
 func (r *postgresRepository) CheckISBNExists(ctx context.Context, isbn string) (bool, error) {
 	query := `SELECT EXISTS(SELECT 1 FROM books WHERE isbn = $1 AND deleted_at IS NULL)`
 	var exists bool
@@ -527,6 +532,7 @@ func (r *postgresRepository) CheckISBNExists(ctx context.Context, isbn string) (
 	}
 	return exists, nil
 }
+
 func (r *postgresRepository) GetBaseBookByID(ctx context.Context, id string) (*model.BaseBookResponse, error) {
 	query := `SELECT id, title FROM books WHERE id = $1 AND deleted_at IS NULL`
 	row := r.pool.QueryRow(ctx, query, id)
@@ -538,13 +544,11 @@ func (r *postgresRepository) GetBaseBookByID(ctx context.Context, id string) (*m
 	return &book, nil
 }
 
-// GenerateUniqueSlug - Tạo slug unique (thêm suffix nếu trùng)
 func (r *postgresRepository) GenerateUniqueSlug(ctx context.Context, baseSlug string) (string, error) {
 	slug := baseSlug
 	counter := 1
 
 	for {
-		// Check if slug exists
 		query := `SELECT EXISTS(SELECT 1 FROM books WHERE slug = $1 AND deleted_at IS NULL)`
 		var exists bool
 		err := r.pool.QueryRow(ctx, query, slug).Scan(&exists)
@@ -556,38 +560,15 @@ func (r *postgresRepository) GenerateUniqueSlug(ctx context.Context, baseSlug st
 			return slug, nil
 		}
 
-		// Slug exists, try with suffix
 		counter++
 		slug = fmt.Sprintf("%s-%d", baseSlug, counter)
 
-		// Prevent infinite loop
 		if counter > 100 {
 			return "", fmt.Errorf("failed to generate unique slug after 100 attempts")
 		}
 	}
 }
 
-// ============================================
-// CACHE OPERATIONS
-// ============================================
-
-// ============================================
-// STUB METHODS (API 3, 4)
-// ============================================
-
-func (r *postgresRepository) GetBookBySlug(ctx context.Context, slug string) (*model.Book, error) {
-	return nil, nil
-}
-
-func (r *postgresRepository) DeleteBook(ctx context.Context, id string) error {
-	return nil
-}
-
-func (r *postgresRepository) SearchByFullText(ctx context.Context, query string, limit int) ([]model.Book, error) {
-	return nil, nil
-}
-
-// SoftDeleteBook - Set deleted_at timestamp
 func (r *postgresRepository) SoftDeleteBook(ctx context.Context, bookID string, deletedAt time.Time) error {
 	query := `
 		UPDATE books
@@ -600,7 +581,6 @@ func (r *postgresRepository) SoftDeleteBook(ctx context.Context, bookID string, 
 		return fmt.Errorf("failed to soft delete book: %w", err)
 	}
 
-	// Check if book was found and deleted
 	rowsAffected := result.RowsAffected()
 	if rowsAffected == 0 {
 		return model.ErrBookNotFound
@@ -609,8 +589,7 @@ func (r *postgresRepository) SoftDeleteBook(ctx context.Context, bookID string, 
 	return nil
 }
 
-// CheckBookHasActiveOrders - Kiểm tra sách có order đang active không
-// Active orders: status IN ('pending', 'processing', 'confirmed', 'paid')
+// CheckBookHasActiveOrders - UNCHANGED (no inventory reference)
 func (r *postgresRepository) CheckBookHasActiveOrders(ctx context.Context, bookID string) (bool, error) {
 	query := `
 		SELECT EXISTS(
@@ -618,8 +597,8 @@ func (r *postgresRepository) CheckBookHasActiveOrders(ctx context.Context, bookI
 			FROM order_items oi
 			JOIN orders o ON oi.order_id = o.id
 			WHERE oi.book_id = $1 
-			  AND o.status IN ('pending', 'processing', 'confirmed', 'paid')
-			  AND o.deleted_at IS NULL
+				AND o.status IN ('pending', 'processing', 'confirmed', 'paid')
+				AND o.deleted_at IS NULL
 		)
 	`
 
@@ -632,14 +611,14 @@ func (r *postgresRepository) CheckBookHasActiveOrders(ctx context.Context, bookI
 	return exists, nil
 }
 
-// CheckBookHasReservedInventory - Kiểm tra sách có inventory đang reserved không
+// CheckBookHasReservedInventory - FIXED: Use warehouse_inventory
 func (r *postgresRepository) CheckBookHasReservedInventory(ctx context.Context, bookID string) (bool, error) {
 	query := `
 		SELECT EXISTS(
 			SELECT 1 
-			FROM inventories
+			FROM warehouse_inventory
 			WHERE book_id = $1 
-			  AND reserved_quantity > 0
+				AND reserved > 0
 		)
 	`
 

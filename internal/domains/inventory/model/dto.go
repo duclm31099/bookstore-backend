@@ -1,3 +1,4 @@
+// internal/domains/inventory/model/dto.go
 package model
 
 import (
@@ -6,61 +7,187 @@ import (
 	"github.com/google/uuid"
 )
 
-// ===================================
-// REQUEST DTOs
-// ===================================
+// ========================================
+// INVENTORY REQUESTS
+// ========================================
 
-// CreateInventoryRequest represents the request payload for creating inventory
 type CreateInventoryRequest struct {
-	BookID            uuid.UUID `json:"book_id" binding:"required"`
-	WarehouseLocation string    `json:"warehouse_location" binding:"required,oneof=HN HCM DN CT ALL"` // ALL = create for all warehouses
-	Quantity          int       `json:"quantity" binding:"required,min=0"`
-	LowStockThreshold *int      `json:"low_stock_threshold" binding:"omitempty,min=0"` // Optional, default 10
+	BookID                 uuid.UUID  `json:"book_id" validate:"required"`
+	WarehouseID            *uuid.UUID `json:"warehouse_id,omitempty"` // Nil = create for all
+	CreateForAllWarehouses bool       `json:"create_for_all_warehouses"`
+	Quantity               int        `json:"quantity" validate:"required,gte=0"`
+	AlertThreshold         *int       `json:"alert_threshold,omitempty" validate:"omitempty,gte=0"`
+	UpdatedBy              *uuid.UUID `json:"updated_by,omitempty"`
 }
 
-// UpdateInventoryRequest represents the request payload for updating inventory
 type UpdateInventoryRequest struct {
-	Quantity          *int `json:"quantity" binding:"omitempty,min=0"`
-	ReservedQuantity  *int `json:"reserved_quantity" binding:"omitempty,min=0"`
-	LowStockThreshold *int `json:"low_stock_threshold" binding:"omitempty,min=0"`
-	Version           int  `json:"version" binding:"required,min=1"` // Optimistic locking
+	Quantity       *int       `json:"quantity,omitempty" validate:"omitempty,gte=0"`
+	Reserved       *int       `json:"reserved,omitempty" validate:"omitempty,gte=0"`
+	AlertThreshold *int       `json:"alert_threshold,omitempty" validate:"omitempty,gte=0"`
+	Version        int        `json:"version" validate:"required"` // Optimistic lock
+	UpdatedBy      *uuid.UUID `json:"updated_by,omitempty"`
 }
 
-// ListInventoryRequest represents query parameters for listing inventories
 type ListInventoryRequest struct {
-	BookID            *uuid.UUID `form:"book_id"`
-	WarehouseLocation *string    `form:"warehouse_location" binding:"omitempty,oneof=HN HCM DN CT"`
-	IsLowStock        *bool      `form:"is_low_stock"`
-	Page              int        `form:"page" binding:"required,min=1"`
-	Limit             int        `form:"limit" binding:"required,min=1,max=100"`
+	BookID            *uuid.UUID `json:"book_id,omitempty"`
+	WarehouseID       *uuid.UUID `json:"warehouse_id,omitempty"`
+	IsLowStock        *bool      `json:"is_low_stock,omitempty"`
+	HasAvailableStock *bool      `json:"has_available_stock,omitempty"`
+	Page              int        `json:"page" validate:"required,gte=1"`
+	Limit             int        `json:"limit" validate:"required,gte=1,lte=100"`
 }
 
-// SearchInventoryRequest represents query for searching by book_id + warehouse
-type SearchInventoryRequest struct {
-	BookID            uuid.UUID `form:"book_id" binding:"required"`
-	WarehouseLocation string    `form:"warehouse_location" binding:"required,oneof=HN HCM DN CT"`
+// ========================================
+// STOCK OPERATION REQUESTS
+// ========================================
+
+type ReserveStockRequest struct {
+	BookID      uuid.UUID  `json:"book_id" validate:"required"`
+	WarehouseID *uuid.UUID `json:"warehouse_id,omitempty"` // Nil = auto-select nearest
+	Quantity    int        `json:"quantity" validate:"required,gte=1"`
+	ReferenceID uuid.UUID  `json:"reference_id" validate:"required"` // Order ID
+	UserID      *uuid.UUID `json:"user_id,omitempty"`
+
+	// For auto warehouse selection
+	CustomerLatitude  *float64 `json:"customer_latitude,omitempty"`
+	CustomerLongitude *float64 `json:"customer_longitude,omitempty"`
 }
 
-// ===================================
-// RESPONSE DTOs
-// ===================================
+type ReleaseStockRequest struct {
+	WarehouseID uuid.UUID  `json:"warehouse_id" validate:"required"`
+	BookID      uuid.UUID  `json:"book_id" validate:"required"`
+	Quantity    int        `json:"quantity" validate:"required,gte=1"`
+	ReferenceID uuid.UUID  `json:"reference_id" validate:"required"` // Order ID
+	UserID      *uuid.UUID `json:"user_id,omitempty"`
+	Reason      *string    `json:"reason,omitempty"` // "timeout", "cancelled", "payment_failed"
+}
 
-// InventoryResponse represents the response payload for inventory
+type CompleteSaleRequest struct {
+	WarehouseID uuid.UUID  `json:"warehouse_id" validate:"required"`
+	BookID      uuid.UUID  `json:"book_id" validate:"required"`
+	Quantity    int        `json:"quantity" validate:"required,gte=1"`
+	ReferenceID uuid.UUID  `json:"reference_id" validate:"required"` // Order ID
+	UserID      *uuid.UUID `json:"user_id,omitempty"`
+}
+
+type AdjustStockRequest struct {
+	WarehouseID uuid.UUID `json:"warehouse_id" validate:"required"`
+	BookID      uuid.UUID `json:"book_id" validate:"required"`
+	NewQuantity int       `json:"new_quantity" validate:"required,gte=0"`
+	Reason      string    `json:"reason" validate:"required,min=10"` // Mandatory for audit
+	Version     int       `json:"version" validate:"required"`
+	ChangedBy   uuid.UUID `json:"changed_by" validate:"required"` // Admin user
+	IPAddress   *string   `json:"ip_address,omitempty"`
+}
+
+type RestockRequest struct {
+	WarehouseID   uuid.UUID  `json:"warehouse_id" validate:"required"`
+	BookID        uuid.UUID  `json:"book_id" validate:"required"`
+	QuantityToAdd int        `json:"quantity_to_add" validate:"required,gte=1"`
+	Reason        *string    `json:"reason,omitempty"`
+	UpdatedBy     *uuid.UUID `json:"updated_by,omitempty"`
+}
+
+// ========================================
+// WAREHOUSE SELECTION REQUESTS
+// ========================================
+
+type FindWarehouseRequest struct {
+	BookID            uuid.UUID `json:"book_id" validate:"required"`
+	RequiredQuantity  int       `json:"required_quantity" validate:"required,gte=1"`
+	CustomerLatitude  float64   `json:"latitude" validate:"required"`
+	CustomerLongitude float64   `json:"longitude" validate:"required"`
+}
+
+type CheckAvailabilityRequest struct {
+	Items                []CheckAvailabilityItem `json:"items" validate:"required,dive"`
+	PreferredWarehouseID *uuid.UUID              `json:"preferred_warehouse_id,omitempty"`
+	CustomerLatitude     *string                 `json:"latitude" validate:"required"`
+	CustomerLongitude    *string                 `json:"longitude" validate:"required"`
+}
+
+type CheckAvailabilityItem struct {
+	BookID   uuid.UUID `json:"book_id" validate:"required"`
+	Quantity int       `json:"quantity" validate:"required,gte=1"`
+}
+
+// ========================================
+// BULK OPERATIONS
+// ========================================
+
+type BulkUpdateRequest struct {
+	CSVPath    string    `json:"csv_path" validate:"required"`
+	UploadedBy uuid.UUID `json:"uploaded_by" validate:"required"`
+}
+
+// ========================================
+// AUDIT & REPORTING REQUESTS
+// ========================================
+
+type AuditTrailRequest struct {
+	WarehouseID *uuid.UUID `json:"warehouse_id,omitempty"`
+	BookID      *uuid.UUID `json:"book_id,omitempty"`
+	Action      *string    `json:"action,omitempty"` // RESTOCK, RESERVE, etc.
+	ChangedBy   *uuid.UUID `json:"changed_by,omitempty"`
+	StartDate   *time.Time `json:"start_date,omitempty"`
+	EndDate     *time.Time `json:"end_date,omitempty"`
+	Page        int        `json:"page" validate:"required,gte=1"`
+	Limit       int        `json:"limit" validate:"required,gte=1,lte=100"`
+}
+
+type ExportAuditRequest struct {
+	WarehouseID *uuid.UUID `json:"warehouse_id,omitempty"`
+	StartDate   time.Time  `json:"start_date" validate:"required"`
+	EndDate     time.Time  `json:"end_date" validate:"required"`
+	Format      string     `json:"format" validate:"required,oneof=csv xlsx"`
+}
+
+// ========================================
+// WAREHOUSE REQUESTS
+// ========================================
+
+type CreateWarehouseRequest struct {
+	Name      string   `json:"name" validate:"required,min=3,max=100"`
+	Code      string   `json:"code" validate:"required,min=2,max=20"`
+	Address   string   `json:"address" validate:"required"`
+	Province  string   `json:"province" validate:"required"`
+	Latitude  *float64 `json:"latitude,omitempty" validate:"omitempty,gte=-90,lte=90"`
+	Longitude *float64 `json:"longitude,omitempty" validate:"omitempty,gte=-180,lte=180"`
+}
+
+type UpdateWarehouseRequest struct {
+	Name      *string  `json:"name,omitempty" validate:"omitempty,min=3,max=100"`
+	Address   *string  `json:"address,omitempty"`
+	Province  *string  `json:"province,omitempty"`
+	Latitude  *float64 `json:"latitude,omitempty" validate:"omitempty,gte=-90,lte=90"`
+	Longitude *float64 `json:"longitude,omitempty" validate:"omitempty,gte=-180,lte=180"`
+	IsActive  *bool    `json:"is_active,omitempty"`
+	Version   int      `json:"version" validate:"required"`
+}
+
+type ListWarehousesRequest struct {
+	IsActive *bool   `json:"is_active,omitempty"`
+	Province *string `json:"province,omitempty"`
+}
+
+// ========================================
+// RESPONSES
+// ========================================
+
 type InventoryResponse struct {
-	ID                uuid.UUID  `json:"id"`
-	BookID            uuid.UUID  `json:"book_id"`
-	WarehouseLocation string     `json:"warehouse_location"`
-	Quantity          int        `json:"quantity"`
-	ReservedQuantity  int        `json:"reserved_quantity"`
-	AvailableQuantity int        `json:"available_quantity"` // GENERATED column
-	LowStockThreshold int        `json:"low_stock_threshold"`
-	IsLowStock        bool       `json:"is_low_stock"` // GENERATED column
-	Version           int        `json:"version"`
-	LastRestockAt     *time.Time `json:"last_restock_at,omitempty"`
-	UpdatedAt         time.Time  `json:"updated_at"`
+	WarehouseID    uuid.UUID  `json:"warehouse_id"`
+	WarehouseName  string     `json:"warehouse_name"`
+	BookID         uuid.UUID  `json:"book_id"`
+	Quantity       int        `json:"quantity"`
+	Reserved       int        `json:"reserved"`
+	Available      int        `json:"available"`
+	AlertThreshold int        `json:"alert_threshold"`
+	IsLowStock     bool       `json:"is_low_stock"`
+	Version        int        `json:"version"`
+	LastRestockAt  *time.Time `json:"last_restocked_at,omitempty"`
+	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
-// ListInventoryResponse represents paginated list response
 type ListInventoryResponse struct {
 	Items      []InventoryResponse `json:"items"`
 	TotalItems int                 `json:"total_items"`
@@ -69,348 +196,251 @@ type ListInventoryResponse struct {
 	Limit      int                 `json:"limit"`
 }
 
-// ===================================
-// MAPPERS (Model <-> DTO)
-// ===================================
-
-// ToResponse converts Inventory model to InventoryResponse DTO
-func (i *Inventory) ToResponse() InventoryResponse {
-	return InventoryResponse{
-		ID:                i.ID,
-		BookID:            i.BookID,
-		WarehouseLocation: i.WarehouseLocation,
-		Quantity:          i.Quantity,
-		ReservedQuantity:  i.ReservedQuantity,
-		AvailableQuantity: i.AvailableQuantity,
-		LowStockThreshold: i.LowStockThreshold,
-		IsLowStock:        i.IsLowStock,
-		Version:           i.Version,
-		LastRestockAt:     i.LastRestockAt,
-		UpdatedAt:         i.UpdatedAt,
-	}
-}
-
-// ToResponseList converts slice of Inventory models to InventoryResponse DTOs
-func ToResponseList(inventories []Inventory) []InventoryResponse {
-	responses := make([]InventoryResponse, len(inventories))
-	for i, inv := range inventories {
-		responses[i] = inv.ToResponse()
-	}
-	return responses
-}
-
-// ===================================
-// RESERVE/RELEASE STOCK DTOs
-// ===================================
-
-// ReserveStockRequest represents request to reserve stock for an order
-type ReserveStockRequest struct {
-	BookID            uuid.UUID `json:"book_id" binding:"required"`
-	WarehouseLocation string    `json:"warehouse_location" binding:"required,oneof=HN HCM DN CT"`
-	Quantity          int       `json:"quantity" binding:"required,min=1"`
-	ReferenceType     string    `json:"reference_type" binding:"required,oneof=order purchase"`
-	ReferenceID       uuid.UUID `json:"reference_id" binding:"required"`
-}
-
-// ReleaseStockRequest represents request to release reserved stock
-type ReleaseStockRequest struct {
-	BookID            uuid.UUID `json:"book_id" binding:"required"`
-	WarehouseLocation string    `json:"warehouse_location" binding:"required,oneof=HN HCM DN CT"`
-	Quantity          int       `json:"quantity" binding:"required,min=1"`
-	ReferenceID       uuid.UUID `json:"reference_id" binding:"required"`
-}
-
-// ReserveStockResponse represents response after reserving stock
 type ReserveStockResponse struct {
 	Success           bool      `json:"success"`
+	WarehouseID       uuid.UUID `json:"warehouse_id"`
+	WarehouseName     string    `json:"warehouse_name"`
 	BookID            uuid.UUID `json:"book_id"`
-	WarehouseLocation string    `json:"warehouse_location"`
 	ReservedQuantity  int       `json:"reserved_quantity"`
 	AvailableQuantity int       `json:"available_quantity"`
+	ExpiresAt         time.Time `json:"expires_at"` // Now + 15 minutes
 	Message           string    `json:"message"`
 }
 
-// ReleaseStockResponse represents response after releasing stock
 type ReleaseStockResponse struct {
 	Success           bool      `json:"success"`
+	WarehouseID       uuid.UUID `json:"warehouse_id"`
 	BookID            uuid.UUID `json:"book_id"`
-	WarehouseLocation string    `json:"warehouse_location"`
 	ReleasedQuantity  int       `json:"released_quantity"`
 	AvailableQuantity int       `json:"available_quantity"`
 	Message           string    `json:"message"`
 }
 
-// ===================================
-// CHECK AVAILABILITY DTOs
-// ===================================
-
-// CheckAvailabilityRequest represents request to check stock availability for multiple items
-type CheckAvailabilityRequest struct {
-	Items              []CheckAvailabilityItem `json:"items" binding:"required,min=1,max=100"`
-	PreferredWarehouse *string                 `json:"preferred_warehouse,omitempty" binding:"omitempty,oneof=HN HCM DN CT"`
+type CompleteSaleResponse struct {
+	Success      bool      `json:"success"`
+	WarehouseID  uuid.UUID `json:"warehouse_id"`
+	BookID       uuid.UUID `json:"book_id"`
+	SoldQuantity int       `json:"sold_quantity"`
+	Remaining    int       `json:"remaining_quantity"`
+	Message      string    `json:"message"`
 }
 
-// CheckAvailabilityItem represents single item in availability check
-type CheckAvailabilityItem struct {
-	BookID   uuid.UUID `json:"book_id" binding:"required"`
-	Quantity int       `json:"quantity" binding:"required,min=1"`
+type AdjustStockResponse struct {
+	Success        bool      `json:"success"`
+	WarehouseID    uuid.UUID `json:"warehouse_id"`
+	BookID         uuid.UUID `json:"book_id"`
+	OldQuantity    int       `json:"old_quantity"`
+	NewQuantity    int       `json:"new_quantity"`
+	QuantityChange int       `json:"quantity_change"`
+	AuditLogID     uuid.UUID `json:"audit_log_id"`
+	Message        string    `json:"message"`
 }
 
-// CheckAvailabilityResponse represents response for availability check
+type RestockResponse struct {
+	Success       bool      `json:"success"`
+	WarehouseID   uuid.UUID `json:"warehouse_id"`
+	BookID        uuid.UUID `json:"book_id"`
+	QuantityAdded int       `json:"quantity_added"`
+	NewQuantity   int       `json:"new_quantity"`
+	LastRestockAt time.Time `json:"last_restocked_at"`
+	Message       string    `json:"message"`
+}
+
+type WarehouseRecommendation struct {
+	WarehouseID       uuid.UUID `json:"warehouse_id"`
+	WarehouseName     string    `json:"warehouse_name"`
+	DistanceKM        float64   `json:"distance_km"`
+	AvailableQuantity int       `json:"available_quantity"`
+	EstimatedDelivery string    `json:"estimated_delivery"` // "1-2 days", "3-5 days"
+}
+
 type CheckAvailabilityResponse struct {
-	Overall       bool                            `json:"overall"`                  // All items available?
-	Items         []CheckAvailabilityItemResponse `json:"items"`                    // Per-item details
-	Fulfillable   bool                            `json:"fulfillable"`              // Can fulfill all items?
-	SuggestedFrom string                          `json:"suggested_from,omitempty"` // Best warehouse to fulfill from
+	Overall              bool                            `json:"overall_fulfillable"`
+	Items                []CheckAvailabilityItemResponse `json:"items"`
+	RecommendedWarehouse *WarehouseRecommendation        `json:"recommended_warehouse,omitempty"`
+	RequiresSplit        bool                            `json:"requires_split"` // Multiple warehouses needed
 }
 
-// CheckAvailabilityItemResponse represents per-item availability status
 type CheckAvailabilityItemResponse struct {
-	BookID            uuid.UUID               `json:"book_id"`
-	RequestedQuantity int                     `json:"requested_quantity"`
-	Available         bool                    `json:"available"`                // Enough in any warehouse?
-	WarehouseDetails  []WarehouseAvailability `json:"warehouse_details"`        // Details per warehouse
-	TotalAvailable    int                     `json:"total_available"`          // Total across all warehouses
-	FulfillableFrom   []string                `json:"fulfillable_from"`         // List of warehouses with enough stock
-	Recommendation    string                  `json:"recommendation,omitempty"` // Helpful message
+	BookID            uuid.UUID              `json:"book_id"`
+	RequestedQuantity int                    `json:"requested_quantity"`
+	TotalAvailable    int                    `json:"total_available"`
+	Fulfillable       bool                   `json:"fulfillable"`
+	WarehouseDetails  []WarehouseStockDetail `json:"warehouse_details"`
+	Recommendation    string                 `json:"recommendation,omitempty"`
 }
 
-// WarehouseAvailability represents inventory status in single warehouse
-type WarehouseAvailability struct {
-	Warehouse         string `json:"warehouse"`
-	Quantity          int    `json:"quantity"`
-	Reserved          int    `json:"reserved"`
-	Available         int    `json:"available"`
-	CanFulfill        bool   `json:"can_fulfill"` // Has enough for this item
-	IsLowStock        bool   `json:"is_low_stock"`
-	LowStockThreshold int    `json:"low_stock_threshold"`
+type WarehouseStockDetail struct {
+	WarehouseID   uuid.UUID `json:"warehouse_id"`
+	WarehouseName string    `json:"warehouse_name"`
+	Available     int       `json:"available"`
+	CanFulfill    bool      `json:"can_fulfill"`
+	DistanceKM    *float64  `json:"distance_km,omitempty"`
 }
 
-// StockSummaryRequest for getting total stock across warehouses
-type StockSummaryRequest struct {
-	BookID uuid.UUID `form:"book_id" binding:"required"`
-}
-
-// StockSummaryResponse for total stock summary
 type StockSummaryResponse struct {
 	BookID         uuid.UUID               `json:"book_id"`
 	TotalQuantity  int                     `json:"total_quantity"`
 	TotalReserved  int                     `json:"total_reserved"`
 	TotalAvailable int                     `json:"total_available"`
+	WarehouseCount int                     `json:"warehouse_count"`
 	ByWarehouse    []WarehouseStockSummary `json:"by_warehouse"`
 }
 
-// WarehouseStockSummary for per-warehouse summary
 type WarehouseStockSummary struct {
-	Warehouse         string `json:"warehouse"`
-	Quantity          int    `json:"quantity"`
-	Reserved          int    `json:"reserved"`
-	Available         int    `json:"available"`
-	IsLowStock        bool   `json:"is_low_stock"`
-	LowStockThreshold int    `json:"low_stock_threshold"`
+	WarehouseID    uuid.UUID `json:"warehouse_id"`
+	WarehouseName  string    `json:"warehouse_name"`
+	Quantity       int       `json:"quantity"`
+	Reserved       int       `json:"reserved"`
+	Available      int       `json:"available"`
+	IsLowStock     bool      `json:"is_low_stock"`
+	AlertThreshold int       `json:"alert_threshold"`
 }
 
-// ===================================
-// INVENTORY MOVEMENT DTOs
-// ===================================
-
-// CreateMovementRequest represents request to create manual inventory adjustment
-type CreateMovementRequest struct {
-	InventoryID   uuid.UUID  `json:"inventory_id" binding:"required"`
-	MovementType  string     `json:"movement_type" binding:"required,oneof=inbound outbound adjustment return"`
-	Quantity      int        `json:"quantity" binding:"required"` // Can be negative for outbound
-	ReferenceType *string    `json:"reference_type,omitempty" binding:"omitempty,oneof=order purchase manual return"`
-	ReferenceID   *uuid.UUID `json:"reference_id,omitempty"`
-	Notes         string     `json:"notes" binding:"required,max=500"`
+type BulkUpdateJobResponse struct {
+	JobID     uuid.UUID `json:"job_id"`
+	Status    string    `json:"status"` // "queued", "processing"
+	TotalRows int       `json:"total_rows"`
+	Message   string    `json:"message"`
 }
 
-// ListMovementsRequest represents query for listing movements with pagination
-type ListMovementsRequest struct {
-	InventoryID   *uuid.UUID `form:"inventory_id"`
-	MovementType  *string    `form:"movement_type" binding:"omitempty,oneof=inbound outbound adjustment reserve release return"`
-	ReferenceType *string    `form:"reference_type" binding:"omitempty,oneof=order purchase manual return"`
-	Page          int        `form:"page" binding:"required,min=1"`
-	Limit         int        `form:"limit" binding:"required,min=1,max=100"`
+type BulkUpdateStatusResponse struct {
+	JobID         uuid.UUID         `json:"job_id"`
+	Status        string            `json:"status"` // "processing", "completed", "failed"
+	TotalRows     int               `json:"total_rows"`
+	ProcessedRows int               `json:"processed_rows"`
+	SuccessRows   int               `json:"success_rows"`
+	ErrorRows     int               `json:"error_rows"`
+	Errors        []BulkUpdateError `json:"errors,omitempty"`
+	CompletedAt   *time.Time        `json:"completed_at,omitempty"`
 }
 
-// MovementResponse represents inventory movement response
-type MovementResponse struct {
-	ID                uuid.UUID  `json:"id"`
-	InventoryID       uuid.UUID  `json:"inventory_id"`
-	BookID            uuid.UUID  `json:"book_id"`
-	WarehouseLocation string     `json:"warehouse_location"`
-	MovementType      string     `json:"movement_type"` // inbound, outbound, adjustment, reserve, release, return
-	Quantity          int        `json:"quantity"`      // Can be negative
-	QuantityBefore    int        `json:"quantity_before"`
-	QuantityAfter     int        `json:"quantity_after"`
-	ReferenceType     *string    `json:"reference_type,omitempty"`
-	ReferenceID       *uuid.UUID `json:"reference_id,omitempty"`
-	Notes             *string    `json:"notes,omitempty"`
-	CreatedBy         *uuid.UUID `json:"created_by,omitempty"`
-	CreatedAt         time.Time  `json:"created_at"`
+type BulkUpdateError struct {
+	Row     int    `json:"row"`
+	Column  string `json:"column"`
+	Value   string `json:"value"`
+	Message string `json:"message"`
 }
 
-// ListMovementsResponse represents paginated movements list
-type ListMovementsResponse struct {
-	Items      []MovementResponse `json:"items"`
-	TotalItems int                `json:"total_items"`
-	TotalPages int                `json:"total_pages"`
-	Page       int                `json:"page"`
-	Limit      int                `json:"limit"`
+type AuditTrailResponse struct {
+	Items      []AuditLogEntry `json:"items"`
+	TotalItems int             `json:"total_items"`
+	TotalPages int             `json:"total_pages"`
+	Page       int             `json:"page"`
+	Limit      int             `json:"limit"`
 }
 
-// MovementStatsResponse represents movement statistics for a book
-type MovementStatsResponse struct {
-	BookID         uuid.UUID      `json:"book_id"`
-	TotalInbound   int            `json:"total_inbound"`
-	TotalOutbound  int            `json:"total_outbound"`
-	TotalReserved  int            `json:"total_reserved"`
-	TotalReleased  int            `json:"total_released"`
-	NetMovement    int            `json:"net_movement"` // inbound - outbound
-	ByWarehouse    map[string]int `json:"by_warehouse"`
-	ByMovementType map[string]int `json:"by_movement_type"`
-	LastMovement   *time.Time     `json:"last_movement,omitempty"`
+type InventoryHistoryResponse struct {
+	WarehouseID uuid.UUID       `json:"warehouse_id"`
+	BookID      uuid.UUID       `json:"book_id"`
+	History     []AuditLogEntry `json:"history"`
+	TotalItems  int             `json:"total_items"`
+	Page        int             `json:"page"`
+	Limit       int             `json:"limit"`
 }
 
-// ===================================
-// STOCK AGGREGATION & SUMMARY DTOs
-// ===================================
-
-// DashboardRequest for dashboard metrics
-type DashboardRequest struct {
-	StartDate *time.Time `form:"start_date,omitempty"` // Optional: filter by date range
-	EndDate   *time.Time `form:"end_date,omitempty"`
+type ExportResponse struct {
+	FileName  string    `json:"file_name"`
+	URL       string    `json:"url"`
+	ExpiresAt time.Time `json:"expires_at"`
+	FileSize  int64     `json:"file_size_bytes"`
 }
 
-// InventoryDashboardResponse represents inventory dashboard metrics
-type InventoryDashboardResponse struct {
-	Summary          DashboardSummary      `json:"summary"`
-	ByWarehouse      []WarehouseMetrics    `json:"by_warehouse"`
-	LowStockItems    []LowStockItem        `json:"low_stock_items"`
-	OutOfStockItems  []OutOfStockItem      `json:"out_of_stock_items"`
-	ReservedAnalysis ReservedStockAnalysis `json:"reserved_analysis"`
-	MovementTrends   []MovementTrend       `json:"movement_trends"`
-	WarehouseHealth  map[string]float64    `json:"warehouse_health"` // Utilization %
-	Timestamp        time.Time             `json:"timestamp"`
+type DashboardSummaryResponse struct {
+	Summary         DashboardSummary   `json:"summary"`
+	ByWarehouse     []WarehouseMetrics `json:"by_warehouse"`
+	LowStockAlerts  []LowStockAlert    `json:"low_stock_alerts"`
+	RecentMovements []AuditLogEntry    `json:"recent_movements"`
+	Timestamp       time.Time          `json:"timestamp"`
 }
 
-// DashboardSummary represents overall inventory summary
 type DashboardSummary struct {
-	TotalBooks        int     `json:"total_books"`
-	TotalQuantity     int     `json:"total_quantity"`
-	TotalReserved     int     `json:"total_reserved"`
-	TotalAvailable    int     `json:"total_available"`
-	LowStockCount     int     `json:"low_stock_count"`
-	OutOfStockCount   int     `json:"out_of_stock_count"`
-	HealthScore       float64 `json:"health_score"`       // 0-100
-	InventoryTurnover float64 `json:"inventory_turnover"` // Times per period
-	HealthStatus      string  `json:"health_status"`      // "healthy", "warning", "critical"
+	TotalBooks      int     `json:"total_books"`
+	TotalQuantity   int     `json:"total_quantity"`
+	TotalReserved   int     `json:"total_reserved"`
+	TotalAvailable  int     `json:"total_available"`
+	LowStockCount   int     `json:"low_stock_count"`
+	OutOfStockCount int     `json:"out_of_stock_count"`
+	HealthScore     float64 `json:"health_score"`  // 0-100
+	HealthStatus    string  `json:"health_status"` // "healthy", "warning", "critical"
 }
 
-// WarehouseMetrics represents metrics for single warehouse
 type WarehouseMetrics struct {
-	Warehouse       string     `json:"warehouse"`
+	WarehouseID     uuid.UUID  `json:"warehouse_id"`
+	WarehouseName   string     `json:"warehouse_name"`
+	BookCount       int        `json:"book_count"`
 	TotalQuantity   int        `json:"total_quantity"`
 	TotalReserved   int        `json:"total_reserved"`
 	TotalAvailable  int        `json:"total_available"`
-	BookCount       int        `json:"book_count"`
 	LowStockCount   int        `json:"low_stock_count"`
 	OutOfStockCount int        `json:"out_of_stock_count"`
-	Utilization     float64    `json:"utilization"` // % of capacity
+	Utilization     float64    `json:"utilization_percent"`      // quantity / capacity
+	ReservationRate float64    `json:"reservation_rate_percent"` // reserved / quantity
 	HealthScore     float64    `json:"health_score"`
-	ReservationRate float64    `json:"reservation_rate"` // % of total reserved
 	LastMovement    *time.Time `json:"last_movement,omitempty"`
 }
 
-// LowStockItem represents book with low stock
-type LowStockItem struct {
-	BookID             uuid.UUID `json:"book_id"`
-	BookTitle          string    `json:"book_title,omitempty"`
-	WarehouseLocation  string    `json:"warehouse_location"`
-	CurrentStock       int       `json:"current_stock"`
-	ReservedStock      int       `json:"reserved_stock"`
-	AvailableStock     int       `json:"available_stock"`
-	LowStockThreshold  int       `json:"low_stock_threshold"`
-	DaysUntilStockout  int       `json:"days_until_stockout"` // Estimated
-	RecommendedReorder int       `json:"recommended_reorder"` // Quantity
-	Priority           string    `json:"priority"`            // "critical", "high", "medium"
+type WarehousePerformanceResponse struct {
+	WarehouseID    uuid.UUID        `json:"warehouse_id"`
+	WarehouseName  string           `json:"warehouse_name"`
+	Metrics        WarehouseMetrics `json:"metrics"`
+	MovementTrends []MovementTrend  `json:"movement_trends"`
 }
 
-// OutOfStockItem represents book with zero stock
-type OutOfStockItem struct {
-	BookID            uuid.UUID  `json:"book_id"`
-	BookTitle         string     `json:"book_title,omitempty"`
-	WarehouseLocation string     `json:"warehouse_location"`
-	ReservedStock     int        `json:"reserved_stock"`
-	DaysSinceStockout int        `json:"days_since_stockout"`
-	LastRestockDate   *time.Time `json:"last_restock_date,omitempty"`
-}
-
-// ReservedStockAnalysis represents analysis of reserved stock
-type ReservedStockAnalysis struct {
-	TotalReserved      int                 `json:"total_reserved"`
-	TotalAvailable     int                 `json:"total_available"`
-	ReservationRate    float64             `json:"reservation_rate"` // % of total
-	ByWarehouse        map[string]int      `json:"by_warehouse"`
-	LongestReserved    *ReservedItemDetail `json:"longest_reserved,omitempty"`
-	HighestReservation *ReservedItemDetail `json:"highest_reservation,omitempty"`
-}
-
-// ReservedItemDetail represents detail of reserved item
-type ReservedItemDetail struct {
-	BookID           uuid.UUID `json:"book_id"`
-	Warehouse        string    `json:"warehouse"`
-	ReservedQuantity int       `json:"reserved_quantity"`
-	DateReserved     time.Time `json:"date_reserved"`
-	DaysReserved     int       `json:"days_reserved"`
-}
-
-// MovementTrend represents movement trend for analytics
 type MovementTrend struct {
-	Period           string `json:"period"` // e.g., "2025-11-06"
+	Period           string `json:"period"` // "2025-11-08"
 	Inbound          int    `json:"inbound"`
 	Outbound         int    `json:"outbound"`
 	NetMovement      int    `json:"net_movement"`
 	TransactionCount int    `json:"transaction_count"`
 }
 
-// InventoryValueResponse represents inventory value calculation
 type InventoryValueResponse struct {
-	Summary           InventoryValueSummary   `json:"summary"`
-	ByWarehouse       []WarehouseValueMetrics `json:"by_warehouse"`
-	ByBook            []BookValueMetrics      `json:"by_book"`             // Top 10
-	MostValuableItems []BookValueMetrics      `json:"most_valuable_items"` // Top 5
-	LeastMovingItems  []BookValueMetrics      `json:"least_moving_items"`  // Bottom 5
+	TotalValue   float64            `json:"total_value"`
+	ByWarehouse  map[string]float64 `json:"by_warehouse"`
+	ByCategory   map[string]float64 `json:"by_category,omitempty"`
+	Currency     string             `json:"currency"` // "VND"
+	CalculatedAt time.Time          `json:"calculated_at"`
 }
 
-// InventoryValueSummary represents total inventory value
-type InventoryValueSummary struct {
-	TotalValue         float64 `json:"total_value"`
-	TotalCost          float64 `json:"total_cost"`
-	ReservedValue      float64 `json:"reserved_value"`
-	AvailableValue     float64 `json:"available_value"`
-	AvgUnitValue       float64 `json:"avg_unit_value"`
-	ValueConcentration float64 `json:"value_concentration"` // % of top 20% items
+type ReservationAnalysisResponse struct {
+	TotalReserved      int            `json:"total_reserved"`
+	ReservationRate    float64        `json:"reservation_rate_percent"`
+	ByWarehouse        map[string]int `json:"by_warehouse"`
+	AvgDurationMinutes int            `json:"avg_duration_minutes"`
+	ConversionRate     float64        `json:"conversion_rate_percent"` // reserved → sale
 }
 
-// WarehouseValueMetrics represents warehouse value breakdown
-type WarehouseValueMetrics struct {
-	Warehouse      string  `json:"warehouse"`
-	TotalValue     float64 `json:"total_value"`
-	ReservedValue  float64 `json:"reserved_value"`
-	AvailableValue float64 `json:"available_value"`
-	ShareOfTotal   float64 `json:"share_of_total"` // %
+type WarehouseResponse struct {
+	ID        uuid.UUID `json:"id"`
+	Name      string    `json:"name"`
+	Code      string    `json:"code"`
+	Address   string    `json:"address"`
+	Province  string    `json:"province"`
+	Latitude  *float64  `json:"latitude,omitempty"`
+	Longitude *float64  `json:"longitude,omitempty"`
+	IsActive  bool      `json:"is_active"`
+	Version   int       `json:"version"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// BookValueMetrics represents per-book value metrics
-type BookValueMetrics struct {
-	BookID         uuid.UUID `json:"book_id"`
-	BookTitle      string    `json:"book_title,omitempty"`
-	TotalQuantity  int       `json:"total_quantity"`
-	UnitPrice      float64   `json:"unit_price"`
-	TotalValue     float64   `json:"total_value"`
-	ReservedValue  float64   `json:"reserved_value"`
-	AvailableValue float64   `json:"available_value"`
-	Turnover       int       `json:"turnover"` // Movement count
-	Days           int       `json:"days"`     // Days in inventory
+type OutOfStockItem struct {
+	BookID            uuid.UUID  `json:"book_id"`
+	WarehouseID       uuid.UUID  `json:"warehouse_id"`
+	WarehouseName     string     `json:"warehouse_name"`
+	ReservedStock     int        `json:"reserved_stock"`
+	LastRestockDate   *time.Time `json:"last_restock_date,omitempty"`
+	DaysSinceStockout int        `json:"days_since_stockout"`
+}
+
+// internal/domains/inventory/model/dto.go
+
+// ReservationMetrics for reservation analysis
+type ReservationMetrics struct {
+	TotalReserved      int            `json:"total_reserved"`
+	ReservationRate    float64        `json:"reservation_rate_percent"`
+	ByWarehouse        map[string]int `json:"by_warehouse"`
+	AvgDurationMinutes int            `json:"avg_duration_minutes"`
+	ConversionRate     float64        `json:"conversion_rate_percent"` // reserved → sale
 }

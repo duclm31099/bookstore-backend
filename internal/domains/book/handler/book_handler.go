@@ -88,7 +88,6 @@ func (h *Handler) ListBooks(c *gin.Context) {
 }
 
 // GetBookDetail - GET /v1/books/:id
-// Trả về chi tiết sách bao gồm author, category, publisher, inventories, reviews
 func (h *Handler) GetBookDetail(c *gin.Context) {
 	id := c.Param("id")
 

@@ -500,17 +500,6 @@ func (e *ValidationError) Error() string {
 	return e.Message
 }
 
-// inventories
-type InventoryDetailDTO struct {
-	Location          string     `json:"location"`
-	Quantity          int        `json:"quantity"`
-	ReservedQuantity  int        `json:"reserved_quantity"`
-	AvailableQuantity int        `json:"available_quantity"`
-	LowStockThreshold int        `json:"low_stock_threshold"`
-	IsLowStock        bool       `json:"is_low_stock"`
-	LastRestockAt     *time.Time `json:"last_restock_at,omitempty"`
-}
-
 // book detail response
 type BookDetailResponse struct {
 	ID            uuid.UUID            `json:"id"`
@@ -540,6 +529,17 @@ type BookFilter struct {
 	Offset     int
 	Limit      int
 	IsActive   *bool
+}
+type InventoryDetailDTO struct {
+	WarehouseID     uuid.UUID  `json:"warehouse_id"`
+	WarehouseName   string     `json:"warehouse_name"`
+	WarehouseCode   string     `json:"warehouse_code"`
+	Quantity        int        `json:"quantity"`
+	Reserved        int        `json:"reserved"`
+	Available       int        `json:"available"`
+	AlertThreshold  int        `json:"alert_threshold"`
+	IsLowStock      bool       `json:"is_low_stock"`
+	LastRestockedAt *time.Time `json:"last_restocked_at,omitempty"`
 }
 
 // các DTO liên kết

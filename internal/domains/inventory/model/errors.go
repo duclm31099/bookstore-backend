@@ -55,12 +55,18 @@ var (
 	ErrInvalidAdjustmentQuantity = errors.New("adjustment quantity cannot be zero")
 
 	// ErrNoInventoryData is returned when no inventory data exists
-	ErrNoInventoryData = errors.New("no inventory data available for aggregation")
+	ErrNoInventoryData                = errors.New("no inventory data available for aggregation")
+	ErrWarehouseNotFound              = errors.New("warehouse not found")
+	ErrWarehouseCodeExists            = errors.New("warehouse code already exists")
+	ErrCannotDeleteWarehouseWithStock = errors.New("cannot delete warehouse with existing stock")
 )
 
 // ===================================
 // ERROR HELPERS
 // ===================================
+func NewWarehouseNotFoundError(warehouseID uuid.UUID) error {
+	return fmt.Errorf("%w: %s", ErrWarehouseNotFound, warehouseID.String())
+}
 
 // NewInventoryNotFoundError creates a detailed not found error
 func NewInventoryNotFoundError(id uuid.UUID) error {
