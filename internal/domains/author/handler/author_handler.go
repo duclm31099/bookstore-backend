@@ -7,15 +7,16 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	"bookstore-backend/internal/domains/author"
+	"bookstore-backend/internal/domains/author/model"
+	"bookstore-backend/internal/domains/author/service"
 	"bookstore-backend/internal/shared/response"
 )
 
 type AuthorHandler struct {
-	service author.Service
+	service service.ServiceInterface
 }
 
-func NewAuthorHandler(svc author.Service) *AuthorHandler {
+func NewAuthorHandler(svc service.ServiceInterface) *AuthorHandler {
 	return &AuthorHandler{
 		service: svc,
 	}
@@ -26,7 +27,7 @@ func NewAuthorHandler(svc author.Service) *AuthorHandler {
 // ════════════════════════════════════════════════════════════════
 
 func (h *AuthorHandler) Create(c *gin.Context) {
-	var req author.CreateAuthorRequest
+	var req model.CreateAuthorRequest
 
 	if err := c.BindJSON(&req); err != nil {
 		response.Error(c, http.StatusBadRequest, "Bad Request", err.Error())
@@ -35,7 +36,7 @@ func (h *AuthorHandler) Create(c *gin.Context) {
 
 	resp, err := h.service.Create(c.Request.Context(), &req)
 	if err != nil {
-		statusCode := author.ToHTTPStatus(err)
+		statusCode := model.ToHTTPStatus(err)
 		response.Error(c, statusCode, "Bad Request", err.Error())
 		return
 	}
@@ -58,7 +59,7 @@ func (h *AuthorHandler) GetByID(c *gin.Context) {
 
 	resp, err := h.service.GetByID(c.Request.Context(), id)
 	if err != nil {
-		if err == author.ErrAuthorNotFound {
+		if err == model.ErrAuthorNotFound {
 			response.Error(c, http.StatusNotFound, "Not Found", err.Error())
 		} else {
 			response.Error(c, http.StatusInternalServerError, "Internal Server Error", err.Error())
@@ -78,7 +79,7 @@ func (h *AuthorHandler) GetBySlug(c *gin.Context) {
 
 	resp, err := h.service.GetBySlug(c.Request.Context(), slug)
 	if err != nil {
-		if err == author.ErrAuthorNotFound {
+		if err == model.ErrAuthorNotFound {
 			response.Error(c, http.StatusNotFound, "Not Found", err.Error())
 		} else {
 			response.Error(c, http.StatusInternalServerError, "Internal Server Error", err.Error())
@@ -113,7 +114,7 @@ func (h *AuthorHandler) GetAll(c *gin.Context) {
 	}
 
 	// Build filter
-	filter := author.AuthorFilter{
+	filter := model.AuthorFilter{
 		Limit:  limit,
 		Offset: offset,
 		SortBy: c.DefaultQuery("sort_by", "created_at"),
@@ -132,13 +133,13 @@ func (h *AuthorHandler) GetAll(c *gin.Context) {
 	totalPages := (int(total) + filter.Limit - 1) / filter.Limit
 	currentPage := (filter.Offset / filter.Limit) + 1
 
-	authorResponses := make([]author.AuthorResponse, len(authors))
+	authorResponses := make([]model.AuthorResponse, len(authors))
 	for i, a := range authors {
 		authorResponses[i] = *(a.ToResponse()) // Use the ToResponse() method
 	}
-	res := &author.AuthorListResponse{
+	res := &model.AuthorListResponse{
 		Data: authorResponses,
-		Pagination: author.PaginationMeta{
+		Pagination: model.PaginationMeta{
 			CurrentPage: currentPage,
 			PageSize:    filter.Limit,
 			TotalItems:  total,
@@ -175,7 +176,7 @@ func (h *AuthorHandler) Search(c *gin.Context) {
 		}
 	}
 
-	filter := author.AuthorFilter{
+	filter := model.AuthorFilter{
 		Limit:  limit,
 		Offset: offset,
 	}
@@ -186,12 +187,12 @@ func (h *AuthorHandler) Search(c *gin.Context) {
 		response.Error(c, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return
 	}
-	var authors []author.AuthorResponse
+	var authors []model.AuthorResponse
 	for _, a := range results {
 		temp := a.ToResponse()
 		authors = append(authors, *temp)
 	}
-	res := author.SearchAuthorResponse{
+	res := model.SearchAuthorResponse{
 		Authors: authors,
 		Total:   int32(total),
 	}
@@ -212,7 +213,7 @@ func (h *AuthorHandler) Update(c *gin.Context) {
 		return
 	}
 
-	var req author.UpdateAuthorRequest
+	var req model.UpdateAuthorRequest
 	if err := c.BindJSON(&req); err != nil {
 		response.Error(c, http.StatusBadRequest, "Bad Request", err.Error())
 		return
@@ -220,12 +221,12 @@ func (h *AuthorHandler) Update(c *gin.Context) {
 
 	resp, err := h.service.Update(c.Request.Context(), id, &req)
 	if err != nil {
-		if err == author.ErrAuthorNotFound {
+		if err == model.ErrAuthorNotFound {
 			response.Error(c, http.StatusNotFound, "Not Found", err.Error())
-		} else if err == author.ErrVersionMismatch {
+		} else if err == model.ErrVersionMismatch {
 			response.Error(c, http.StatusConflict, "Conflict", err.Error())
 		} else {
-			statusCode := author.ToHTTPStatus(err)
+			statusCode := model.ToHTTPStatus(err)
 			response.Error(c, statusCode, "Bad Request", err.Error())
 		}
 		return
@@ -249,9 +250,9 @@ func (h *AuthorHandler) Delete(c *gin.Context) {
 
 	err = h.service.Delete(c.Request.Context(), id)
 	if err != nil {
-		if err == author.ErrAuthorNotFound {
+		if err == model.ErrAuthorNotFound {
 			response.Error(c, http.StatusNotFound, "Not Found", err.Error())
-		} else if err == author.ErrAuthorHasBooks {
+		} else if err == model.ErrAuthorHasBooks {
 			response.Error(c, http.StatusConflict, "Conflict", err.Error())
 		} else {
 			response.Error(c, http.StatusInternalServerError, "Internal Server Error", err.Error())
@@ -267,7 +268,7 @@ func (h *AuthorHandler) Delete(c *gin.Context) {
 // ════════════════════════════════════════════════════════════════
 
 func (h *AuthorHandler) BulkDelete(c *gin.Context) {
-	var req author.BulkDeleteRequest
+	var req model.BulkDeleteRequest
 
 	if err := c.BindJSON(&req); err != nil {
 		response.Error(c, http.StatusBadRequest, "Bad Request", err.Error())
@@ -285,7 +286,7 @@ func (h *AuthorHandler) BulkDelete(c *gin.Context) {
 		return
 	}
 
-	res := author.BulkDeleteResponse{
+	res := model.BulkDeleteResponse{
 		SuccessCount: successCount,
 		FailedCount:  len(bulkErrors),
 		Errors:       bulkErrors,
@@ -309,7 +310,7 @@ func (h *AuthorHandler) GetWithBookCount(c *gin.Context) {
 
 	a, bookCount, err := h.service.GetWithBookCount(c.Request.Context(), id)
 	if err != nil {
-		if err == author.ErrAuthorNotFound {
+		if err == model.ErrAuthorNotFound {
 			response.Error(c, http.StatusNotFound, "Not Found", err.Error())
 		} else {
 			response.Error(c, http.StatusInternalServerError, "Internal Server Error", err.Error())

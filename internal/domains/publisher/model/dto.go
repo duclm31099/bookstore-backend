@@ -1,4 +1,4 @@
-package publisher
+package model
 
 import (
 	"regexp"
@@ -12,57 +12,72 @@ import (
 // Publisher represents a book publisher in the system
 // Used across all layers (repository, service, handler)
 type Publisher struct {
-	ID        uuid.UUID `db:"id"`
-	Name      string    `db:"name"`
-	Slug      string    `db:"slug"`
-	Website   string    `db:"website"`
-	Email     string    `db:"email"`
-	Phone     string    `db:"phone"`
-	CreatedAt time.Time `db:"created_at"`
-	UpdatedAt time.Time `db:"updated_at"`
+	ID          uuid.UUID `db:"id"`
+	Name        string    `db:"name"`
+	Slug        string    `db:"slug"`
+	Website     string    `db:"website"`
+	Email       string    `db:"email"`
+	Phone       string    `db:"phone"`
+	Address     string    `db:"address"`
+	Description string    `db:"description"`
+	IsActive    bool      `db:"is_active"`
+	CreatedAt   time.Time `db:"created_at"`
+	UpdatedAt   time.Time `db:"updated_at"`
 }
 
 // PublisherCreateRequest DTO for creating a new publisher
 // Validation tags có thể thêm (validation layer tùy bạn)
 type PublisherCreateRequest struct {
-	Name    string `json:"name" binding:"required,min=1,max=255"`
-	Slug    string `json:"slug" binding:"required,min=1,max=255"`
-	Website string `json:"website" binding:"omitempty,url"`
-	Email   string `json:"email" binding:"omitempty,email"`
-	Phone   string `json:"phone" binding:"omitempty"`
+	Name        string  `json:"name" binding:"required,min=1,max=255"`
+	Slug        string  `json:"slug" binding:"required,min=1,max=255"`
+	Website     string  `json:"website" binding:"omitempty,url"`
+	Email       string  `json:"email" binding:"omitempty,email"`
+	Phone       string  `json:"phone" binding:"omitempty"`
+	Address     *string `json:"address" binding:"omitempty"`
+	Description *string `json:"description" binding:"omitempty"`
+	IsActive    bool    `json:"is_active" binding:"omitempty"`
 }
 
 // PublisherUpdateRequest DTO for updating a publisher
 type PublisherUpdateRequest struct {
-	Name    string `json:"name" binding:"omitempty,min=1,max=255"`
-	Website string `json:"website" binding:"omitempty,url"`
-	Email   string `json:"email" binding:"omitempty,email"`
-	Phone   string `json:"phone" binding:"omitempty"`
+	Name        string  `json:"name" binding:"omitempty,min=1,max=255"`
+	Website     string  `json:"website" binding:"omitempty,url"`
+	Email       string  `json:"email" binding:"omitempty,email"`
+	Phone       string  `json:"phone" binding:"omitempty"`
+	Address     *string `json:"address" binding:"omitempty"`
+	Description *string `json:"description" binding:"omitempty"`
+	IsActive    bool    `json:"is_active" binding:"omitempty"`
 }
 
 // PublisherResponse DTO for API response
 type PublisherResponse struct {
-	ID        uuid.UUID `json:"id"`
-	Name      string    `json:"name"`
-	Slug      string    `json:"slug"`
-	Website   string    `json:"website"`
-	Email     string    `json:"email"`
-	Phone     string    `json:"phone"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID          uuid.UUID `json:"id"`
+	Name        string    `json:"name"`
+	Slug        string    `json:"slug"`
+	Website     string    `json:"website"`
+	Email       string    `json:"email"`
+	Phone       string    `json:"phone"`
+	Address     *string   `json:"address" validate:"omitempty"`
+	Description *string   `json:"description" validate:"omitempty"`
+	IsActive    bool      `json:"is_active" validate:"omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // PublisherWithBooksResponse DTO - Publisher with associated books
 type PublisherWithBooksResponse struct {
-	ID        uuid.UUID   `json:"id"`
-	Name      string      `json:"name"`
-	Slug      string      `json:"slug"`
-	Website   string      `json:"website"`
-	Email     string      `json:"email"`
-	Phone     string      `json:"phone"`
-	Books     []BookBasic `json:"books"`
-	CreatedAt time.Time   `json:"created_at"`
-	UpdatedAt time.Time   `json:"updated_at"`
+	ID          uuid.UUID   `json:"id"`
+	Name        string      `json:"name"`
+	Slug        string      `json:"slug"`
+	Website     string      `json:"website"`
+	Email       string      `json:"email"`
+	Phone       string      `json:"phone"`
+	Address     *string     `json:"address" validate:"omitempty"`
+	Description *string     `json:"description" validate:"omitempty"`
+	IsActive    bool        `json:"is_active" validate:"omitempty"`
+	Books       []BookBasic `json:"books"`
+	CreatedAt   time.Time   `json:"created_at"`
+	UpdatedAt   time.Time   `json:"updated_at"`
 }
 
 // BookBasic DTO - Basic book info for publisher response

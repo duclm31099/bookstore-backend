@@ -1,4 +1,4 @@
-package author
+package model
 
 import (
 	"time"

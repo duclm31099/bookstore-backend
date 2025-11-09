@@ -151,13 +151,13 @@ type OrderStatusHistory struct {
 // WAREHOUSE PROVINCE MAPPING
 // =====================================================
 var ProvinceWarehouseMap = map[string]string{
-	"Hà Nội":          "HN-01",
-	"TP. Hồ Chí Minh": "HCM-01",
-	"TP.HCM":          "HCM-01",
-	"Hồ Chí Minh":     "HCM-01",
-	"Đà Nẵng":         "DN-01",
+	"Hà Nội":          "WH-HN-01",
+	"TP. Hồ Chí Minh": "WH-HCM-01",
+	"TP.HCM":          "WH-HCM-01",
+	"Hồ Chí Minh":     "WH-HCM-01",
+	"Đà Nẵng":         "WH-DN-01",
 	"Cần Thơ":         "CT-01", // If you have CT warehouse
 }
 
 // DefaultWarehouseCode returns HN-01 as default warehouse
-const DefaultWarehouseCode = "HN-01"
+const DefaultWarehouseCode = "WH-HN-01"

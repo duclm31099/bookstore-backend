@@ -7,28 +7,29 @@ import (
 
 	"github.com/google/uuid"
 
-	a "bookstore-backend/internal/domains/address"
+	"bookstore-backend/internal/domains/address/model"
+	repo "bookstore-backend/internal/domains/address/repository"
 )
 
 type addressService struct {
-	repo a.Repository
+	repo repo.RepositoryInterface
 }
 
-func NewAddressService(repo a.Repository) a.ServiceInterface {
+func NewAddressService(repo repo.RepositoryInterface) ServiceInterface {
 	return &addressService{
 		repo: repo,
 	}
 }
 
 // CreateAddress creates a new address for user
-func (s *addressService) CreateAddress(ctx context.Context, userID uuid.UUID, req *a.AddressCreateRequest) (*a.AddressResponse, error) {
+func (s *addressService) CreateAddress(ctx context.Context, userID uuid.UUID, req *model.AddressCreateRequest) (*model.AddressResponse, error) {
 	// Validate request
-	if err := a.ValidateAddressCreate(req); err != nil {
+	if err := model.ValidateAddressCreate(req); err != nil {
 		return nil, err
 	}
 
 	// Create address model
-	addr := &a.Address{
+	addr := &model.Address{
 		UserID:        userID,
 		RecipientName: strings.TrimSpace(req.RecipientName),
 		Phone:         strings.TrimSpace(req.Phone),
@@ -36,7 +37,7 @@ func (s *addressService) CreateAddress(ctx context.Context, userID uuid.UUID, re
 		District:      strings.TrimSpace(req.District),
 		Ward:          strings.TrimSpace(req.Ward),
 		Street:        strings.TrimSpace(req.Street),
-		AddressType:   a.AddressType(strings.ToLower(strings.TrimSpace(req.AddressType))),
+		AddressType:   model.AddressType(strings.ToLower(strings.TrimSpace(req.AddressType))),
 		IsDefault:     false,
 		Notes:         strings.TrimSpace(req.Notes),
 	}
@@ -51,7 +52,7 @@ func (s *addressService) CreateAddress(ctx context.Context, userID uuid.UUID, re
 }
 
 // GetAddress retrieves an address by ID (with authorization check)
-func (s *addressService) GetAddressByID(ctx context.Context, userID, addressID uuid.UUID) (*a.AddressResponse, error) {
+func (s *addressService) GetAddressByID(ctx context.Context, userID, addressID uuid.UUID) (*model.AddressResponse, error) {
 
 	addr, err := s.repo.GetByID(ctx, addressID)
 	if err != nil {
@@ -59,19 +60,19 @@ func (s *addressService) GetAddressByID(ctx context.Context, userID, addressID u
 	}
 
 	if addr == nil {
-		return nil, a.NewAddressNotFound()
+		return nil, model.NewAddressNotFound()
 	}
 
 	// Check ownership
 	if addr.UserID != userID {
-		return nil, a.NewAddressNotBelongToUser(addressID.String(), userID.String())
+		return nil, model.NewAddressNotBelongToUser(addressID.String(), userID.String())
 	}
 
 	return s.modelToResponse(addr), nil
 }
 
 // ListUserAddresses retrieves all addresses for a user
-func (s *addressService) ListUserAddresses(ctx context.Context, userID uuid.UUID) ([]*a.AddressResponse, error) {
+func (s *addressService) ListUserAddresses(ctx context.Context, userID uuid.UUID) ([]*model.AddressResponse, error) {
 
 	addrs, err := s.repo.GetByUserID(ctx, userID)
 	if err != nil {
@@ -79,10 +80,10 @@ func (s *addressService) ListUserAddresses(ctx context.Context, userID uuid.UUID
 	}
 
 	if len(addrs) == 0 {
-		return []*a.AddressResponse{}, nil // Return empty array instead of nil
+		return []*model.AddressResponse{}, nil // Return empty array instead of nil
 	}
 
-	responses := make([]*a.AddressResponse, len(addrs))
+	responses := make([]*model.AddressResponse, len(addrs))
 	for i, addr := range addrs {
 		responses[i] = s.modelToResponse(addr)
 	}
@@ -91,7 +92,7 @@ func (s *addressService) ListUserAddresses(ctx context.Context, userID uuid.UUID
 }
 
 // GetDefaultAddress retrieves default address for a user
-func (s *addressService) GetDefaultAddress(ctx context.Context, userID uuid.UUID) (*a.AddressResponse, error) {
+func (s *addressService) GetDefaultAddress(ctx context.Context, userID uuid.UUID) (*model.AddressResponse, error) {
 
 	addr, err := s.repo.GetDefaultByUserID(ctx, userID)
 	if err != nil {
@@ -99,16 +100,16 @@ func (s *addressService) GetDefaultAddress(ctx context.Context, userID uuid.UUID
 	}
 
 	if addr == nil {
-		return nil, a.NewAddressNotFound()
+		return nil, model.NewAddressNotFound()
 	}
 
 	return s.modelToResponse(addr), nil
 }
 
 // UpdateAddress - Optimized version
-func (s *addressService) UpdateAddress(ctx context.Context, userID, addressID uuid.UUID, req *a.AddressUpdateRequest) (*a.AddressResponse, error) {
+func (s *addressService) UpdateAddress(ctx context.Context, userID, addressID uuid.UUID, req *model.AddressUpdateRequest) (*model.AddressResponse, error) {
 	// Validate request (includes nil check)
-	if err := a.ValidateAddressUpdate(req); err != nil {
+	if err := model.ValidateAddressUpdate(req); err != nil {
 		return nil, err
 	}
 	// Get existing address with ownership check
@@ -128,23 +129,23 @@ func (s *addressService) UpdateAddress(ctx context.Context, userID, addressID uu
 }
 
 // Helper: Get address and verify ownership
-func (s *addressService) getAddressWithOwnershipCheck(ctx context.Context, userID, addressID uuid.UUID) (*a.Address, error) {
+func (s *addressService) getAddressWithOwnershipCheck(ctx context.Context, userID, addressID uuid.UUID) (*model.Address, error) {
 	existing, err := s.repo.GetByID(ctx, addressID)
 	if err != nil {
 		return nil, err
 	}
 	if existing == nil {
-		return nil, a.NewAddressNotFound()
+		return nil, model.NewAddressNotFound()
 	}
 	if existing.UserID != userID {
-		return nil, a.NewAddressNotBelongToUser(addressID.String(), userID.String())
+		return nil, model.NewAddressNotBelongToUser(addressID.String(), userID.String())
 	}
 	return existing, nil
 }
 
 // Helper: Merge update request with existing values
-func (s *addressService) mergeAddressUpdate(req *a.AddressUpdateRequest, existing *a.Address) *a.Address {
-	return &a.Address{
+func (s *addressService) mergeAddressUpdate(req *model.AddressUpdateRequest, existing *model.Address) *model.Address {
+	return &model.Address{
 		RecipientName: s.getOrDefault(req.RecipientName, existing.RecipientName),
 		Phone:         s.getOrDefault(req.Phone, existing.Phone),
 		Province:      s.getOrDefault(req.Province, existing.Province),
@@ -166,12 +167,12 @@ func (s *addressService) getOrDefault(newVal, existingVal string) string {
 }
 
 // Helper: Same for AddressType
-func (s *addressService) getOrDefaultType(newVal string, existingVal a.AddressType) a.AddressType {
+func (s *addressService) getOrDefaultType(newVal string, existingVal model.AddressType) model.AddressType {
 	newVal = strings.TrimSpace(strings.ToLower(newVal))
 	if newVal == "" {
 		return existingVal
 	}
-	return a.AddressType(newVal)
+	return model.AddressType(newVal)
 }
 
 // DeleteAddress removes an address (with authorization check)
@@ -200,13 +201,13 @@ func (s *addressService) DeleteAddress(ctx context.Context, userID, addressID uu
 }
 
 // SetDefaultAddress sets an address as default for user
-func (s *addressService) SetDefaultAddress(ctx context.Context, userID, addressID uuid.UUID) (*a.AddressResponse, error) {
+func (s *addressService) SetDefaultAddress(ctx context.Context, userID, addressID uuid.UUID) (*model.AddressResponse, error) {
 	if userID == uuid.Nil {
-		return nil, a.NewInvalidUserID("user_id cannot be nil")
+		return nil, model.NewInvalidUserID("user_id cannot be nil")
 	}
 
 	if addressID == uuid.Nil {
-		return nil, a.NewInvalidAddressID("address_id cannot be nil")
+		return nil, model.NewInvalidAddressID("address_id cannot be nil")
 	}
 
 	// Verify address exists and belongs to user
@@ -229,11 +230,11 @@ func (s *addressService) SetDefaultAddress(ctx context.Context, userID, addressI
 // UnsetDefaultAddress unsets default flag (only if user has multiple addresses)
 func (s *addressService) UnsetDefaultAddress(ctx context.Context, userID, addressID uuid.UUID) error {
 	if userID == uuid.Nil {
-		return a.NewInvalidUserID("user_id cannot be nil")
+		return model.NewInvalidUserID("user_id cannot be nil")
 	}
 
 	if addressID == uuid.Nil {
-		return a.NewInvalidAddressID("address_id cannot be nil")
+		return model.NewInvalidAddressID("address_id cannot be nil")
 	}
 
 	// Verify address exists and belongs to user
@@ -246,7 +247,7 @@ func (s *addressService) UnsetDefaultAddress(ctx context.Context, userID, addres
 	}
 
 	if count == 1 {
-		return a.NewCannotUnsetOnlyDefault()
+		return model.NewCannotUnsetOnlyDefault()
 	}
 
 	// Unset default
@@ -259,9 +260,9 @@ func (s *addressService) UnsetDefaultAddress(ctx context.Context, userID, addres
 }
 
 // GetAddressWithUser retrieves address with user information (for admin)
-func (s *addressService) GetAddressWithUser(ctx context.Context, addressID uuid.UUID) (*a.AddressWithUserResponse, error) {
+func (s *addressService) GetAddressWithUser(ctx context.Context, addressID uuid.UUID) (*model.AddressWithUserResponse, error) {
 	if addressID == uuid.Nil {
-		return nil, a.NewInvalidAddressID("address_id cannot be nil")
+		return nil, model.NewInvalidAddressID("address_id cannot be nil")
 	}
 
 	resp, err := s.repo.GetAddressWithUser(ctx, addressID)
@@ -270,14 +271,14 @@ func (s *addressService) GetAddressWithUser(ctx context.Context, addressID uuid.
 	}
 
 	if resp == nil {
-		return nil, a.NewAddressNotFound()
+		return nil, model.NewAddressNotFound()
 	}
 
 	return resp, nil
 }
 
 // ListAllAddresses retrieves all addresses (for admin)
-func (s *addressService) ListAllAddresses(ctx context.Context, page, pageSize int) ([]*a.AddressResponse, int, error) {
+func (s *addressService) ListAllAddresses(ctx context.Context, page, pageSize int) ([]*model.AddressResponse, int, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -297,7 +298,7 @@ func (s *addressService) ListAllAddresses(ctx context.Context, page, pageSize in
 		return nil, 0, err
 	}
 
-	responses := make([]*a.AddressResponse, len(addrs))
+	responses := make([]*model.AddressResponse, len(addrs))
 	for i, addr := range addrs {
 		responses[i] = s.modelToResponse(addr)
 	}
@@ -306,8 +307,8 @@ func (s *addressService) ListAllAddresses(ctx context.Context, page, pageSize in
 }
 
 // Helper: Convert Address model to AddressResponse DTO
-func (s *addressService) modelToResponse(addr *a.Address) *a.AddressResponse {
-	return &a.AddressResponse{
+func (s *addressService) modelToResponse(addr *model.Address) *model.AddressResponse {
+	return &model.AddressResponse{
 		ID:            addr.ID,
 		UserID:        addr.UserID,
 		RecipientName: addr.RecipientName,

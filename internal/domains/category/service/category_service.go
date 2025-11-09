@@ -400,7 +400,7 @@ func (s *categoryServiceImpl) Update(
 
 	iconURL := entity.IconURL
 	if req.IconURL != nil {
-		iconURL = *req.IconURL
+		iconURL = req.IconURL
 	}
 
 	sortOrder := entity.SortOrder
@@ -413,7 +413,7 @@ func (s *categoryServiceImpl) Update(
 	// - Validate new values
 	// - Generate new slug (if name changed)
 	// - Update UpdatedAt
-	err = entity.Update(name, description, iconURL, sortOrder)
+	err = entity.Update(name, description, *iconURL, sortOrder)
 	if err != nil {
 		logger.Info("Update failed", map[string]interface{}{
 			"error": fmt.Sprintf("Update: entity update failed: %v", err),

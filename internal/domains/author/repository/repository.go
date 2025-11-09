@@ -1,6 +1,7 @@
-package author
+package repository
 
 import (
+	"bookstore-backend/internal/domains/author/model"
 	"context"
 
 	"github.com/google/uuid"
@@ -11,30 +12,30 @@ import (
 // 1. Easy testing via mocking
 // 2. Swapping database implementations
 // 3. Clear separation of concerns
-type Repository interface {
+type RepositoryInterface interface {
 	// Create inserts a new author
 	// Returns: created author with ID, timestamps, version=0
 	// Errors: ErrDuplicateSlug if slug exists
-	Create(ctx context.Context, author *Author) (*Author, error)
+	Create(ctx context.Context, author *model.Author) (*model.Author, error)
 
 	// GetByID retrieves author by UUID
 	// Returns: ErrAuthorNotFound if not exists
-	GetByID(ctx context.Context, id uuid.UUID) (*Author, error)
+	GetByID(ctx context.Context, id uuid.UUID) (*model.Author, error)
 
 	// GetBySlug retrieves author by URL slug
 	// Returns: ErrAuthorNotFound if not exists
-	GetBySlug(ctx context.Context, slug string) (*Author, error)
+	GetBySlug(ctx context.Context, slug string) (*model.Author, error)
 
 	// GetAll retrieves paginated list of authors
 	// Supports: sorting, filtering
 	// Returns: authors slice + total count for pagination
-	GetAll(ctx context.Context, filter AuthorFilter) ([]Author, int64, error)
+	GetAll(ctx context.Context, filter model.AuthorFilter) ([]model.Author, int64, error)
 
 	// Update updates an existing author with optimistic locking
 	// Version check: currentVersion must match DB version
 	// Returns: updated author with incremented version
 	// Errors: ErrVersionMismatch if conflict, ErrAuthorNotFound if not exists
-	Update(ctx context.Context, author *Author, currentVersion int) (*Author, error)
+	Update(ctx context.Context, author *model.Author, currentVersion int) (*model.Author, error)
 
 	// Delete removes author by ID
 	// Business rule: should check for linked books in service layer first
@@ -43,7 +44,7 @@ type Repository interface {
 
 	// BulkDelete removes multiple authors
 	// Returns: count of successfully deleted + errors for failed ones
-	BulkDelete(ctx context.Context, ids []uuid.UUID) (int, []BulkError, error)
+	BulkDelete(ctx context.Context, ids []uuid.UUID) (int, []model.BulkError, error)
 
 	// ExistsByID checks if author exists
 	// Useful for validation without fetching full data
@@ -59,5 +60,5 @@ type Repository interface {
 
 	// Search performs full-text search on author names
 	// Supports: partial matching, pagination
-	Search(ctx context.Context, query string, filter AuthorFilter) ([]Author, int64, error)
+	Search(ctx context.Context, query string, filter model.AuthorFilter) ([]model.Author, int64, error)
 }

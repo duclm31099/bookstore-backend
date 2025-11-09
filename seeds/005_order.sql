@@ -1,0 +1,194 @@
+-- =====================================================
+-- SEED DATA: ORDERS & ORDER ITEMS
+-- =====================================================
+
+-- Disable triggers temporarily
+SET session_replication_role = replica;
+
+-- Reset sequence
+ALTER SEQUENCE order_number_seq RESTART WITH 1;
+
+-- =====================================================
+-- ORDERS (40 orders with various statuses)
+-- =====================================================
+
+INSERT INTO orders (
+    id, order_number, user_id, address_id, promotion_id,
+    subtotal, shipping_fee, discount_amount, total,
+    payment_method, payment_status, payment_details, paid_at,
+    status, tracking_number, estimated_delivery_at, delivered_at,
+    customer_note, admin_note, cancellation_reason,
+    created_at, updated_at, cancelled_at
+) VALUES
+
+-- ========================================
+-- DELIVERED ORDERS (15 orders)
+-- ========================================
+
+-- Order 1: User 1, VNPay, delivered
+(
+    '90000000-0000-0000-0000-000000000001',
+    'ORD-20240910-0001',
+    '10000000-0000-0000-0000-000000000001',
+    '20000000-0000-0000-0000-000000000001',
+    '80000000-0000-0000-0000-000000000001', -- WELCOME10 promotion
+    485000, 30000, 48500, 466500,
+    'vnpay', 'paid', 
+    '{"bank_code": "NCB", "transaction_id": "VNP14123456"}'::jsonb,
+    NOW() - INTERVAL '2 months',
+    'delivered', 'VN123456789',
+    NOW() - INTERVAL '1 month 25 days',
+    NOW() - INTERVAL '1 month 20 days',
+    NULL, NULL, NULL,
+    NOW() - INTERVAL '2 months', NOW() - INTERVAL '1 month 20 days', NULL
+),
+
+-- Order 2: User 2, Momo, delivered
+(
+    '90000000-0000-0000-0000-000000000002',
+    'ORD-20240912-0002',
+    '10000000-0000-0000-0000-000000000002',
+    '20000000-0000-0000-0000-000000000003',
+    '80000000-0000-0000-0000-000000000002', -- BOOK20
+    750000, 30000, 150000, 630000,
+    'momo', 'paid',
+    '{"transaction_id": "MOMO2566109922"}'::jsonb,
+    NOW() - INTERVAL '2 months',
+    'delivered', 'VN123456790',
+    NOW() - INTERVAL '1 month 23 days',
+    NOW() - INTERVAL '1 month 18 days',
+    NULL, NULL, NULL,
+    NOW() - INTERVAL '2 months', NOW() - INTERVAL '1 month 18 days', NULL
+),
+
+-- Order 3: No promotion
+(
+    '90000000-0000-0000-0000-000000000003',
+    'ORD-20240915-0003',
+    '10000000-0000-0000-0000-000000000003',
+    '20000000-0000-0000-0000-000000000004',
+    NULL,
+    685000, 30000, 0, 715000,
+    'vnpay', 'paid',
+    '{"bank_code": "VCB", "transaction_id": "VNP14123458"}'::jsonb,
+    NOW() - INTERVAL '2 months',
+    'delivered', 'VN123456791',
+    NOW() - INTERVAL '1 month 20 days',
+    NOW() - INTERVAL '1 month 15 days',
+    NULL, NULL, NULL,
+    NOW() - INTERVAL '2 months', NOW() - INTERVAL '1 month 15 days', NULL
+),
+
+-- Order 4: COD
+(
+    '90000000-0000-0000-0000-000000000004',
+    'ORD-20240918-0004',
+    '10000000-0000-0000-0000-000000000004',
+    '20000000-0000-0000-0000-000000000005',
+    NULL,
+    325000, 30000, 0, 355000,
+    'cod', 'paid', NULL,
+    NOW() - INTERVAL '1 month 12 days',
+    'delivered', 'VN123456792',
+    NOW() - INTERVAL '1 month 17 days',
+    NOW() - INTERVAL '1 month 12 days',
+    NULL, NULL, NULL,
+    NOW() - INTERVAL '2 months', NOW() - INTERVAL '1 month 12 days', NULL
+),
+
+-- Order 5: Large order
+(
+    '90000000-0000-0000-0000-000000000005',
+    'ORD-20241001-0005',
+    '10000000-0000-0000-0000-000000000005',
+    '20000000-0000-0000-0000-000000000006',
+    '80000000-0000-0000-0000-000000000002',
+    1150000, 0, 230000, 920000,
+    'vnpay', 'paid',
+    '{"bank_code": "TCB", "transaction_id": "VNP14123460"}'::jsonb,
+    NOW() - INTERVAL '1 month',
+    'delivered', 'VN123456793',
+    NOW() - INTERVAL '25 days',
+    NOW() - INTERVAL '20 days',
+    'Giao nhanh giúp em', NULL, NULL,
+    NOW() - INTERVAL '1 month', NOW() - INTERVAL '20 days', NULL
+),
+
+-- Orders 6-15 (abbreviated for space)
+('90000000-0000-0000-0000-000000000006', 'ORD-20241003-0006', '10000000-0000-0000-0000-000000000006', '20000000-0000-0000-0000-000000000007', '80000000-0000-0000-0000-000000000002', 560000, 30000, 112000, 478000, 'momo', 'paid', '{"transaction_id": "MOMO2566109924"}'::jsonb, NOW() - INTERVAL '1 month', 'delivered', 'VN123456794', NOW() - INTERVAL '23 days', NOW() - INTERVAL '18 days', NULL, NULL, NULL, NOW() - INTERVAL '1 month', NOW() - INTERVAL '18 days', NULL),
+('90000000-0000-0000-0000-000000000007', 'ORD-20241005-0007', '10000000-0000-0000-0000-000000000007', '20000000-0000-0000-0000-000000000008', NULL, 875000, 30000, 0, 905000, 'vnpay', 'paid', '{"bank_code": "MB"}'::jsonb, NOW() - INTERVAL '1 month', 'delivered', 'VN123456795', NOW() - INTERVAL '20 days', NOW() - INTERVAL '15 days', NULL, NULL, NULL, NOW() - INTERVAL '1 month', NOW() - INTERVAL '15 days', NULL),
+('90000000-0000-0000-0000-000000000008', 'ORD-20241010-0008', '10000000-0000-0000-0000-000000000008', '20000000-0000-0000-0000-000000000009', NULL, 420000, 30000, 0, 450000, 'bank_transfer', 'paid', '{"bank": "Vietcombank"}'::jsonb, NOW() - INTERVAL '3 weeks', 'delivered', 'VN123456796', NOW() - INTERVAL '18 days', NOW() - INTERVAL '13 days', NULL, NULL, NULL, NOW() - INTERVAL '3 weeks', NOW() - INTERVAL '13 days', NULL),
+('90000000-0000-0000-0000-000000000009', 'ORD-20241012-0009', '10000000-0000-0000-0000-000000000009', '20000000-0000-0000-0000-000000000010', NULL, 995000, 30000, 0, 1025000, 'vnpay', 'paid', '{"bank_code": "BIDV"}'::jsonb, NOW() - INTERVAL '3 weeks', 'delivered', 'VN123456797', NOW() - INTERVAL '15 days', NOW() - INTERVAL '10 days', NULL, NULL, NULL, NOW() - INTERVAL '3 weeks', NOW() - INTERVAL '10 days', NULL),
+('90000000-0000-0000-0000-000000000010', 'ORD-20241020-0010', '10000000-0000-0000-0000-000000000010', '20000000-0000-0000-0000-000000000011', NULL, 175000, 30000, 0, 205000, 'cod', 'paid', NULL, NOW() - INTERVAL '7 days', 'delivered', 'VN123456798', NOW() - INTERVAL '12 days', NOW() - INTERVAL '7 days', NULL, NULL, NULL, NOW() - INTERVAL '2 weeks', NOW() - INTERVAL '7 days', NULL),
+('90000000-0000-0000-0000-000000000011', 'ORD-20241022-0011', '10000000-0000-0000-0000-000000000011', '20000000-0000-0000-0000-000000000012', '80000000-0000-0000-0000-000000000002', 640000, 30000, 128000, 542000, 'vnpay', 'paid', '{"bank_code": "VIB"}'::jsonb, NOW() - INTERVAL '2 weeks', 'delivered', 'VN123456799', NOW() - INTERVAL '10 days', NOW() - INTERVAL '5 days', NULL, NULL, NULL, NOW() - INTERVAL '2 weeks', NOW() - INTERVAL '5 days', NULL),
+('90000000-0000-0000-0000-000000000012', 'ORD-20241027-0012', '10000000-0000-0000-0000-000000000012', '20000000-0000-0000-0000-000000000013', NULL, 385000, 30000, 0, 415000, 'momo', 'paid', '{"transaction_id": "MOMO2566109926"}'::jsonb, NOW() - INTERVAL '10 days', 'delivered', 'VN123456800', NOW() - INTERVAL '7 days', NOW() - INTERVAL '3 days', NULL, NULL, NULL, NOW() - INTERVAL '10 days', NOW() - INTERVAL '3 days', NULL),
+('90000000-0000-0000-0000-000000000013', 'ORD-20241028-0013', '10000000-0000-0000-0000-000000000013', '20000000-0000-0000-0000-000000000014', '80000000-0000-0000-0000-000000000006', 1485000, 0, 297000, 1188000, 'vnpay', 'paid', '{"bank_code": "AGRI"}'::jsonb, NOW() - INTERVAL '10 days', 'delivered', 'VN123456801', NOW() - INTERVAL '7 days', NOW() - INTERVAL '2 days', 'Đóng gói cẩn thận', 'Đã đóng gói kỹ', NULL, NOW() - INTERVAL '10 days', NOW() - INTERVAL '2 days', NULL),
+('90000000-0000-0000-0000-000000000014', 'ORD-20241030-0014', '10000000-0000-0000-0000-000000000014', '20000000-0000-0000-0000-000000000015', NULL, 285000, 30000, 0, 315000, 'vnpay', 'paid', '{"bank_code": "SHB"}'::jsonb, NOW() - INTERVAL '7 days', 'delivered', 'VN123456802', NOW() - INTERVAL '4 days', NOW() - INTERVAL '1 day', NULL, NULL, NULL, NOW() - INTERVAL '7 days', NOW() - INTERVAL '1 day', NULL),
+('90000000-0000-0000-0000-000000000015', 'ORD-20241102-0015', '10000000-0000-0000-0000-000000000015', '20000000-0000-0000-0000-000000000016', NULL, 525000, 30000, 0, 555000, 'cod', 'paid', NULL, NOW() - INTERVAL '1 day', 'delivered', 'VN123456803', NOW() - INTERVAL '3 days', NOW() - INTERVAL '1 day', NULL, NULL, NULL, NOW() - INTERVAL '5 days', NOW() - INTERVAL '1 day', NULL),
+
+-- ========================================
+-- SHIPPING ORDERS (5 orders)
+-- ========================================
+
+('90000000-0000-0000-0000-000000000016', 'ORD-20241104-0016', '10000000-0000-0000-0000-000000000016', '20000000-0000-0000-0000-000000000017', NULL, 750000, 30000, 0, 780000, 'vnpay', 'paid', '{"bank_code": "NCB"}'::jsonb, NOW() - INTERVAL '2 days', 'shipping', 'VN123456804', NOW() + INTERVAL '1 day', NULL, NULL, NULL, NULL, NOW() - INTERVAL '2 days', NOW() - INTERVAL '1 day', NULL),
+('90000000-0000-0000-0000-000000000017', 'ORD-20241104-0017', '10000000-0000-0000-0000-000000000017', '20000000-0000-0000-0000-000000000018', '80000000-0000-0000-0000-000000000008', 420000, 30000, 84000, 366000, 'momo', 'paid', '{"transaction_id": "MOMO2566109928"}'::jsonb, NOW() - INTERVAL '2 days', 'shipping', 'VN123456805', NOW() + INTERVAL '2 days', NULL, NULL, NULL, NULL, NOW() - INTERVAL '2 days', NOW() - INTERVAL '1 day', NULL),
+('90000000-0000-0000-0000-000000000018', 'ORD-20241105-0018', '10000000-0000-0000-0000-000000000018', '20000000-0000-0000-0000-000000000019', NULL, 895000, 30000, 0, 925000, 'vnpay', 'paid', '{"bank_code": "VCB"}'::jsonb, NOW() - INTERVAL '1 day', 'shipping', 'VN123456806', NOW() + INTERVAL '2 days', NULL, NULL, NULL, NULL, NOW() - INTERVAL '1 day', NOW() - INTERVAL '12 hours', NULL),
+('90000000-0000-0000-0000-000000000019', 'ORD-20241106-0019', '10000000-0000-0000-0000-000000000019', '20000000-0000-0000-0000-000000000020', NULL, 165000, 30000, 0, 195000, 'cod', 'pending', NULL, NULL, 'shipping', 'VN123456807', NOW() + INTERVAL '3 days', NULL, NULL, NULL, NULL, NOW() - INTERVAL '1 day', NOW() - INTERVAL '6 hours', NULL),
+('90000000-0000-0000-0000-000000000020', 'ORD-20241106-0020', '10000000-0000-0000-0000-000000000020', '20000000-0000-0000-0000-000000000021', '80000000-0000-0000-0000-000000000002', 1235000, 0, 247000, 988000, 'vnpay', 'paid', '{"bank_code": "TCB"}'::jsonb, NOW() - INTERVAL '18 hours', 'shipping', 'VN123456808', NOW() + INTERVAL '2 days', NULL, NULL, NULL, NULL, NOW() - INTERVAL '18 hours', NOW() - INTERVAL '3 hours', NULL),
+
+-- ========================================
+-- PROCESSING ORDERS (5 orders)
+-- ========================================
+
+('90000000-0000-0000-0000-000000000021', 'ORD-20241107-0021', '10000000-0000-0000-0000-000000000021', '20000000-0000-0000-0000-000000000022', NULL, 345000, 30000, 0, 375000, 'vnpay', 'paid', '{"bank_code": "MB"}'::jsonb, NOW() - INTERVAL '12 hours', 'processing', NULL, NOW() + INTERVAL '3 days', NULL, NULL, NULL, NULL, NOW() - INTERVAL '12 hours', NOW() - INTERVAL '6 hours', NULL),
+('90000000-0000-0000-0000-000000000022', 'ORD-20241107-0022', '10000000-0000-0000-0000-000000000022', '20000000-0000-0000-0000-000000000023', '80000000-0000-0000-0000-000000000002', 785000, 30000, 157000, 658000, 'momo', 'paid', '{"transaction_id": "MOMO2566109930"}'::jsonb, NOW() - INTERVAL '8 hours', 'processing', NULL, NOW() + INTERVAL '4 days', NULL, NULL, NULL, NULL, NOW() - INTERVAL '8 hours', NOW() - INTERVAL '4 hours', NULL),
+('90000000-0000-0000-0000-000000000023', 'ORD-20241108-0023', '10000000-0000-0000-0000-000000000023', '20000000-0000-0000-0000-000000000024', NULL, 625000, 30000, 0, 655000, 'vnpay', 'paid', '{"bank_code": "BIDV"}'::jsonb, NOW() - INTERVAL '6 hours', 'processing', NULL, NOW() + INTERVAL '4 days', NULL, NULL, NULL, NULL, NOW() - INTERVAL '6 hours', NOW() - INTERVAL '2 hours', NULL),
+('90000000-0000-0000-0000-000000000024', 'ORD-20241108-0024', '10000000-0000-0000-0000-000000000024', '20000000-0000-0000-0000-000000000025', NULL, 485000, 30000, 0, 515000, 'bank_transfer', 'paid', '{"bank": "ACB"}'::jsonb, NOW() - INTERVAL '4 hours', 'processing', NULL, NOW() + INTERVAL '5 days', NULL, 'Giao buổi sáng', NULL, NULL, NOW() - INTERVAL '4 hours', NOW() - INTERVAL '1 hour', NULL),
+('90000000-0000-0000-0000-000000000025', 'ORD-20241109-0025', '10000000-0000-0000-0000-000000000025', '20000000-0000-0000-0000-000000000026', NULL, 995000, 30000, 0, 1025000, 'vnpay', 'paid', '{"bank_code": "VIB"}'::jsonb, NOW() - INTERVAL '2 hours', 'processing', NULL, NOW() + INTERVAL '5 days', NULL, NULL, NULL, NULL, NOW() - INTERVAL '2 hours', NOW() - INTERVAL '30 minutes', NULL),
+
+-- ========================================
+-- CONFIRMED ORDERS (5 orders)
+-- ========================================
+
+('90000000-0000-0000-0000-000000000026', 'ORD-20241109-0026', '10000000-0000-0000-0000-000000000026', '20000000-0000-0000-0000-000000000027', NULL, 275000, 30000, 0, 305000, 'vnpay', 'paid', '{"bank_code": "AGRI"}'::jsonb, NOW() - INTERVAL '1 hour', 'confirmed', NULL, NOW() + INTERVAL '6 days', NULL, NULL, NULL, NULL, NOW() - INTERVAL '1 hour', NOW() - INTERVAL '30 minutes', NULL),
+('90000000-0000-0000-0000-000000000027', 'ORD-20241109-0027', '10000000-0000-0000-0000-000000000027', '20000000-0000-0000-0000-000000000028', '80000000-0000-0000-0000-000000000002', 565000, 30000, 113000, 482000, 'momo', 'paid', '{"transaction_id": "MOMO2566109932"}'::jsonb, NOW() - INTERVAL '45 minutes', 'confirmed', NULL, NOW() + INTERVAL '6 days', NULL, NULL, NULL, NULL, NOW() - INTERVAL '45 minutes', NOW() - INTERVAL '20 minutes', NULL),
+('90000000-0000-0000-0000-000000000028', 'ORD-20241109-0028', '10000000-0000-0000-0000-000000000028', '20000000-0000-0000-0000-000000000029', '80000000-0000-0000-0000-000000000006', 1385000, 0, 277000, 1108000, 'vnpay', 'paid', '{"bank_code": "SHB"}'::jsonb, NOW() - INTERVAL '30 minutes', 'confirmed', NULL, NOW() + INTERVAL '7 days', NULL, NULL, NULL, NULL, NOW() - INTERVAL '30 minutes', NOW() - INTERVAL '10 minutes', NULL),
+('90000000-0000-0000-0000-000000000029', 'ORD-20241109-0029', '10000000-0000-0000-0000-000000000029', '20000000-0000-0000-0000-000000000030', NULL, 195000, 30000, 0, 225000, 'cod', 'pending', NULL, NULL, 'confirmed', NULL, NOW() + INTERVAL '7 days', NULL, NULL, NULL, NULL, NOW() - INTERVAL '20 minutes', NOW() - INTERVAL '5 minutes', NULL),
+('90000000-0000-0000-0000-000000000030', 'ORD-20241109-0030', '10000000-0000-0000-0000-000000000030', '20000000-0000-0000-0000-000000000030', NULL, 845000, 30000, 0, 875000, 'vnpay', 'paid', '{"bank_code": "NCB"}'::jsonb, NOW() - INTERVAL '10 minutes', 'confirmed', NULL, NOW() + INTERVAL '7 days', NULL, NULL, NULL, NULL, NOW() - INTERVAL '10 minutes', NOW() - INTERVAL '2 minutes', NULL),
+
+-- ========================================
+-- PENDING ORDERS (5 orders)
+-- ========================================
+
+('90000000-0000-0000-0000-000000000031', 'ORD-20241109-0031', '10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', NULL, 425000, 30000, 0, 455000, 'vnpay', 'pending', NULL, NULL, 'pending', NULL, NULL, NULL, NULL, NULL, NULL, NOW() - INTERVAL '15 minutes', NOW() - INTERVAL '10 minutes', NULL),
+('90000000-0000-0000-0000-000000000032', 'ORD-20241109-0032', '10000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-000000000003', NULL, 685000, 30000, 0, 715000, 'momo', 'pending', NULL, NULL, 'pending', NULL, NULL, NULL, NULL, NULL, NULL, NOW() - INTERVAL '10 minutes', NOW() - INTERVAL '5 minutes', NULL),
+('90000000-0000-0000-0000-000000000033', 'ORD-20241109-0033', '10000000-0000-0000-0000-000000000003', '20000000-0000-0000-0000-000000000004', '80000000-0000-0000-0000-000000000003', 325000, 30000, 30000, 325000, 'vnpay', 'pending', NULL, NULL, 'pending', NULL, NULL, NULL, NULL, NULL, NULL, NOW() - INTERVAL '8 minutes', NOW() - INTERVAL '3 minutes', NULL),
+('90000000-0000-0000-0000-000000000034', 'ORD-20241109-0034', '10000000-0000-0000-0000-000000000004', '20000000-0000-0000-0000-000000000005', NULL, 155000, 30000, 0, 185000, 'cod', 'pending', NULL, NULL, 'pending', NULL, NULL, NULL, NULL, NULL, NULL, NOW() - INTERVAL '5 minutes', NOW() - INTERVAL '1 minute', NULL),
+('90000000-0000-0000-0000-000000000035', 'ORD-20241109-0035', '10000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000006', '80000000-0000-0000-0000-000000000002', 1125000, 0, 225000, 900000, 'vnpay', 'pending', NULL, NULL, 'pending', NULL, NULL, NULL, NULL, NULL, NULL, NOW() - INTERVAL '3 minutes', NOW() - INTERVAL '30 seconds', NULL),
+
+-- ========================================
+-- CANCELLED ORDERS (3 orders)
+-- ========================================
+
+('90000000-0000-0000-0000-000000000036', 'ORD-20241028-0036', '10000000-0000-0000-0000-000000000006', '20000000-0000-0000-0000-000000000007', NULL, 485000, 30000, 0, 515000, 'vnpay', 'failed', NULL, NULL, 'cancelled', NULL, NULL, NULL, NULL, NULL, 'Khách hàng hủy đơn', NOW() - INTERVAL '1 week', NOW() - INTERVAL '6 days', NOW() - INTERVAL '6 days'),
+('90000000-0000-0000-0000-000000000037', 'ORD-20241030-0037', '10000000-0000-0000-0000-000000000007', '20000000-0000-0000-0000-000000000008', NULL, 725000, 30000, 0, 755000, 'momo', 'failed', NULL, NULL, 'cancelled', NULL, NULL, NULL, NULL, NULL, 'Thanh toán không thành công', NOW() - INTERVAL '5 days', NOW() - INTERVAL '4 days', NOW() - INTERVAL '4 days'),
+('90000000-0000-0000-0000-000000000038', 'ORD-20241102-0038', '10000000-0000-0000-0000-000000000008', '20000000-0000-0000-0000-000000000009', NULL, 345000, 30000, 0, 375000, 'vnpay', 'pending', NULL, NULL, 'cancelled', NULL, NULL, NULL, NULL, NULL, 'Hết hàng', NOW() - INTERVAL '3 days', NOW() - INTERVAL '2 days', NOW() - INTERVAL '2 days'),
+
+-- ========================================
+-- RETURNED ORDERS (2 orders)
+-- ========================================
+
+('90000000-0000-0000-0000-000000000039', 'ORD-20241010-0039', '10000000-0000-0000-0000-000000000009', '20000000-0000-0000-0000-000000000010', NULL, 565000, 30000, 0, 595000, 'vnpay', 'refunded', '{"bank_code": "VCB"}'::jsonb, NOW() - INTERVAL '1 month', 'returned', NULL, NULL, NOW() - INTERVAL '20 days', NULL, 'Đã hoàn tiền', 'Sản phẩm không đúng mô tả', NOW() - INTERVAL '1 month', NOW() - INTERVAL '20 days', NULL),
+('90000000-0000-0000-0000-000000000040', 'ORD-20241015-0040', '10000000-0000-0000-0000-000000000010', '20000000-0000-0000-0000-000000000011', NULL, 385000, 30000, 0, 415000, 'momo', 'refunded', '{"transaction_id": "MOMO2566109934"}'::jsonb, NOW() - INTERVAL '3 weeks', 'returned', NULL, NULL, NOW() - INTERVAL '2 weeks', NULL, 'Đã hoàn tiền', 'Sản phẩm bị lỗi', NOW() - INTERVAL '3 weeks', NOW() - INTERVAL '2 weeks', NULL);
+
+-- Re-enable triggers
+SET session_replication_role = DEFAULT;
+
+-- Verification
+SELECT 'Orders created: ' || COUNT(*)::text FROM orders;
+SELECT 
+    status,
+    COUNT(*) as count
+FROM orders
+GROUP BY status
+ORDER BY status;

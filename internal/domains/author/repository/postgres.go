@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"bookstore-backend/internal/domains/author/model"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,7 +15,6 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"bookstore-backend/internal/domains/author"
 	"bookstore-backend/pkg/cache"
 )
 
@@ -27,7 +27,7 @@ type postgresRepository struct {
 
 // NewPostgresRepository creates a new author repository instance
 // Dependency injection pattern - receives pool and cache from container
-func NewPostgresRepository(pool *pgxpool.Pool, cache cache.Cache) author.Repository {
+func NewPostgresRepository(pool *pgxpool.Pool, cache cache.Cache) RepositoryInterface {
 	return &postgresRepository{
 		pool:  pool,
 		cache: cache,
@@ -43,14 +43,14 @@ const (
 )
 
 // Create inserts new author with generated ID and timestamps
-func (r *postgresRepository) Create(ctx context.Context, a *author.Author) (*author.Author, error) {
+func (r *postgresRepository) Create(ctx context.Context, a *model.Author) (*model.Author, error) {
 	query := `
         INSERT INTO authors (name, slug, bio, photo_url, version)
         VALUES ($1, $2, $3, $4, 0)
         RETURNING id, name, slug, bio, photo_url, version, created_at, updated_at
     `
 
-	var created author.Author
+	var created model.Author
 	err := r.pool.QueryRow(
 		ctx,
 		query,
@@ -75,7 +75,7 @@ func (r *postgresRepository) Create(ctx context.Context, a *author.Author) (*aut
 		if errors.As(err, &pgErr) {
 			if pgErr.Code == "23505" { // unique_violation
 				if strings.Contains(pgErr.Message, "slug") {
-					return nil, author.ErrDuplicateSlug
+					return nil, model.ErrDuplicateSlug
 				}
 			}
 		}
@@ -89,12 +89,13 @@ func (r *postgresRepository) Create(ctx context.Context, a *author.Author) (*aut
 }
 
 // GetByID retrieves author by UUID with caching
-func (r *postgresRepository) GetByID(ctx context.Context, id uuid.UUID) (*author.Author, error) {
+func (r *postgresRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.Author, error) {
 	// Try cache first
 	cacheKey := authorCacheKeyPrefix + id.String()
 
-	var a author.Author
+	var a model.Author
 	cached, err := r.cache.Get(ctx, cacheKey, &a)
+	fmt.Println("CACHED cacheKey: ", cacheKey)
 	if err == nil && cached {
 		// Cache hit
 		return &a, nil
@@ -120,7 +121,7 @@ func (r *postgresRepository) GetByID(ctx context.Context, id uuid.UUID) (*author
 
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, author.ErrAuthorNotFound
+			return nil, model.ErrAuthorNotFound
 		}
 		return nil, fmt.Errorf("failed to get author by id: %w", err)
 	}
@@ -134,11 +135,11 @@ func (r *postgresRepository) GetByID(ctx context.Context, id uuid.UUID) (*author
 }
 
 // GetBySlug retrieves author by URL slug with caching
-func (r *postgresRepository) GetBySlug(ctx context.Context, slug string) (*author.Author, error) {
+func (r *postgresRepository) GetBySlug(ctx context.Context, slug string) (*model.Author, error) {
 	// Try cache first
 	cacheKey := authorSlugKeyPrefix + slug
 
-	var a author.Author
+	var a model.Author
 	cached, err := r.cache.Get(ctx, cacheKey, &a)
 	if err == nil && cached {
 		// Cache hit
@@ -165,7 +166,7 @@ func (r *postgresRepository) GetBySlug(ctx context.Context, slug string) (*autho
 
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, author.ErrAuthorNotFound
+			return nil, model.ErrAuthorNotFound
 		}
 		return nil, fmt.Errorf("failed to get author by slug: %w", err)
 	}
@@ -181,7 +182,7 @@ func (r *postgresRepository) GetBySlug(ctx context.Context, slug string) (*autho
 }
 
 // GetAll retrieves paginated list with filtering and sorting
-func (r *postgresRepository) GetAll(ctx context.Context, filter author.AuthorFilter) ([]author.Author, int64, error) {
+func (r *postgresRepository) GetAll(ctx context.Context, filter model.AuthorFilter) ([]model.Author, int64, error) {
 	// Build dynamic query
 	var queryBuilder strings.Builder
 	queryBuilder.WriteString(`
@@ -228,9 +229,9 @@ func (r *postgresRepository) GetAll(ctx context.Context, filter author.AuthorFil
 	defer rows.Close()
 
 	// Scan results
-	var authors []author.Author
+	var authors []model.Author
 	for rows.Next() {
-		var a author.Author
+		var a model.Author
 		err := rows.Scan(
 			&a.ID,
 			&a.Name,
@@ -270,7 +271,7 @@ func (r *postgresRepository) GetAll(ctx context.Context, filter author.AuthorFil
 }
 
 // Update updates author with optimistic locking
-func (r *postgresRepository) Update(ctx context.Context, a *author.Author, currentVersion int) (*author.Author, error) {
+func (r *postgresRepository) Update(ctx context.Context, a *model.Author, currentVersion int) (*model.Author, error) {
 	// Critical: WHERE clause includes version check
 	query := `
         UPDATE authors
@@ -285,7 +286,7 @@ func (r *postgresRepository) Update(ctx context.Context, a *author.Author, curre
         RETURNING id, name, slug, bio, photo_url, version, created_at, updated_at
     `
 
-	var updated author.Author
+	var updated model.Author
 	err := r.pool.QueryRow(
 		ctx,
 		query,
@@ -315,11 +316,11 @@ func (r *postgresRepository) Update(ctx context.Context, a *author.Author, curre
 			}
 
 			if !exists {
-				return nil, author.ErrAuthorNotFound
+				return nil, model.ErrAuthorNotFound
 			}
 
 			// Author exists but version doesn't match = conflict
-			return nil, author.ErrVersionMismatch
+			return nil, model.ErrVersionMismatch
 		}
 
 		// Check for duplicate slug
@@ -327,7 +328,7 @@ func (r *postgresRepository) Update(ctx context.Context, a *author.Author, curre
 		if errors.As(err, &pgErr) {
 			if pgErr.Code == "23505" {
 				if strings.Contains(pgErr.Message, "slug") {
-					return nil, author.ErrDuplicateSlug
+					return nil, model.ErrDuplicateSlug
 				}
 			}
 		}
@@ -349,7 +350,7 @@ func (r *postgresRepository) Delete(ctx context.Context, id uuid.UUID) error {
 	err := r.pool.QueryRow(ctx, "SELECT slug FROM authors WHERE id = $1", id).Scan(&slug)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return author.ErrAuthorNotFound
+			return model.ErrAuthorNotFound
 		}
 	}
 
@@ -361,14 +362,14 @@ func (r *postgresRepository) Delete(ctx context.Context, id uuid.UUID) error {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) {
 			if pgErr.Code == "23503" { // foreign_key_violation
-				return author.ErrAuthorHasBooks
+				return model.ErrAuthorHasBooks
 			}
 		}
 		return fmt.Errorf("failed to delete author: %w", err)
 	}
 
 	if cmdTag.RowsAffected() == 0 {
-		return author.ErrAuthorNotFound
+		return model.ErrAuthorNotFound
 	}
 
 	// Invalidate caches
@@ -379,13 +380,13 @@ func (r *postgresRepository) Delete(ctx context.Context, id uuid.UUID) error {
 }
 
 // BulkDelete deletes multiple authors with transaction
-func (r *postgresRepository) BulkDelete(ctx context.Context, ids []uuid.UUID) (int, []author.BulkError, error) {
+func (r *postgresRepository) BulkDelete(ctx context.Context, ids []uuid.UUID) (int, []model.BulkError, error) {
 	if len(ids) == 0 {
 		return 0, nil, nil
 	}
 
 	successCount := 0
-	var bulkErrors []author.BulkError
+	var bulkErrors []model.BulkError
 
 	// Begin transaction
 	tx, err := r.pool.Begin(ctx)
@@ -400,7 +401,7 @@ func (r *postgresRepository) BulkDelete(ctx context.Context, ids []uuid.UUID) (i
 		cmdTag, err := tx.Exec(ctx, query, id)
 
 		if err != nil {
-			bulkErrors = append(bulkErrors, author.BulkError{
+			bulkErrors = append(bulkErrors, model.BulkError{
 				ID:      id,
 				Message: err.Error(),
 			})
@@ -408,7 +409,7 @@ func (r *postgresRepository) BulkDelete(ctx context.Context, ids []uuid.UUID) (i
 		}
 
 		if cmdTag.RowsAffected() == 0 {
-			bulkErrors = append(bulkErrors, author.BulkError{
+			bulkErrors = append(bulkErrors, model.BulkError{
 				ID:      id,
 				Message: "author not found",
 			})
@@ -462,7 +463,7 @@ func (r *postgresRepository) ExistsBySlug(ctx context.Context, slug string) (boo
 func (r *postgresRepository) GetBookCount(ctx context.Context, authorID uuid.UUID) (int, error) {
 	query := `
         SELECT COUNT(*)
-        FROM book_authors
+        FROM books
         WHERE author_id = $1
     `
 
@@ -484,11 +485,11 @@ func (r *postgresRepository) GetBookCount(ctx context.Context, authorID uuid.UUI
 
 // Search performs full-text search with relevance ranking
 // Search performs full-text search on slug using PostgreSQL engine
-func (r *postgresRepository) Search(ctx context.Context, query string, filter author.AuthorFilter) ([]author.Author, int64, error) {
+func (r *postgresRepository) Search(ctx context.Context, query string, filter model.AuthorFilter) ([]model.Author, int64, error) {
 	sanitizedQuery := normalizeTSQuery(query)
 
 	if sanitizedQuery == "" {
-		return []author.Author{}, 0, nil
+		return []model.Author{}, 0, nil
 	}
 
 	// Full-text search using to_tsvector và plainto_tsquery trên slug
@@ -544,9 +545,9 @@ func (r *postgresRepository) Search(ctx context.Context, query string, filter au
 	}
 	defer rows.Close()
 
-	var authors []author.Author
+	var authors []model.Author
 	for rows.Next() {
-		var a author.Author
+		var a model.Author
 		if err := rows.Scan(
 			&a.ID,
 			&a.Name,

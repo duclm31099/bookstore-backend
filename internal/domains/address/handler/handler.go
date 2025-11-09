@@ -8,15 +8,16 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	"bookstore-backend/internal/domains/address"
+	"bookstore-backend/internal/domains/address/model"
+	"bookstore-backend/internal/domains/address/service"
 	"bookstore-backend/internal/shared/response"
 )
 
 type AddressHandler struct {
-	service address.ServiceInterface
+	service service.ServiceInterface
 }
 
-func NewAddressHandler(service address.ServiceInterface) *AddressHandler {
+func NewAddressHandler(service service.ServiceInterface) *AddressHandler {
 	return &AddressHandler{
 		service: service,
 	}
@@ -29,7 +30,7 @@ func (h *AddressHandler) CreateAddress(c *gin.Context) {
 		response.Error(c, http.StatusUnauthorized, err.Error(), nil)
 		return // ← MUST return here
 	}
-	var req address.AddressCreateRequest
+	var req model.AddressCreateRequest
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Error(c, http.StatusBadRequest, "Invalid request payload", err.Error())
@@ -38,7 +39,7 @@ func (h *AddressHandler) CreateAddress(c *gin.Context) {
 
 	result, err := h.service.CreateAddress(c.Request.Context(), userID, &req)
 	if err != nil {
-		statusCode, message, code := address.GetErrorResponse(err)
+		statusCode, message, code := model.GetErrorResponse(err)
 		response.Error(c, statusCode, message, code)
 		return
 	}
@@ -58,7 +59,7 @@ func (h *AddressHandler) GetAddressById(c *gin.Context) {
 
 	result, err := h.service.GetAddressByID(c.Request.Context(), userID, addressID)
 	if err != nil {
-		statusCode, message, code := address.GetErrorResponse(err)
+		statusCode, message, code := model.GetErrorResponse(err)
 		response.Error(c, statusCode, message, code)
 		return
 	}
@@ -76,7 +77,7 @@ func (h *AddressHandler) ListUserAddresses(c *gin.Context) {
 
 	results, err := h.service.ListUserAddresses(c.Request.Context(), userID)
 	if err != nil {
-		statusCode, message, code := address.GetErrorResponse(err)
+		statusCode, message, code := model.GetErrorResponse(err)
 		response.Error(c, statusCode, message, code)
 		return
 	}
@@ -99,7 +100,7 @@ func (h *AddressHandler) GetDefaultAddress(c *gin.Context) {
 
 	result, err := h.service.GetDefaultAddress(c.Request.Context(), userID)
 	if err != nil {
-		statusCode, message, code := address.GetErrorResponse(err)
+		statusCode, message, code := model.GetErrorResponse(err)
 		response.Error(c, statusCode, message, code)
 		return
 	}
@@ -117,7 +118,7 @@ func (h *AddressHandler) UpdateAddress(c *gin.Context) {
 
 	addressID, err := getAddressId(c)
 
-	var req address.AddressUpdateRequest
+	var req model.AddressUpdateRequest
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Error(c, http.StatusBadRequest, "Invalid request payload", err.Error())
@@ -126,7 +127,7 @@ func (h *AddressHandler) UpdateAddress(c *gin.Context) {
 
 	result, err := h.service.UpdateAddress(c.Request.Context(), userID, addressID, &req)
 	if err != nil {
-		statusCode, message, code := address.GetErrorResponse(err)
+		statusCode, message, code := model.GetErrorResponse(err)
 		response.Error(c, statusCode, message, code)
 		return
 	}
@@ -146,7 +147,7 @@ func (h *AddressHandler) DeleteAddress(c *gin.Context) {
 
 	err = h.service.DeleteAddress(c.Request.Context(), userID, addressID)
 	if err != nil {
-		statusCode, message, code := address.GetErrorResponse(err)
+		statusCode, message, code := model.GetErrorResponse(err)
 		response.Error(c, statusCode, message, code)
 		return
 	}
@@ -166,7 +167,7 @@ func (h *AddressHandler) SetDefaultAddress(c *gin.Context) {
 
 	result, err := h.service.SetDefaultAddress(c.Request.Context(), userID, addressID)
 	if err != nil {
-		statusCode, message, code := address.GetErrorResponse(err)
+		statusCode, message, code := model.GetErrorResponse(err)
 		response.Error(c, statusCode, message, code)
 		return
 	}
@@ -184,7 +185,7 @@ func (h *AddressHandler) UnsetDefaultAddress(c *gin.Context) {
 	addressID, err := getAddressId(c)
 	err = h.service.UnsetDefaultAddress(c.Request.Context(), userID, addressID)
 	if err != nil {
-		statusCode, message, code := address.GetErrorResponse(err)
+		statusCode, message, code := model.GetErrorResponse(err)
 		response.Error(c, statusCode, message, code)
 		return
 	}
@@ -197,14 +198,14 @@ func (h *AddressHandler) GetAddressWithUser(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		statusCode, message, code := address.GetErrorResponse(address.NewInvalidAddressID(idStr))
+		statusCode, message, code := model.GetErrorResponse(model.NewInvalidAddressID(idStr))
 		response.Error(c, statusCode, message, code)
 		return
 	}
 
 	result, err := h.service.GetAddressWithUser(c.Request.Context(), id)
 	if err != nil {
-		statusCode, message, code := address.GetErrorResponse(err)
+		statusCode, message, code := model.GetErrorResponse(err)
 		response.Error(c, statusCode, message, code)
 		return
 	}
@@ -231,7 +232,7 @@ func (h *AddressHandler) ListAllAddresses(c *gin.Context) {
 
 	results, total, err := h.service.ListAllAddresses(c.Request.Context(), page, pageSize)
 	if err != nil {
-		statusCode, message, code := address.GetErrorResponse(err)
+		statusCode, message, code := model.GetErrorResponse(err)
 		response.Error(c, statusCode, message, code)
 		return
 	}
@@ -267,7 +268,7 @@ func getAddressId(c *gin.Context) (uuid.UUID, error) {
 	idStr := c.Param("id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		statusCode, message, code := address.GetErrorResponse(address.NewInvalidAddressID(idStr))
+		statusCode, message, code := model.GetErrorResponse(model.NewInvalidAddressID(idStr))
 		response.Error(c, statusCode, message, code)
 		return uuid.Nil, err
 	}

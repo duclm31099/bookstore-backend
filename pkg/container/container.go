@@ -13,11 +13,8 @@ import (
 	"bookstore-backend/pkg/jwt"
 
 	// User domain imports
-	"bookstore-backend/internal/domains/address"
-	"bookstore-backend/internal/domains/author"
 
 	"bookstore-backend/internal/domains/category"
-	"bookstore-backend/internal/domains/publisher"
 	"bookstore-backend/internal/domains/user"
 
 	userHandler "bookstore-backend/internal/domains/user/handler"
@@ -75,6 +72,11 @@ import (
 	paymentHandler "bookstore-backend/internal/domains/payment/handler"
 	paymentRepo "bookstore-backend/internal/domains/payment/repository"
 	paymentService "bookstore-backend/internal/domains/payment/service"
+
+	// REVIEW
+	reviewHandler "bookstore-backend/internal/domains/review/handler"
+	reviewRepo "bookstore-backend/internal/domains/review/repository"
+	reviewService "bookstore-backend/internal/domains/review/service"
 )
 
 type Container struct {
@@ -90,9 +92,9 @@ type Container struct {
 	// ========================================
 	UserRepo      user.Repository
 	CategoryRepo  category.CategoryRepository
-	AuthorRepo    author.Repository
-	PublisherRepo publisher.Repository
-	AddressRepo   address.Repository
+	AuthorRepo    authorRepository.RepositoryInterface
+	PublisherRepo publisherRepo.RepositoryInterface
+	AddressRepo   addressRepo.RepositoryInterface
 	BookRepo      bookRepo.RepositoryInterface
 	InventoryRepo inventoryRepo.RepositoryInterface
 	CartRepo      cartRepo.RepositoryInterface
@@ -102,15 +104,16 @@ type Container struct {
 	RefundRepo    paymentRepo.RefundRepoInterface
 	WebHookRepo   paymentRepo.WebhookRepoInterface
 	TxManager     paymentRepo.TransactionManager
+	ReviewRepo    reviewRepo.ReviewRepository
 	// ========================================
 	// SERVICE LAYER (BUSINESS LOGIC)
 	// ========================================
 
 	UserService      user.Service
 	CategoryService  category.CategoryService
-	AuthorService    author.Service
-	PublisherService publisher.Service
-	AddressService   address.ServiceInterface
+	AuthorService    authorService.ServiceInterface
+	PublisherService publisherService.ServiceInterface
+	AddressService   addressService.ServiceInterface
 	BookService      bookService.ServiceInterface
 	InventoryService inventoryService.ServiceInterface
 	CartService      cartService.ServiceInterface
@@ -118,6 +121,7 @@ type Container struct {
 	OrderSerivce     orderService.OrderService
 	PaymentService   paymentService.PaymentService
 	RefundService    paymentService.RefundInterface
+	ReviewService    reviewService.ServiceInterface
 	// ========================================
 	// HANDLER LAYER (HTTP)
 	// ========================================
@@ -133,6 +137,7 @@ type Container struct {
 	AdminProHandler  *promotionHandler.AdminHandler
 	OrderHandler     *orderHandler.OrderHandler
 	PaymentHandler   *paymentHandler.PaymentHandler
+	ReviewHandler    *reviewHandler.ReviewHandler
 }
 
 // ========================================
@@ -236,6 +241,7 @@ func (c *Container) initRepositories() error {
 	c.PaymentRepo = paymentRepo.NewppRepository(pool)
 	c.RefundRepo = paymentRepo.NewRefundRepository(pool)
 	c.TxManager = paymentRepo.NewPostgresTransactionManager(pool)
+	c.ReviewRepo = reviewRepo.NewPostgresReviewRepository(pool)
 	return nil
 }
 
@@ -263,6 +269,7 @@ func (c *Container) initServices() error {
 		c.PaymentRepo, c.RefundRepo, c.OrderRepo,
 		c.VNPayGateway, c.MomoGateway, c.OrderSerivce,
 	)
+	c.ReviewService = reviewService.NewReviewService(c.ReviewRepo)
 	return nil
 }
 
@@ -275,6 +282,7 @@ func (c *Container) initHandlers() error {
 	c.AddressHandler = addressHandler.NewAddressHandler(c.AddressService)
 	c.BookHandler = bookHandler.NewHandler(c.BookService, c.Cache)
 	c.InventoryHandler = inventoryHandler.NewHandler(c.InventoryService)
+	c.ReviewHandler = reviewHandler.NewReviewHandler(c.ReviewService)
 	c.CartHandler = cartHandler.NewHandler(c.CartService)
 	c.AdminProHandler = promotionHandler.NewAdminHandler(c.PromotionService)
 	c.PublicProHandler = promotionHandler.NewPublicHandler(c.PromotionService, c.CartService)

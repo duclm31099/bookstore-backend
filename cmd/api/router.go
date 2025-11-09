@@ -367,11 +367,9 @@ func SetupRouter(c *container.Container) *gin.Engine {
 			cartRoutes.DELETE("", c.CartHandler.ClearCart)
 
 			cartRoutes.POST("/validate", c.CartHandler.ValidateCart)
-			cartRoutes.POST("/promo", c.CartHandler.ApplyPromoCode)
-			cartRoutes.DELETE("/promo", c.CartHandler.RemovePromoCode)
+			cartRoutes.POST("/apply-promotion", c.CartHandler.ApplyPromoCode)
+			cartRoutes.DELETE("/remove-promotion", c.CartHandler.RemovePromoCode)
 			cartRoutes.POST("/checkout", c.CartHandler.Checkout)
-			cartRoutes.POST("/promo", c.PublicProHandler.ApplyPromotionToCart) // POST /v1/cart/promo
-			cartRoutes.DELETE("/promo", c.PublicProHandler.RemovePromotionFromCart)
 		}
 
 		//  ======================== PROMOTION ========================================
@@ -381,14 +379,14 @@ func SetupRouter(c *container.Container) *gin.Engine {
 		promotion.POST("/validate", c.PublicProHandler.ValidatePromotion) // POST /v1/promotions/validate
 		promotion.GET("", c.PublicProHandler.ListActivePromotions)        // GET /v1/promotions
 
-		promotion.POST("", c.AdminProHandler.CreatePromotion)                   // POST /v1/admin/promotions
-		promotion.GET("", c.AdminProHandler.ListPromotions)                     // GET /v1/admin/promotions
-		promotion.GET("/:id", c.AdminProHandler.GetPromotionByID)               // GET /v1/admin/promotions/:id
-		promotion.PUT("/:id", c.AdminProHandler.UpdatePromotion)                // PUT /v1/admin/promotions/:id
-		promotion.PATCH("/:id/status", c.AdminProHandler.UpdatePromotionStatus) // PATCH /v1/admin/promotions/:id/status
-		promotion.DELETE("/:id", c.AdminProHandler.DeletePromotion)             // DELETE /v1/admin/promotions/:id
-		promotion.GET("/:id/usage", c.AdminProHandler.GetUsageHistory)          // GET /v1/admin/promotions/:id/usage
-		promotion.POST("/:id/export", c.AdminProHandler.ExportUsageReport)      // POST /v1/admin/promotions/:id/export
+		promotion.POST("/admin", c.AdminProHandler.CreatePromotion)                   // POST /v1/admin/promotions
+		promotion.GET("/admin/list-promotion", c.AdminProHandler.ListPromotions)      // GET /v1/admin/promotions
+		promotion.GET("/admin/:id", c.AdminProHandler.GetPromotionByID)               // GET /v1/admin/promotions/:id
+		promotion.PUT("/admin/:id", c.AdminProHandler.UpdatePromotion)                // PUT /v1/admin/promotions/:id
+		promotion.PATCH("/admin/:id/status", c.AdminProHandler.UpdatePromotionStatus) // PATCH /v1/admin/promotions/:id/status
+		promotion.DELETE("/admin/:id", c.AdminProHandler.DeletePromotion)             // DELETE /v1/admin/promotions/:id
+		promotion.GET("/admin/:id/usage", c.AdminProHandler.GetUsageHistory)          // GET /v1/admin/promotions/:id/usage
+		promotion.POST("/admin/:id/export", c.AdminProHandler.ExportUsageReport)      // POST /v1/admin/promotions/:id/export
 
 		// ========================================
 		// 📦 ORDER ROUTES (USER - PROTECTED)
@@ -552,18 +550,46 @@ func SetupRouter(c *container.Container) *gin.Engine {
 			// Reject refund request
 			adminPaymentRoutes.POST("/refunds/:refund_id/reject", c.PaymentHandler.AdminRejectRefund)
 
+			//  ===================================== REVIEW ====================
+			reviewRoutes := v1.Group("/reviews")
+			{
+				// Public endpoints (no auth)
+				reviewRoutes.GET("", c.ReviewHandler.ListReviews)   // List reviews with filters
+				reviewRoutes.GET("/:id", c.ReviewHandler.GetReview) // Get review by ID
+			}
+
+			// User review endpoints (auth required)
+			userReviewRoutes := v1.Group("/reviews")
+			userReviewRoutes.Use(middleware.AuthMiddleware(c.Config.JWT.Secret))
+			{
+				userReviewRoutes.POST("", c.ReviewHandler.CreateReview)       // Create review
+				userReviewRoutes.PUT("/:id", c.ReviewHandler.UpdateReview)    // Update review
+				userReviewRoutes.DELETE("/:id", c.ReviewHandler.DeleteReview) // Delete review
+				userReviewRoutes.GET("/me", c.ReviewHandler.ListMyReviews)    // List my reviews
+			}
+
+			// Book-specific review endpoints (public)
+			userReviewRoutes.GET("/books/:book_id/reviews", c.ReviewHandler.GetBookReviews)
+
 			// ========================================
-			// ANALYTICS & MONITORING
+			// ADMIN REVIEW ROUTES
 			// ========================================
 
-			// // Payment analytics dashboard
-			// adminPaymentRoutes.GET("/stats/dashboard", c.PaymentHandler.GetPaymentDashboard)
+			adminReviewRoutes := v1.Group("/admin/reviews")
+			// TODO: Add admin middleware
+			// adminReviewRoutes.Use(middleware.AuthMiddleware(c.Config.JWT.Secret))
+			// adminReviewRoutes.Use(middleware.RequireRole("admin"))
+			{
+				// List & View
+				adminReviewRoutes.GET("", c.ReviewHandler.AdminListReviews)              // List all reviews
+				adminReviewRoutes.GET("/:id", c.ReviewHandler.AdminGetReview)            // Get review detail
+				adminReviewRoutes.GET("/statistics", c.ReviewHandler.AdminGetStatistics) // Dashboard stats
 
-			// // Webhook logs (for debugging)
-			// adminPaymentRoutes.GET("/webhooks/logs", c.PaymentHandler.GetWebhookLogs)
-
-			// // Failed payments report
-			// adminPaymentRoutes.GET("/reports/failed", c.PaymentHandler.GetFailedPaymentsReport)
+				// Moderation
+				adminReviewRoutes.PATCH("/:id/moderate", c.ReviewHandler.AdminModerateReview) // Approve/Hide
+				adminReviewRoutes.PATCH("/:id/feature", c.ReviewHandler.AdminFeatureReview)   // Feature
+				adminReviewRoutes.DELETE("/:id", c.ReviewHandler.AdminDeleteReview)           // Delete
+			}
 		}
 	}
 

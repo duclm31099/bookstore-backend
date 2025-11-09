@@ -1,6 +1,7 @@
-package author
+package service
 
 import (
+	"bookstore-backend/internal/domains/author/model"
 	"context"
 
 	"github.com/google/uuid"
@@ -11,7 +12,7 @@ import (
 // 1. Easy mocking in tests
 // 2. Multiple implementations (e.g., caching layer, logging decorator)
 // 3. Clear separation between business logic and data access
-type Service interface {
+type ServiceInterface interface {
 	// Create creates a new author with generated slug
 	// Business rules:
 	// - Name must not be empty and <= 255 chars
@@ -20,18 +21,18 @@ type Service interface {
 	// - Bio max 5000 chars (if provided)
 	// Returns: Created author with ID, slug, version=0
 	// Errors: ErrInvalidName, ErrDuplicateSlug
-	Create(ctx context.Context, req *CreateAuthorRequest) (*Author, error)
+	Create(ctx context.Context, req *model.CreateAuthorRequest) (*model.Author, error)
 
 	// GetByID retrieves author by UUID
 	// Returns: Author entity with all fields
 	// Errors: ErrAuthorNotFound
-	GetByID(ctx context.Context, id uuid.UUID) (*Author, error)
+	GetByID(ctx context.Context, id uuid.UUID) (*model.Author, error)
 
 	// GetBySlug retrieves author by URL-friendly slug
 	// Use case: SEO-friendly URLs (e.g., /authors/nguyen-nhat-anh)
 	// Returns: Author entity
 	// Errors: ErrAuthorNotFound
-	GetBySlug(ctx context.Context, slug string) (*Author, error)
+	GetBySlug(ctx context.Context, slug string) (*model.Author, error)
 
 	// GetAll retrieves paginated list of authors with filtering
 	// Business rules:
@@ -39,7 +40,7 @@ type Service interface {
 	// - Default sort: created_at DESC
 	// - Search by name is case-insensitive partial match
 	// Returns: Authors slice + total count for pagination
-	GetAll(ctx context.Context, filter AuthorFilter) ([]Author, int64, error)
+	GetAll(ctx context.Context, filter model.AuthorFilter) ([]model.Author, int64, error)
 
 	// Update updates existing author with conflict detection
 	// Business rules:
@@ -49,7 +50,7 @@ type Service interface {
 	// - Increment version on success
 	// Returns: Updated author with new version
 	// Errors: ErrAuthorNotFound, ErrVersionMismatch, ErrDuplicateSlug
-	Update(ctx context.Context, id uuid.UUID, req *UpdateAuthorRequest) (*Author, error)
+	Update(ctx context.Context, id uuid.UUID, req *model.UpdateAuthorRequest) (*model.Author, error)
 
 	// Delete removes author (with business rule validation)
 	// Business rules:
@@ -64,7 +65,7 @@ type Service interface {
 	// - Check each author for linked books
 	// - Continue on individual errors (partial success)
 	// Returns: Success count + errors for failed items
-	BulkDelete(ctx context.Context, ids BulkDeleteRequest) (int, []BulkError, error)
+	BulkDelete(ctx context.Context, ids model.BulkDeleteRequest) (int, []model.BulkError, error)
 
 	// Search performs full-text search on author names
 	// Business rules:
@@ -72,11 +73,11 @@ type Service interface {
 	// - Partial matching
 	// - Results ordered by relevance (exact → starts with → contains)
 	// Use case: Autocomplete, search bar
-	Search(ctx context.Context, query string, filter AuthorFilter) ([]Author, int64, error)
+	Search(ctx context.Context, query string, filter model.AuthorFilter) ([]model.Author, int64, error)
 
 	// GetWithBookCount retrieves author with aggregated book count
 	// Use case: Author detail page showing "150 books by this author"
 	// Returns: Author + book count (denormalized)
 	// Errors: ErrAuthorNotFound
-	GetWithBookCount(ctx context.Context, id uuid.UUID) (*Author, int, error)
+	GetWithBookCount(ctx context.Context, id uuid.UUID) (*model.Author, int, error)
 }

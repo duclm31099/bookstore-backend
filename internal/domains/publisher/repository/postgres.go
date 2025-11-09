@@ -1,7 +1,7 @@
 package repository
 
 import (
-	"bookstore-backend/internal/domains/publisher"
+	"bookstore-backend/internal/domains/publisher/model"
 	"bookstore-backend/pkg/cache"
 	"context"
 	"errors"
@@ -22,7 +22,7 @@ type postgresRepository struct {
 
 // NewPostgresRepository creates a new publisher repository instance
 // Dependency injection pattern - receives pool from container
-func NewPostgresRepository(pool *pgxpool.Pool, cache cache.Cache) publisher.Repository {
+func NewPostgresRepository(pool *pgxpool.Pool, cache cache.Cache) RepositoryInterface {
 	return &postgresRepository{
 		pool:  pool,
 		cache: cache,
@@ -30,18 +30,18 @@ func NewPostgresRepository(pool *pgxpool.Pool, cache cache.Cache) publisher.Repo
 }
 
 // Create inserts a new publisher record
-func (r *postgresRepository) Create(ctx context.Context, pub *publisher.Publisher) (*publisher.Publisher, error) {
+func (r *postgresRepository) Create(ctx context.Context, pub *model.Publisher) (*model.Publisher, error) {
 	query := `
-    INSERT INTO publishers (name, slug, website, email, phone, created_at, updated_at)
-    VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
-    RETURNING id, name, slug, website, email, phone, created_at, updated_at
+    INSERT INTO publishers (name, slug, website, email, phone, address, description)
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
+    RETURNING id, name, slug, website, email, phone, address, description
   `
 	args := []interface{}{
-		pub.Name, pub.Slug, pub.Website, pub.Email, pub.Phone,
+		pub.Name, pub.Slug, pub.Website, pub.Email, pub.Phone, pub.Address, pub.Description,
 	}
 	row := r.pool.QueryRow(ctx, query, args...)
 
-	var createdPub publisher.Publisher
+	var createdPub model.Publisher
 	err := row.Scan(
 		&createdPub.ID,
 		&createdPub.Name,
@@ -49,31 +49,37 @@ func (r *postgresRepository) Create(ctx context.Context, pub *publisher.Publishe
 		&createdPub.Website,
 		&createdPub.Email,
 		&createdPub.Phone,
-		&createdPub.CreatedAt,
-		&createdPub.UpdatedAt,
+		&createdPub.Address,
+		&createdPub.Description,
 	)
-
 	if err != nil {
-		// Check if slug already exists
+		fmt.Println("error", err)
 		if strings.Contains(err.Error(), "unique constraint") {
-			return nil, publisher.NewPublisherSlugAlreadyExists(pub.Slug)
+			return nil, model.NewPublisherSlugAlreadyExists(pub.Slug)
 		}
-		return nil, publisher.NewCreatePublisherError(err)
+		return nil, model.NewCreatePublisherError(err)
 	}
 	return &createdPub, nil
 }
 
 // GetByID retrieves a publisher by ID
-func (r *postgresRepository) GetByID(ctx context.Context, id uuid.UUID) (*publisher.Publisher, error) {
+func (r *postgresRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.Publisher, error) {
 	query := `
-    SELECT id, name, slug, website, email, phone, created_at, updated_at
+    SELECT id, name, slug, 
+			COALESCE(website, '') AS website,
+      COALESCE(email, '')   AS email,
+      COALESCE(phone, '')   AS phone,
+			is_active,
+			description,
+			address,
+			created_at, updated_at
     FROM publishers
     WHERE id = $1
   `
 
 	row := r.pool.QueryRow(ctx, query, id)
 
-	var pub publisher.Publisher
+	var pub model.Publisher
 	err := row.Scan(
 		&pub.ID,
 		&pub.Name,
@@ -81,6 +87,9 @@ func (r *postgresRepository) GetByID(ctx context.Context, id uuid.UUID) (*publis
 		&pub.Website,
 		&pub.Email,
 		&pub.Phone,
+		&pub.IsActive,
+		&pub.Description,
+		&pub.Address,
 		&pub.CreatedAt,
 		&pub.UpdatedAt,
 	)
@@ -96,16 +105,21 @@ func (r *postgresRepository) GetByID(ctx context.Context, id uuid.UUID) (*publis
 }
 
 // GetBySlug retrieves a publisher by slug
-func (r *postgresRepository) GetBySlug(ctx context.Context, slug string) (*publisher.Publisher, error) {
+func (r *postgresRepository) GetBySlug(ctx context.Context, slug string) (*model.Publisher, error) {
 	query := `
-    SELECT id, name, slug, website, email, phone, created_at, updated_at
+    SELECT id, name, slug,
+			COALESCE(website, '') AS website,
+      COALESCE(email, '')   AS email,
+      COALESCE(phone, '')   AS phone,
+			is_active, description, address,
+			created_at, updated_at
     FROM publishers
     WHERE slug = $1
   `
 
 	row := r.pool.QueryRow(ctx, query, slug)
 
-	var pub publisher.Publisher
+	var pub model.Publisher
 	err := row.Scan(
 		&pub.ID,
 		&pub.Name,
@@ -113,6 +127,9 @@ func (r *postgresRepository) GetBySlug(ctx context.Context, slug string) (*publi
 		&pub.Website,
 		&pub.Email,
 		&pub.Phone,
+		&pub.IsActive,
+		&pub.Description,
+		&pub.Address,
 		&pub.CreatedAt,
 		&pub.UpdatedAt,
 	)
@@ -128,24 +145,25 @@ func (r *postgresRepository) GetBySlug(ctx context.Context, slug string) (*publi
 }
 
 // List retrieves all publishers with pagination
-func (r *postgresRepository) List(ctx context.Context, offset, limit int) ([]*publisher.Publisher, error) {
+func (r *postgresRepository) List(ctx context.Context, offset, limit int) ([]*model.Publisher, error) {
 	query := `
-    SELECT id, name, slug, website, email, phone, created_at, updated_at
+    SELECT id, name, slug, 
+		  COALESCE(website, '') AS website,
+      COALESCE(email, '')   AS email,
+      COALESCE(phone, '')   AS phone
     FROM publishers
     ORDER BY created_at DESC
     LIMIT $1 OFFSET $2
   `
-
 	rows, err := r.pool.Query(ctx, query, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list publishers: %w", err)
 	}
 	defer rows.Close()
-
-	var publishers []*publisher.Publisher
+	var publishers []*model.Publisher
 
 	for rows.Next() {
-		var pub publisher.Publisher
+		var pub model.Publisher
 		err := rows.Scan(
 			&pub.ID,
 			&pub.Name,
@@ -153,8 +171,6 @@ func (r *postgresRepository) List(ctx context.Context, offset, limit int) ([]*pu
 			&pub.Website,
 			&pub.Email,
 			&pub.Phone,
-			&pub.CreatedAt,
-			&pub.UpdatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan publisher row: %w", err)
@@ -185,17 +201,21 @@ func (r *postgresRepository) Count(ctx context.Context) (int, error) {
 }
 
 // Update updates publisher information (except slug & id)
-func (r *postgresRepository) Update(ctx context.Context, id uuid.UUID, pub *publisher.Publisher) (*publisher.Publisher, error) {
+func (r *postgresRepository) Update(ctx context.Context, id uuid.UUID, pub *model.Publisher) (*model.Publisher, error) {
 	query := `
     UPDATE publishers
     SET name = $1, website = $2, email = $3, phone = $4, updated_at = NOW()
     WHERE id = $5
-    RETURNING id, name, slug, website, email, phone, created_at, updated_at
+    RETURNING id, name, slug, 
+			COALESCE(website, '') AS website,
+      COALESCE(email, '')   AS email,
+      COALESCE(phone, '')   AS phone, 
+			created_at, updated_at
   `
 
 	row := r.pool.QueryRow(ctx, query, pub.Name, pub.Website, pub.Email, pub.Phone, id)
 
-	var updatedPub publisher.Publisher
+	var updatedPub model.Publisher
 	err := row.Scan(
 		&updatedPub.ID,
 		&updatedPub.Name,
@@ -226,40 +246,49 @@ func (r *postgresRepository) Delete(ctx context.Context, id uuid.UUID) error {
 	var bookCount int
 	err := row.Scan(&bookCount)
 	if err != nil {
-		return publisher.NewDeletePublisherError(err)
+		return model.NewDeletePublisherError(err)
 	}
 
 	if bookCount > 0 {
-		return publisher.NewPublisherHasBooks(id.String())
+		return model.NewPublisherHasBooks(id.String())
 	}
 
 	// Delete publisher
-	query := `DELETE FROM publishers WHERE id = $1`
+	query := `
+		UPDATE publishers 
+		SET is_active = false, updated_at = NOW()
+		WHERE id = $1
+	`
 	result, err := r.pool.Exec(ctx, query, id)
 
 	if err != nil {
-		return publisher.NewDeletePublisherError(err)
+		return model.NewDeletePublisherError(err)
 	}
 
 	if result.RowsAffected() == 0 {
-		return publisher.NewPublisherNotFound()
+		return model.NewPublisherNotFound()
 	}
 
 	return nil
 }
 
 // GetWithBooks retrieves publisher with associated books
-func (r *postgresRepository) GetWithBooks(ctx context.Context, id uuid.UUID) (*publisher.PublisherWithBooksResponse, error) {
+func (r *postgresRepository) GetWithBooks(ctx context.Context, id uuid.UUID) (*model.PublisherWithBooksResponse, error) {
 	// First get publisher
 	pubQuery := `
-    SELECT id, name, slug, website, email, phone, created_at, updated_at
+    SELECT id, name, slug, 
+			COALESCE(website, '') AS website,
+      COALESCE(email, '')   AS email,
+      COALESCE(phone, '')   AS phone, 
+			address, 
+			description
     FROM publishers
     WHERE id = $1
   `
 
 	row := r.pool.QueryRow(ctx, pubQuery, id)
 
-	var pub publisher.PublisherWithBooksResponse
+	var pub model.PublisherWithBooksResponse
 	err := row.Scan(
 		&pub.ID,
 		&pub.Name,
@@ -267,8 +296,8 @@ func (r *postgresRepository) GetWithBooks(ctx context.Context, id uuid.UUID) (*p
 		&pub.Website,
 		&pub.Email,
 		&pub.Phone,
-		&pub.CreatedAt,
-		&pub.UpdatedAt,
+		&pub.Address,
+		&pub.Description,
 	)
 
 	if err != nil {
@@ -292,10 +321,10 @@ func (r *postgresRepository) GetWithBooks(ctx context.Context, id uuid.UUID) (*p
 	}
 	defer rows.Close()
 
-	var books []publisher.BookBasic
+	var books []model.BookBasic
 
 	for rows.Next() {
-		var book publisher.BookBasic
+		var book model.BookBasic
 		err := rows.Scan(&book.ID, &book.Title, &book.Slug)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan book row: %w", err)
@@ -313,10 +342,14 @@ func (r *postgresRepository) GetWithBooks(ctx context.Context, id uuid.UUID) (*p
 }
 
 // ListWithBooks retrieves all publishers with their books (paginated)
-func (r *postgresRepository) ListWithBooks(ctx context.Context, offset, limit int) ([]*publisher.PublisherWithBooksResponse, error) {
+func (r *postgresRepository) ListWithBooks(ctx context.Context, offset, limit int) ([]*model.PublisherWithBooksResponse, error) {
 	// Get publishers with pagination
 	pubQuery := `
-    SELECT id, name, slug, website, email, phone, created_at, updated_at
+    SELECT id, name, slug,
+			COALESCE(website, '') AS website,
+      COALESCE(email, '')   AS email,
+      COALESCE(phone, '')   AS phone, 
+		 	created_at, updated_at
     FROM publishers
     ORDER BY created_at DESC
     LIMIT $1 OFFSET $2
@@ -328,10 +361,10 @@ func (r *postgresRepository) ListWithBooks(ctx context.Context, offset, limit in
 	}
 	defer rows.Close()
 
-	var publishers []*publisher.PublisherWithBooksResponse
+	var publishers []*model.PublisherWithBooksResponse
 
 	for rows.Next() {
-		var pub publisher.PublisherWithBooksResponse
+		var pub model.PublisherWithBooksResponse
 		err := rows.Scan(
 			&pub.ID,
 			&pub.Name,
@@ -368,10 +401,10 @@ func (r *postgresRepository) ListWithBooks(ctx context.Context, offset, limit in
 		}
 		defer bookRows.Close()
 
-		var books []publisher.BookBasic
+		var books []model.BookBasic
 
 		for bookRows.Next() {
-			var book publisher.BookBasic
+			var book model.BookBasic
 			err := bookRows.Scan(&book.ID, &book.Title, &book.Slug)
 			if err != nil {
 				return nil, fmt.Errorf("failed to scan book row: %w", err)

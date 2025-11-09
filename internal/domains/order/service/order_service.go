@@ -9,7 +9,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
-	address "bookstore-backend/internal/domains/address"
+	addressModel "bookstore-backend/internal/domains/address/model"
+	address "bookstore-backend/internal/domains/address/repository"
 	cart "bookstore-backend/internal/domains/cart/repository"
 	invenRepo "bookstore-backend/internal/domains/inventory/repository"
 	invenSer "bookstore-backend/internal/domains/inventory/service"
@@ -26,7 +27,7 @@ type orderService struct {
 	orderRepo        repository.OrderRepository
 	warehouseRepo    repository.WarehouseRepository
 	inventoryRepo    invenRepo.RepositoryInterface
-	addressRepo      address.Repository
+	addressRepo      address.RepositoryInterface
 	cartRepo         cart.RepositoryInterface
 	promoRepo        promo.PromotionRepository
 	inventorySerivce invenSer.ServiceInterface
@@ -37,7 +38,7 @@ func NewOrderService(
 	orderRepo repository.OrderRepository,
 	warehouseRepo repository.WarehouseRepository,
 	inventoryRepo invenRepo.RepositoryInterface,
-	addressRepo address.Repository,
+	addressRepo address.RepositoryInterface,
 	cartRepo cart.RepositoryInterface,
 	promoRepo promo.PromotionRepository,
 	inventorySerivce invenSer.ServiceInterface,
@@ -775,7 +776,7 @@ func (s *orderService) buildOrderItems(orderID uuid.UUID, bookItems []bookItemDa
 func (s *orderService) buildOrderDetailResponse(
 	order *model.Order,
 	items []model.OrderItem,
-	address address.Address,
+	address addressModel.Address,
 ) *model.OrderDetailResponse {
 	// Build items response
 	itemsResponse := make([]model.OrderItemResponse, len(items))

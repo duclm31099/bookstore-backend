@@ -1,7 +1,8 @@
 package handler
 
 import (
-	"bookstore-backend/internal/domains/publisher"
+	"bookstore-backend/internal/domains/publisher/model"
+	"bookstore-backend/internal/domains/publisher/service"
 	"bookstore-backend/internal/shared/response"
 	"net/http"
 	"strconv"
@@ -12,12 +13,12 @@ import (
 
 // PublisherHandler handles HTTP requests for publisher domain
 type PublisherHandler struct {
-	service publisher.Service
+	service service.ServiceInterface
 }
 
 // NewPublisherHandler creates a new publisher handler instance
 // Dependency injection pattern - receives service from container
-func NewPublisherHandler(service publisher.Service) *PublisherHandler {
+func NewPublisherHandler(service service.ServiceInterface) *PublisherHandler {
 	return &PublisherHandler{
 		service: service,
 	}
@@ -25,7 +26,7 @@ func NewPublisherHandler(service publisher.Service) *PublisherHandler {
 
 // CreatePublisher handles POST /publishers
 func (h *PublisherHandler) CreatePublisher(c *gin.Context) {
-	var req publisher.PublisherCreateRequest
+	var req model.PublisherCreateRequest
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Error(c, http.StatusBadRequest, "Invalid request payload", err.Error())
@@ -34,7 +35,7 @@ func (h *PublisherHandler) CreatePublisher(c *gin.Context) {
 
 	result, err := h.service.CreatePublisher(c.Request.Context(), &req)
 	if err != nil {
-		statusCode, message, code := publisher.GetErrorResponse(err)
+		statusCode, message, code := model.GetErrorResponse(err)
 		response.Error(c, statusCode, message, code)
 		return
 	}
@@ -48,14 +49,14 @@ func (h *PublisherHandler) GetPublisher(c *gin.Context) {
 
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		statusCode, message, code := publisher.GetErrorResponse(publisher.NewInvalidPublisherID(idStr))
+		statusCode, message, code := model.GetErrorResponse(model.NewInvalidPublisherID(idStr))
 		response.Error(c, statusCode, message, code)
 		return
 	}
 
 	result, err := h.service.GetPublisher(c.Request.Context(), id)
 	if err != nil {
-		statusCode, message, code := publisher.GetErrorResponse(err)
+		statusCode, message, code := model.GetErrorResponse(err)
 		response.Error(c, statusCode, message, code)
 		return
 	}
@@ -68,14 +69,14 @@ func (h *PublisherHandler) GetPublisherBySlug(c *gin.Context) {
 	slug := c.Param("slug")
 
 	if slug == "" {
-		statusCode, message, code := publisher.GetErrorResponse(publisher.NewInvalidSlug(""))
+		statusCode, message, code := model.GetErrorResponse(model.NewInvalidSlug(""))
 		response.Error(c, statusCode, message, code)
 		return
 	}
 
 	result, err := h.service.GetPublisherBySlug(c.Request.Context(), slug)
 	if err != nil {
-		statusCode, message, code := publisher.GetErrorResponse(err)
+		statusCode, message, code := model.GetErrorResponse(err)
 		response.Error(c, statusCode, message, code)
 		return
 	}
@@ -102,7 +103,7 @@ func (h *PublisherHandler) ListPublishers(c *gin.Context) {
 
 	results, total, err := h.service.ListPublishers(c.Request.Context(), page, pageSize)
 	if err != nil {
-		statusCode, message, code := publisher.GetErrorResponse(err)
+		statusCode, message, code := model.GetErrorResponse(err)
 		response.Error(c, statusCode, message, code)
 		return
 	}
@@ -123,12 +124,12 @@ func (h *PublisherHandler) UpdatePublisher(c *gin.Context) {
 
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		statusCode, message, code := publisher.GetErrorResponse(publisher.NewInvalidPublisherID(idStr))
+		statusCode, message, code := model.GetErrorResponse(model.NewInvalidPublisherID(idStr))
 		response.Error(c, statusCode, message, code)
 		return
 	}
 
-	var req publisher.PublisherUpdateRequest
+	var req model.PublisherUpdateRequest
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Error(c, http.StatusBadRequest, "Invalid request payload", err.Error())
@@ -137,7 +138,7 @@ func (h *PublisherHandler) UpdatePublisher(c *gin.Context) {
 
 	result, err := h.service.UpdatePublisher(c.Request.Context(), id, &req)
 	if err != nil {
-		statusCode, message, code := publisher.GetErrorResponse(err)
+		statusCode, message, code := model.GetErrorResponse(err)
 		response.Error(c, statusCode, message, code)
 		return
 	}
@@ -151,14 +152,14 @@ func (h *PublisherHandler) DeletePublisher(c *gin.Context) {
 
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		statusCode, message, code := publisher.GetErrorResponse(publisher.NewInvalidPublisherID(idStr))
+		statusCode, message, code := model.GetErrorResponse(model.NewInvalidPublisherID(idStr))
 		response.Error(c, statusCode, message, code)
 		return
 	}
 
 	err = h.service.DeletePublisher(c.Request.Context(), id)
 	if err != nil {
-		statusCode, message, code := publisher.GetErrorResponse(err)
+		statusCode, message, code := model.GetErrorResponse(err)
 		response.Error(c, statusCode, message, code)
 		return
 	}
@@ -172,14 +173,14 @@ func (h *PublisherHandler) GetPublisherWithBooks(c *gin.Context) {
 
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		statusCode, message, code := publisher.GetErrorResponse(publisher.NewInvalidPublisherID(idStr))
+		statusCode, message, code := model.GetErrorResponse(model.NewInvalidPublisherID(idStr))
 		response.Error(c, statusCode, message, code)
 		return
 	}
 
 	result, err := h.service.GetPublisherWithBooks(c.Request.Context(), id)
 	if err != nil {
-		statusCode, message, code := publisher.GetErrorResponse(err)
+		statusCode, message, code := model.GetErrorResponse(err)
 		response.Error(c, statusCode, message, code)
 		return
 	}
@@ -206,7 +207,7 @@ func (h *PublisherHandler) ListPublishersWithBooks(c *gin.Context) {
 
 	results, total, err := h.service.ListPublishersWithBooks(c.Request.Context(), page, pageSize)
 	if err != nil {
-		statusCode, message, code := publisher.GetErrorResponse(err)
+		statusCode, message, code := model.GetErrorResponse(err)
 		response.Error(c, statusCode, message, code)
 		return
 	}

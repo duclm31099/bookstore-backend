@@ -2,7 +2,8 @@
 package service
 
 import (
-	"bookstore-backend/internal/domains/author"
+	"bookstore-backend/internal/domains/author/model"
+	"bookstore-backend/internal/domains/author/repository"
 	"bookstore-backend/internal/shared/utils"
 	"context"
 	"fmt"
@@ -13,7 +14,7 @@ import (
 
 // authorService implements author.Service interface
 type authorService struct {
-	repo author.Repository // Repository dependency (injected)
+	repo repository.RepositoryInterface // Repository dependency (injected)
 }
 
 // NewAuthorService creates a new author service instance
@@ -21,17 +22,17 @@ type authorService struct {
 // - Service depends on Repository abstraction (interface), not concrete type
 // - Allows easy testing (mock repository)
 // - Follows Dependency Inversion Principle (SOLID)
-func NewAuthorService(repo author.Repository) author.Service {
+func NewAuthorService(repo repository.RepositoryInterface) ServiceInterface {
 	return &authorService{
 		repo: repo,
 	}
 }
 
 // GetWithBookCount retrieves author with book count
-func (s *authorService) GetWithBookCount(ctx context.Context, id uuid.UUID) (*author.Author, int, error) {
+func (s *authorService) GetWithBookCount(ctx context.Context, id uuid.UUID) (*model.Author, int, error) {
 	// Validate UUID
 	if id == uuid.Nil {
-		return nil, 0, author.ErrAuthorNotFound
+		return nil, 0, model.ErrAuthorNotFound
 	}
 
 	// Get author
@@ -49,10 +50,10 @@ func (s *authorService) GetWithBookCount(ctx context.Context, id uuid.UUID) (*au
 	return a, bookCount, nil
 }
 
-func (s *authorService) GetByID(ctx context.Context, id uuid.UUID) (*author.Author, error) {
+func (s *authorService) GetByID(ctx context.Context, id uuid.UUID) (*model.Author, error) {
 	// Validate UUID
 	if id == uuid.Nil {
-		return nil, author.ErrAuthorNotFound
+		return nil, model.ErrAuthorNotFound
 	}
 
 	// Repository handles cache + DB
@@ -60,32 +61,32 @@ func (s *authorService) GetByID(ctx context.Context, id uuid.UUID) (*author.Auth
 }
 
 // GetBySlug - Simple implementation
-func (s *authorService) GetBySlug(ctx context.Context, slug string) (*author.Author, error) {
+func (s *authorService) GetBySlug(ctx context.Context, slug string) (*model.Author, error) {
 	// Validate slug
 	slug = strings.TrimSpace(strings.ToLower(slug))
 	if slug == "" {
-		return nil, author.ErrAuthorNotFound
+		return nil, model.ErrAuthorNotFound
 	}
 
 	// Repository handles cache + DB
 	return s.repo.GetBySlug(ctx, slug)
 }
 
-func (s *authorService) Create(ctx context.Context, req *author.CreateAuthorRequest) (*author.Author, error) {
+func (s *authorService) Create(ctx context.Context, req *model.CreateAuthorRequest) (*model.Author, error) {
 
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
-		return nil, author.ErrInvalidName
+		return nil, model.ErrInvalidName
 	}
-	if len(name) < author.MinNameLength {
-		return nil, fmt.Errorf("name too short minimum %d length", author.MinNameLength)
+	if len(name) < model.MinNameLength {
+		return nil, fmt.Errorf("name too short minimum %d length", model.MinNameLength)
 	}
-	if len(name) > author.MaxNameLength {
-		return nil, fmt.Errorf("name too long maximum %d length", author.MaxNameLength)
+	if len(name) > model.MaxNameLength {
+		return nil, fmt.Errorf("name too long maximum %d length", model.MaxNameLength)
 	}
 
-	if len(*req.Bio) > author.MaxBioLength {
-		return nil, fmt.Errorf("bio too long maximum %d length", author.MaxBioLength)
+	if len(*req.Bio) > model.MaxBioLength {
+		return nil, fmt.Errorf("bio too long maximum %d length", model.MaxBioLength)
 	}
 
 	baseSlug := utils.GenerateSlug(req.Name)
@@ -93,7 +94,7 @@ func (s *authorService) Create(ctx context.Context, req *author.CreateAuthorRequ
 	if err != nil || exists {
 		return nil, fmt.Errorf("failed to check slug uniqueness: %w", err)
 	}
-	newAuthor := &author.Author{
+	newAuthor := &model.Author{
 		Name:     name,
 		Slug:     baseSlug,
 		Bio:      req.Bio,
@@ -106,7 +107,7 @@ func (s *authorService) Create(ctx context.Context, req *author.CreateAuthorRequ
 	}
 	return createdAuthor, nil
 }
-func (s *authorService) GetAll(ctx context.Context, filter author.AuthorFilter) ([]author.Author, int64, error) {
+func (s *authorService) GetAll(ctx context.Context, filter model.AuthorFilter) ([]model.Author, int64, error) {
 	// ═══════════════════════════════════════════════════════════
 	// CRITICAL: VALIDATE ỨƠ SANITIZE PAGINATION PARAMETERS
 	// ═══════════════════════════════════════════════════════════
@@ -165,7 +166,7 @@ func (s *authorService) GetAll(ctx context.Context, filter author.AuthorFilter) 
 }
 
 // Update implements author.Service.Update with conflict detection
-func (s *authorService) Update(ctx context.Context, id uuid.UUID, req *author.UpdateAuthorRequest) (*author.Author, error) {
+func (s *authorService) Update(ctx context.Context, id uuid.UUID, req *model.UpdateAuthorRequest) (*model.Author, error) {
 	// ═══════════════════════════════════════════════════════════
 	// STEP 1: FETCH CURRENT AUTHOR
 	// ═══════════════════════════════════════════════════════════
@@ -183,7 +184,7 @@ func (s *authorService) Update(ctx context.Context, id uuid.UUID, req *author.Up
 	// Client MUST send current version they're updating from
 	// If versions don't match, another user has modified the author
 	if req.Version != currentAuthor.Version {
-		return nil, author.ErrVersionMismatch
+		return nil, model.ErrVersionMismatch
 	}
 
 	// ═══════════════════════════════════════════════════════════
@@ -197,9 +198,9 @@ func (s *authorService) Update(ctx context.Context, id uuid.UUID, req *author.Up
 		// Validate new name
 		name := strings.TrimSpace(*req.Name)
 		if name == "" {
-			return nil, author.ErrInvalidName
+			return nil, model.ErrInvalidName
 		}
-		if len(name) < author.MinNameLength || len(name) > author.MaxNameLength {
+		if len(name) < model.MinNameLength || len(name) > model.MaxNameLength {
 			return nil, fmt.Errorf("invalid name length")
 		}
 
@@ -214,7 +215,7 @@ func (s *authorService) Update(ctx context.Context, id uuid.UUID, req *author.Up
 					return nil, err
 				}
 				if exists {
-					return nil, author.ErrDuplicateSlug
+					return nil, model.ErrDuplicateSlug
 				}
 				updatedAuthor.Slug = newSlug
 			}
@@ -224,7 +225,7 @@ func (s *authorService) Update(ctx context.Context, id uuid.UUID, req *author.Up
 	}
 
 	if req.Bio != nil {
-		if len(*req.Bio) > author.MaxBioLength {
+		if len(*req.Bio) > model.MaxBioLength {
 			return nil, fmt.Errorf("bio too long")
 		}
 		updatedAuthor.Bio = req.Bio
@@ -258,13 +259,13 @@ func (s *authorService) Delete(ctx context.Context, id uuid.UUID) error {
 
 	// Business rule: CANNOT delete author with books
 	if bookCount > 0 {
-		return fmt.Errorf("%w: author has %d linked books", author.ErrAuthorHasBooks, bookCount)
+		return fmt.Errorf("%w: author has %d linked books", model.ErrAuthorHasBooks, bookCount)
 	}
 
 	// Safe to delete
 	return s.repo.Delete(ctx, id)
 }
-func (s *authorService) Search(ctx context.Context, query string, filter author.AuthorFilter) ([]author.Author, int64, error) {
+func (s *authorService) Search(ctx context.Context, query string, filter model.AuthorFilter) ([]model.Author, int64, error) {
 	// ═══════════════════════════════════════════════════════════
 	// CRITICAL: SANITIZE SEARCH QUERY
 	// ═══════════════════════════════════════════════════════════
@@ -274,7 +275,7 @@ func (s *authorService) Search(ctx context.Context, query string, filter author.
 
 	// Empty query protection
 	if query == "" {
-		return []author.Author{}, 0, nil // Return empty, not error
+		return []model.Author{}, 0, nil // Return empty, not error
 	}
 
 	// Minimum length (prevent short query performance issues)
@@ -313,7 +314,7 @@ func escapeWildcards(s string) string {
 	s = strings.ReplaceAll(s, "_", "\\_")   // Escape _
 	return s
 }
-func (s *authorService) BulkDelete(ctx context.Context, req author.BulkDeleteRequest) (int, []author.BulkError, error) {
+func (s *authorService) BulkDelete(ctx context.Context, req model.BulkDeleteRequest) (int, []model.BulkError, error) {
 	// ═══════════════════════════════════════════════════════════
 	// CRITICAL: VALIDATE INPUT SIZE
 	// ═══════════════════════════════════════════════════════════
@@ -333,14 +334,14 @@ func (s *authorService) BulkDelete(ctx context.Context, req author.BulkDeleteReq
 	// ═══════════════════════════════════════════════════════════
 
 	var validIDs []uuid.UUID
-	var bulkErrors []author.BulkError
+	var bulkErrors []model.BulkError
 
 	// Pre-validation: Check constraints for each author
 	for _, id := range req.IDs {
 		// Check if author has books
 		bookCount, err := s.repo.GetBookCount(ctx, id)
 		if err != nil {
-			bulkErrors = append(bulkErrors, author.BulkError{
+			bulkErrors = append(bulkErrors, model.BulkError{
 				ID:      id,
 				Message: fmt.Sprintf("failed to check books: %v", err),
 			})
@@ -348,7 +349,7 @@ func (s *authorService) BulkDelete(ctx context.Context, req author.BulkDeleteReq
 		}
 
 		if bookCount > 0 {
-			bulkErrors = append(bulkErrors, author.BulkError{
+			bulkErrors = append(bulkErrors, model.BulkError{
 				ID:      id,
 				Message: fmt.Sprintf("author has %d linked books", bookCount),
 			})

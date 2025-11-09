@@ -1,4 +1,4 @@
-.PHONY: help run build test migrate-up migrate-down migrate-create docker-up docker-down clean dev dev-stop dev-logs dev-all dev-db
+.PHONY: clean-seed seed-1 seed-2 seed-3 seed-4 seed-5 seed-6 seed-7 seed-8 help run build test migrate-up migrate-down migrate-create docker-up docker-down clean dev dev-stop dev-logs dev-all dev-db
 
 
 # Variables
@@ -175,7 +175,13 @@ lint: ## Run linters
 # ========================================
 # CLEANUP
 # ========================================
-
+# Database connection info
+DB_HOST ?= localhost
+DB_PORT ?= 5439
+DB_NAME ?= bookstore_dev
+DB_USER ?= bookstore
+DB_PASSWORD ?= secret
+PSQL = PGPASSWORD=$(DB_PASSWORD) psql -h $(DB_HOST) -p $(DB_PORT) -U $(DB_USER) -d $(DB_NAME) -v ON_ERROR_STOP=1
 clean: ## Clean build artifacts and temp files
 	rm -rf $(BUILD_DIR)
 	rm -rf tmp/
@@ -183,3 +189,49 @@ clean: ## Clean build artifacts and temp files
 	$(GO) clean
 
 .DEFAULT_GOAL := help
+# Clean all data
+clean-seed:
+	@echo "🗑️  Truncating all tables..."
+	@$(PSQL) -c "TRUNCATE TABLE reviews, refund_requests, payment_webhook_logs, payment_transactions, order_status_history, promotion_usage, order_items, orders, promotions, warehouse_inventory, warehouses, books, addresses, authors, publishers, categories, users RESTART IDENTITY CASCADE;"
+	@echo "✅ All data cleared!"
+
+# Run individual seed files
+seed-1:
+	@echo "🌱 Running: 001_users_seed.sql"
+	@$(PSQL) -f seeds/001_users_seed.sql
+	@echo "✅ Done!"
+
+seed-2:
+	@echo "🌱 Running: 002_book.sql"
+	@$(PSQL) -f seeds/002_book.sql
+	@echo "✅ Done!"
+
+seed-3:
+	@echo "🌱 Running: 003_inventory.sql"
+	@$(PSQL) -f seeds/003_inventory.sql
+	@echo "✅ Done!"
+
+seed-4:
+	@echo "🌱 Running: 004_promotion.sql"
+	@$(PSQL) -f seeds/004_promotion.sql
+	@echo "✅ Done!"
+
+seed-5:
+	@echo "🌱 Running: 005_order.sql"
+	@$(PSQL) -f seeds/005_order.sql
+	@echo "✅ Done!"
+
+seed-6:
+	@echo "🌱 Running: 006_payment.sql"
+	@$(PSQL) -f seeds/006_payment.sql
+	@echo "✅ Done!"
+
+seed-7:
+	@echo "🌱 Running: 007_refund.sql"
+	@$(PSQL) -f seeds/007_refund.sql
+	@echo "✅ Done!"
+
+seed-8:
+	@echo "🌱 Running: 008_review.sql"
+	@$(PSQL) -f seeds/008_review.sql
+	@echo "✅ Done!"

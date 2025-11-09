@@ -1,6 +1,8 @@
 package response
 
 import (
+	"net/http"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -10,6 +12,7 @@ type SuccessResponse struct {
 	Success bool        `json:"success"`        // Always true for success
 	Message string      `json:"message"`        // Human-readable message
 	Data    interface{} `json:"data,omitempty"` // Payload (nullable)
+	Code    int         `json:"code"`
 }
 
 // Error response structure
@@ -18,6 +21,7 @@ type ErrorResponse struct {
 	Success bool        `json:"success"`         // Always false for errors
 	Message string      `json:"message"`         // User-friendly error message
 	Error   interface{} `json:"error,omitempty"` // Technical error details (nullable)
+	Code    int         `json:"code"`
 }
 
 // Success gửi success response
@@ -27,6 +31,7 @@ func Success(c *gin.Context, statusCode int, message string, data interface{}) {
 		Success: true,
 		Message: message,
 		Data:    data,
+		Code:    http.StatusOK,
 	})
 }
 
@@ -38,5 +43,6 @@ func Error(c *gin.Context, statusCode int, message string, err interface{}) {
 		Success: false,
 		Message: message,
 		Error:   err,
+		Code:    statusCode,
 	})
 }

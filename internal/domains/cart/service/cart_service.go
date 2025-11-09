@@ -1,7 +1,7 @@
 package service
 
 import (
-	"bookstore-backend/internal/domains/address"
+	addressService "bookstore-backend/internal/domains/address/service"
 	"bookstore-backend/internal/domains/cart/model"
 	repo "bookstore-backend/internal/domains/cart/repository"
 	inventoryModel "bookstore-backend/internal/domains/inventory/model"
@@ -21,10 +21,10 @@ type CartService struct {
 	repository       repo.RepositoryInterface
 	inventoryService inveService.ServiceInterface
 	inventoryRepo    inveRepo.RepositoryInterface
-	address          address.ServiceInterface
+	address          addressService.ServiceInterface
 }
 
-func NewCartService(r repo.RepositoryInterface, inventoryS inveService.ServiceInterface, addressSvc address.ServiceInterface, inventoryRepo inveRepo.RepositoryInterface) ServiceInterface {
+func NewCartService(r repo.RepositoryInterface, inventoryS inveService.ServiceInterface, addressSvc addressService.ServiceInterface, inventoryRepo inveRepo.RepositoryInterface) ServiceInterface {
 	return &CartService{
 		repository:       r,
 		inventoryService: inventoryS,

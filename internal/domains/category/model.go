@@ -102,7 +102,7 @@ type Category struct {
 
 	// IconURL: Link đến icon (dùng UI)
 	// Ví dụ: "https://cdn.bookstore.com/icons/tieu-thuyet.png"
-	IconURL string
+	IconURL *string
 
 	// IsActive: Cờ ẩn/hiện category
 	// true => Hiển thị
@@ -300,7 +300,7 @@ func NewCategory(
 		ParentID:    parentID,
 		SortOrder:   sortOrder,
 		Description: description,
-		IconURL:     iconURL,
+		IconURL:     &iconURL,
 		IsActive:    true, // Default: active
 		CreatedAt:   now,
 		UpdatedAt:   now,
@@ -356,7 +356,7 @@ func (c *Category) Update(
 	c.Name = strings.TrimSpace(name)
 	c.Slug = utils.GenerateSlug(name)
 	c.Description = description
-	c.IconURL = iconURL
+	c.IconURL = &iconURL
 	c.SortOrder = sortOrder
 
 	// Update timestamp (auto update khi có change)
