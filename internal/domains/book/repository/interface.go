@@ -10,10 +10,9 @@ import (
 type RepositoryInterface interface {
 	ListBooks(ctx context.Context, filter *model.BookFilter) ([]model.Book, int, error)
 	GetBaseBookByID(ctx context.Context, id string) (*model.BaseBookResponse, error)
-	GetBookByID(ctx context.Context, id string) (*model.Book, []model.InventoryDetailDTO, error)
+	GetBookByID(ctx context.Context, id string) (*model.BookDetailRes, []model.InventoryDetailDTO, error)
 	GetBookByIDForUpdate(ctx context.Context, id string) (*model.Book, error)
 	CheckISBNExistsExcept(ctx context.Context, isbn, excludeID string) (bool, error)
-	// GetBookBySlug(ctx context.Context, slug string) (*Book, error)
 	CreateBook(ctx context.Context, book *model.Book) error
 	UpdateBook(ctx context.Context, book *model.Book) error
 	CheckBookHasReservedInventory(ctx context.Context, bookID string) (bool, error)

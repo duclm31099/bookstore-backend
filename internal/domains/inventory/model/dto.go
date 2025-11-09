@@ -29,12 +29,12 @@ type UpdateInventoryRequest struct {
 }
 
 type ListInventoryRequest struct {
-	BookID            *uuid.UUID `json:"book_id,omitempty"`
-	WarehouseID       *uuid.UUID `json:"warehouse_id,omitempty"`
-	IsLowStock        *bool      `json:"is_low_stock,omitempty"`
-	HasAvailableStock *bool      `json:"has_available_stock,omitempty"`
-	Page              int        `json:"page" validate:"required,gte=1"`
-	Limit             int        `json:"limit" validate:"required,gte=1,lte=100"`
+	BookID            *string `form:"book_id" json:"book_id,omitempty"`
+	WarehouseID       *string `form:"warehouse_id" json:"warehouse_id,omitempty"`
+	IsLowStock        *bool   `form:"is_low_stock" json:"is_low_stock,omitempty"`
+	HasAvailableStock *bool   `form:"has_available_stock" json:"has_available_stock,omitempty"`
+	Page              int     `form:"page" json:"page" binding:"required,gte=1"`
+	Limit             int     `form:"limit" json:"limit" binding:"required,gte=1,lte=100"`
 }
 
 // ========================================
@@ -125,14 +125,14 @@ type BulkUpdateRequest struct {
 // ========================================
 
 type AuditTrailRequest struct {
-	WarehouseID *uuid.UUID `json:"warehouse_id,omitempty"`
-	BookID      *uuid.UUID `json:"book_id,omitempty"`
-	Action      *string    `json:"action,omitempty"` // RESTOCK, RESERVE, etc.
-	ChangedBy   *uuid.UUID `json:"changed_by,omitempty"`
-	StartDate   *time.Time `json:"start_date,omitempty"`
-	EndDate     *time.Time `json:"end_date,omitempty"`
-	Page        int        `json:"page" validate:"required,gte=1"`
-	Limit       int        `json:"limit" validate:"required,gte=1,lte=100"`
+	WarehouseID *uuid.UUID `json:"warehouse_id,omitempty" form:"warehouse_id"`
+	BookID      *uuid.UUID `json:"book_id,omitempty" form:"book_id"`
+	Action      *string    `json:"action,omitempty" form:"action"` // RESTOCK, RESERVE, etc.
+	ChangedBy   *uuid.UUID `json:"changed_by,omitempty" form:"changed_by"`
+	StartDate   *time.Time `json:"start_date,omitempty" form:"start_date"`
+	EndDate     *time.Time `json:"end_date,omitempty" form:"end_date"`
+	Page        int        `json:"page" validate:"required,gte=1" form:"page"`
+	Limit       int        `json:"limit" validate:"required,gte=1,lte=100" form:"limit"`
 }
 
 type ExportAuditRequest struct {

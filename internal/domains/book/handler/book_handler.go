@@ -117,13 +117,13 @@ func (h *Handler) GetBookDetail(c *gin.Context) {
 	detail, err := h.service.GetBookDetail(c.Request.Context(), id)
 
 	isInvalid := model.HandleBookError(c, err)
-	if !isInvalid {
+	if isInvalid {
 		return
 	}
 
 	// 4. Cache the result (TTL 10 minutes = 600 seconds)
 	// Cache.Set tự động marshal sang JSON
-	if err := h.cache.Set(c.Request.Context(), cacheKey, detail, 600); err != nil {
+	if err := h.cache.Set(c.Request.Context(), cacheKey, detail, 10*time.Minute); err != nil {
 		log.Printf("[Handler] Failed to cache book detail: %v", err)
 	}
 
@@ -154,7 +154,7 @@ func (h *Handler) CreateBook(c *gin.Context) {
 
 	// Handle specific business errors
 	isInvalid := model.HandleBookError(c, err)
-	if !isInvalid {
+	if isInvalid {
 		return
 	}
 

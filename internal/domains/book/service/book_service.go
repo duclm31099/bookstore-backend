@@ -5,14 +5,13 @@ import (
 	"bookstore-backend/internal/domains/book/repository"
 	"bookstore-backend/internal/shared/utils"
 	"bookstore-backend/pkg/cache"
+	"bookstore-backend/pkg/logger"
 	"context"
 	"crypto/md5"
 	"encoding/json"
 	"fmt"
 	"log"
 	"time"
-
-	"github.com/shopspring/decimal"
 )
 
 // Service - Implements ServiceInterface
@@ -97,7 +96,7 @@ func (s *BookService) ListBooks(ctx context.Context, req model.ListBooksRequest)
 	}
 
 	jsonData, _ := json.Marshal(cacheData)
-	if err := s.cache.Set(ctx, cacheKey, string(jsonData), 3600); err != nil { // TTL 1 hour
+	if err := s.cache.Set(ctx, cacheKey, string(jsonData), 60*time.Minute); err != nil { // TTL 1 hour
 		log.Printf("Cache SET error for key %s: %v", cacheKey, err)
 		// Don't fail request if cache write fails
 	}
@@ -107,30 +106,14 @@ func (s *BookService) ListBooks(ctx context.Context, req model.ListBooksRequest)
 func (s *BookService) GetBookDetail(ctx context.Context, id string) (*model.BookDetailResponse, error) {
 	// Lấy dữ liệu chi tiết sách
 	b, inventories, err := s.repo.GetBookByID(ctx, id)
+
 	if err != nil {
 		return nil, err
 	}
 	// Lấy review nổi bật
 	reviews, _ := s.repo.GetReviewsHighlight(ctx, id)
 	// Build DTO cha
-	detail := &model.BookDetailResponse{
-		ID:            b.ID,
-		Title:         b.Title,
-		Author:        &model.AuthorDTO{ID: b.AuthorID, Name: b.AuthorName},
-		Category:      &model.CategoryDTO{ID: b.CategoryID, Name: b.CategoryName},
-		Publisher:     &model.PublisherDTO{ID: b.PublisherID, Name: b.PublisherName},
-		Description:   b.Description,
-		Price:         b.Price.InexactFloat64(),
-		Language:      b.Language,
-		Format:        b.Format,
-		CoverURL:      b.CoverURL,
-		PublishedYear: b.PublishedYear,
-		RatingAverage: b.RatingAverage,
-		RatingCount:   b.RatingCount,
-		TotalStock:    b.TotalStock,
-		Inventories:   inventories,
-		Reviews:       reviews,
-	}
+	detail := model.ToBookDetailResponse(*b, inventories, reviews)
 	// Tăng view_count async
 	go s.repo.IncrementViewCount(context.Background(), id)
 	return detail, nil
@@ -139,6 +122,9 @@ func (s *BookService) GetBookDetail(ctx context.Context, id string) (*model.Book
 // CreateBook - Business logic for creating book
 func (s *BookService) CreateBook(ctx context.Context, req model.CreateBookRequest) error {
 	// 1. Validate foreign keys exist
+	logger.Info("Validate Author", map[string]interface{}{
+		"AuthorID": req.AuthorID,
+	})
 	if exists, err := s.repo.ValidateAuthor(ctx, req.AuthorID); err != nil || !exists {
 		return model.ErrAuthorNotFound
 	}
@@ -172,43 +158,8 @@ func (s *BookService) CreateBook(ctx context.Context, req model.CreateBookReques
 	}
 
 	// 5. Build Book entity
-	now := time.Now()
 
-	book := &model.Book{
-		Title:           req.Title,
-		Slug:            finalSlug,
-		ISBN:            req.ISBN,
-		AuthorID:        utils.ParseStringToUUID(req.AuthorID),
-		PublisherID:     utils.ParseStringToUUID(req.PublisherID),
-		CategoryID:      utils.ParseStringToUUID(req.CategoryID),
-		Price:           decimal.NewFromFloat(req.Price),
-		CompareAtPrice:  utils.ParseFloatToDecimal(req.CompareAtPrice),
-		CostPrice:       utils.ParseFloatToDecimal(req.CostPrice),
-		CoverURL:        req.CoverURL,
-		Description:     req.Description,
-		Pages:           req.Pages,
-		Language:        req.Language,
-		PublishedYear:   req.PublishedYear,
-		Format:          req.Format,
-		Dimensions:      req.Dimensions,
-		WeightGrams:     req.WeightGrams,
-		EbookFileURL:    req.EbookFileURL,
-		EbookFileSizeMB: utils.ParseFloatToDecimal(req.EbookFileSizeMb),
-		EbookFormat:     req.EbookFormat,
-		IsActive:        req.IsActive,
-		IsFeatured:      req.IsFeatured,
-		MetaTitle:       req.MetaTitle,
-		MetaDescription: req.MetaDescription,
-		MetaKeywords:    req.MetaKeywords,
-		Images:          req.Images,
-		ViewCount:       0,
-		SoldCount:       0,
-		RatingAverage:   0.0,
-		RatingCount:     0,
-		Version:         0,
-		CreatedAt:       now,
-		UpdatedAt:       now,
-	}
+	book := model.ToBookEntity(req, finalSlug)
 
 	// 6. Save to database
 	if err := s.repo.CreateBook(ctx, book); err != nil {
@@ -367,7 +318,7 @@ func (s *BookService) SearchBooks(ctx context.Context, req model.SearchBooksRequ
 	}
 
 	// 4. Cache the results (TTL 1 hour = 3600 seconds)
-	if err := s.cache.Set(ctx, cacheKey, results, 3600); err != nil {
+	if err := s.cache.Set(ctx, cacheKey, results, 60*time.Minute); err != nil {
 		log.Printf("[Service] Failed to cache search results: %v", err)
 		// Don't fail request if cache write fails
 	}

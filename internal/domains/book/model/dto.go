@@ -2,10 +2,10 @@ package model
 
 import (
 	"bookstore-backend/internal/shared/utils"
+	"database/sql"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
 	"github.com/shopspring/decimal"
 )
 
@@ -30,8 +30,8 @@ type Book struct {
 	CostPrice      *decimal.Decimal `json:"cost_price" db:"cost_price"`
 
 	// Media
-	CoverURL *string        `json:"cover_url" db:"cover_url"`
-	Images   pq.StringArray `json:"images" db:"images"`
+	CoverURL *string  `json:"cover_url" db:"cover_url"`
+	Images   []string `json:"images" db:"images"`
 
 	// Content & Specs
 	Description   *string `json:"description" db:"description"`
@@ -54,9 +54,9 @@ type Book struct {
 	SoldCount  int  `json:"sold_count" db:"sold_count"`
 
 	// SEO
-	MetaTitle       *string        `json:"meta_title" db:"meta_title"`
-	MetaDescription *string        `json:"meta_description" db:"meta_description"`
-	MetaKeywords    pq.StringArray `json:"meta_keywords" db:"meta_keywords"`
+	MetaTitle       *string  `json:"meta_title" db:"meta_title"`
+	MetaDescription *string  `json:"meta_description" db:"meta_description"`
+	MetaKeywords    []string `json:"meta_keywords" db:"meta_keywords"`
 
 	// Full-text Search (không cần map vào struct, auto-generated)
 	// SearchVector - handled by database trigger
@@ -94,23 +94,28 @@ type ListBooksRequest struct {
 
 // ListBooksResponse - Response data
 type ListBooksResponse struct {
-	ID             uuid.UUID        `json:"id"`
-	Title          string           `json:"title"`
-	Slug           string           `json:"slug"`
-	AuthorName     string           `json:"author_name"`
-	PublisherName  string           `json:"publisher_name"`
-	Price          decimal.Decimal  `json:"price"`
-	CompareAtPrice *decimal.Decimal `json:"compare_at_price,omitempty"`
-	CoverURL       *string          `json:"cover_url,omitempty"`
-	Language       string           `json:"language"`
-	Format         *string          `json:"format,omitempty"`
-	RatingAverage  float64          `json:"rating_average"`
-	RatingCount    int              `json:"rating_count"`
-	ViewCount      int              `json:"view_count"`
-	SoldCount      int              `json:"sold_count"`
-	IsFeatured     bool             `json:"is_featured"`
-	TotalStock     int              `json:"total_stock"`
-	CreatedAt      time.Time        `json:"created_at"`
+	ID              uuid.UUID        `json:"id"`
+	Title           string           `json:"title"`
+	Slug            string           `json:"slug"`
+	AuthorName      string           `json:"author_name"`
+	PublisherName   string           `json:"publisher_name"`
+	Price           decimal.Decimal  `json:"price"`
+	CompareAtPrice  *decimal.Decimal `json:"compare_at_price,omitempty"`
+	CoverURL        *string          `json:"cover_url,omitempty"`
+	Language        string           `json:"language"`
+	Format          *string          `json:"format,omitempty"`
+	RatingAverage   float64          `json:"rating_average"`
+	RatingCount     int              `json:"rating_count"`
+	ViewCount       int              `json:"view_count"`
+	SoldCount       int              `json:"sold_count"`
+	IsFeatured      bool             `json:"is_featured"`
+	TotalStock      int              `json:"total_stock"`
+	CreatedAt       time.Time        `json:"created_at"`
+	CategoryName    string           `json:"category_name"`
+	Images          []string         `json:"images"`
+	MetaTitle       *string          `json:"meta_title"`
+	MetaDescription *string          `json:"meta_description"`
+	MetaKeywords    []string         `json:"meta_keywords"`
 }
 
 // PaginationMeta - Metadata for pagination
@@ -502,22 +507,35 @@ func (e *ValidationError) Error() string {
 
 // book detail response
 type BookDetailResponse struct {
-	ID            uuid.UUID            `json:"id"`
-	Title         string               `json:"title"`
-	Author        *AuthorDTO           `json:"author,omitempty"`
-	Category      *CategoryDTO         `json:"category,omitempty"`
-	Publisher     *PublisherDTO        `json:"publisher,omitempty"`
-	Price         float64              `json:"price"`
-	Language      string               `json:"language"`
-	Description   *string              `json:"description,omitempty"`
-	CoverURL      *string              `json:"cover_url,omitempty"`
-	PublishedYear *int                 `json:"published_year,omitempty"`
-	Format        *string              `json:"format,omitempty"`
-	TotalStock    int                  `json:"total_stock"`
-	Inventories   []InventoryDetailDTO `json:"inventories"`
-	RatingAverage float64              `json:"rating_average"`
-	RatingCount   int                  `json:"rating_count"`
-	Reviews       []ReviewDTO          `json:"reviews"`
+	ID              uuid.UUID            `json:"id"`
+	Title           string               `json:"title"`
+	ISBN            string               `json:"isbn" db:"isbn"`
+	Author          *AuthorDTO           `json:"author,omitempty"`
+	Category        *CategoryDTO         `json:"category,omitempty"`
+	Publisher       *PublisherDTO        `json:"publisher,omitempty"`
+	Pages           *int                 `json:"pages" db:"pages"`
+	Dimensions      *string              `json:"dimensions" db:"dimensions"`
+	WeightGrams     *int                 `json:"weight_grams" db:"weight_grams"`
+	EbookFileURL    *string              `json:"ebook_file_url" db:"ebook_file_url"`
+	EbookFileSizeMB *decimal.Decimal     `json:"ebook_file_size_mb" db:"ebook_file_size_mb"`
+	EbookFormat     *string              `json:"ebook_format" db:"ebook_format"`
+	Price           decimal.Decimal      `json:"price"`
+	CompareAtPrice  *decimal.Decimal     `json:"compare_at_price" db:"compare_at_price"`
+	Language        string               `json:"language"`
+	Description     *string              `json:"description,omitempty"`
+	CoverURL        *string              `json:"cover_url,omitempty"`
+	PublishedYear   *int                 `json:"published_year,omitempty"`
+	Format          *string              `json:"format,omitempty"`
+	TotalStock      int                  `json:"total_stock"`
+	IsActive        bool                 `json:"is_active" db:"is_active"`
+	Inventories     []InventoryDetailDTO `json:"inventories"`
+	Images          []string             `json:"images" db:"images"`
+	ViewCount       int                  `json:"view_count" db:"view_count"`
+	SoldCount       int                  `json:"sold_count" db:"sold_count"`
+	MetaTitle       *string              `json:"meta_title" db:"meta_title"`
+	MetaDescription *string              `json:"meta_description" db:"meta_description"`
+	MetaKeywords    []string             `json:"meta_keywords" db:"meta_keywords"`
+	Reviews         []ReviewDTO          `json:"reviews"`
 }
 type BookFilter struct {
 	Search     string
@@ -530,17 +548,6 @@ type BookFilter struct {
 	Limit      int
 	IsActive   *bool
 }
-type InventoryDetailDTO struct {
-	WarehouseID     uuid.UUID  `json:"warehouse_id"`
-	WarehouseName   string     `json:"warehouse_name"`
-	WarehouseCode   string     `json:"warehouse_code"`
-	Quantity        int        `json:"quantity"`
-	Reserved        int        `json:"reserved"`
-	Available       int        `json:"available"`
-	AlertThreshold  int        `json:"alert_threshold"`
-	IsLowStock      bool       `json:"is_low_stock"`
-	LastRestockedAt *time.Time `json:"last_restocked_at,omitempty"`
-}
 
 // các DTO liên kết
 
@@ -548,7 +555,7 @@ type InventoryDetailDTO struct {
 type AuthorDTO struct {
 	ID   uuid.UUID `json:"id"`
 	Name string    `json:"name"`
-	Slug string    `json:"slug"`
+	Slug string    `json:"slug,omitempty"`
 	Bio  *string   `json:"bio,omitempty"`
 }
 
@@ -824,4 +831,71 @@ type SearchMeta struct {
 	Query       string `json:"query"`
 	ResultCount int    `json:"result_count"`
 	TookMs      int64  `json:"took_ms"` // Query execution time
+}
+type BookDetailRes struct {
+	// Core book fields from books table (b.*)
+	ID              uuid.UUID        `json:"id" db:"id"`
+	Title           string           `json:"title" db:"title"`
+	Slug            string           `json:"slug" db:"slug"`
+	ISBN            string           `json:"isbn" db:"isbn"`
+	AuthorID        uuid.UUID        `json:"author_id" db:"author_id"`
+	PublisherID     uuid.UUID        `json:"publisher_id" db:"publisher_id"`
+	CategoryID      uuid.UUID        `json:"category_id" db:"category_id"`
+	Price           decimal.Decimal  `json:"price" db:"price"`
+	CompareAtPrice  *decimal.Decimal `json:"compare_at_price" db:"compare_at_price"`
+	CostPrice       *decimal.Decimal `json:"cost_price" db:"cost_price"`
+	CoverURL        *string          `json:"cover_url" db:"cover_url"`
+	Description     *string          `json:"description" db:"description"`
+	Pages           *int             `json:"pages" db:"pages"`
+	Language        string           `json:"language" db:"language"`
+	PublishedYear   *int             `json:"published_year" db:"published_year"`
+	Format          *string          `json:"format" db:"format"`
+	Dimensions      *string          `json:"dimensions" db:"dimensions"`
+	WeightGrams     *int             `json:"weight_grams" db:"weight_grams"`
+	EbookFileURL    *string          `json:"ebook_file_url" db:"ebook_file_url"`
+	EbookFileSizeMB *decimal.Decimal `json:"ebook_file_size_mb" db:"ebook_file_size_mb"`
+	EbookFormat     *string          `json:"ebook_format" db:"ebook_format"`
+	IsActive        bool             `json:"is_active" db:"is_active"`
+	IsFeatured      bool             `json:"is_featured" db:"is_featured"`
+	ViewCount       int              `json:"view_count" db:"view_count"`
+	SoldCount       int              `json:"sold_count" db:"sold_count"`
+	MetaTitle       *string          `json:"meta_title" db:"meta_title"`
+	MetaDescription *string          `json:"meta_description" db:"meta_description"`
+	MetaKeywords    []string         `json:"meta_keywords" db:"meta_keywords"`
+	RatingAverage   float64          `json:"rating_average" db:"rating_average"`
+	RatingCount     int              `json:"rating_count" db:"rating_count"`
+	Version         int              `json:"version" db:"version"`
+	Images          []string         `json:"images" db:"images"` // Giả sử là text[]
+	CreatedAt       time.Time        `json:"created_at" db:"created_at"`
+	UpdatedAt       time.Time        `json:"updated_at" db:"updated_at"`
+	DeletedAt       sql.NullTime     `json:"deleted_at" db:"deleted_at"`
+
+	// Author fields (prefixed with author_)
+	AuthorName *string `json:"author_name" db:"author_name"`
+	AuthorSlug *string `json:"author_slug" db:"author_slug"`
+	AuthorBio  *string `json:"author_bio" db:"author_bio"`
+
+	// Category fields (prefixed with category_)
+	CategoryName *string `json:"category_name" db:"category_name"`
+	CategorySlug *string `json:"category_slug" db:"category_slug"`
+
+	// Publisher fields (prefixed with publisher_)
+	PublisherName    *string     `json:"publisher_name" db:"publisher_name"`
+	PublisherSlug    *string     `json:"publisher_slug" db:"publisher_slug"`
+	PublisherWebsite *string     `json:"publisher_website" db:"publisher_website"`
+	Reviews          []ReviewDTO `json:"reviews"`
+	// Inventory aggregate (from LATERAL join)
+	TotalStock int `json:"total_stock" db:"total_stock"`
+}
+
+type InventoryDetailDTO struct {
+	WarehouseID     uuid.UUID  `json:"warehouse_id"`
+	WarehouseName   string     `json:"warehouse_name"`
+	WarehouseCode   string     `json:"warehouse_code"`
+	Quantity        int        `json:"quantity"`
+	Reserved        int        `json:"reserved"`
+	Available       int        `json:"available"`
+	AlertThreshold  int        `json:"alert_threshold"`
+	IsLowStock      bool       `json:"is_low_stock"`
+	LastRestockedAt *time.Time `json:"last_restocked_at,omitempty"`
 }

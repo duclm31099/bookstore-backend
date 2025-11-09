@@ -260,8 +260,8 @@ func (r *postgresRepository) Update(ctx context.Context, warehouseID, bookID uui
 			reserved = $4,
 			alert_threshold = $5,
 			last_restocked_at = $6,
-			updated_by = $7,
 			version = version + 1,
+			updated_by = $7,
 			updated_at = NOW()
 		WHERE warehouse_id = $1 
 		  AND book_id = $2 

@@ -3,7 +3,6 @@ package repository
 import (
 	"bookstore-backend/internal/domains/book/model"
 	"bookstore-backend/pkg/cache"
-	"bookstore-backend/pkg/logger"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -130,9 +129,6 @@ func (r *postgresRepository) ListBooks(ctx context.Context, filter *model.BookFi
 
 	// Build main query with JOINs
 	query := r.buildListBooksQuery(whereClause, 1)
-	logger.Info("buildListBooksQuery", map[string]interface{}{
-		"query": query,
-	})
 	// Append pagination args
 	args = append(args, filter.Limit, filter.Offset)
 
@@ -158,7 +154,6 @@ func (r *postgresRepository) GetBookByIDForUpdate(ctx context.Context, id string
 			   created_at, updated_at
 		FROM books
 		WHERE id = $1 AND deleted_at IS NULL
-		FOR UPDATE
 	`
 
 	var book model.Book
@@ -262,7 +257,7 @@ func (r *postgresRepository) buildListBooksQuery(whereClause string, paramCount 
 			b.format, b.dimensions, b.weight_grams, b.ebook_file_url, 
 			b.ebook_file_size_mb, b.ebook_format, b.is_active, b.is_featured, 
 			b.view_count, b.sold_count, b.meta_title, b.meta_description, 
-			b.meta_keywords, b.rating_average, b.rating_count, b.version, 
+			COALESCE(b.meta_keywords, ARRAY[]::text[]) AS meta_keywords, b.rating_average, b.rating_count, b.version, 
 			b.images, b.created_at, b.updated_at, b.deleted_at,
 			a.name AS author_name,
 			c.name AS category_name,
@@ -318,64 +313,137 @@ func (r *postgresRepository) executeListQuery(ctx context.Context, query string,
 // ============================================
 // API 2: GET BOOK DETAIL - FIXED
 // ============================================
+// Book struct với tất cả trường từ books table + joined data
 
-func (r *postgresRepository) GetBookByID(ctx context.Context, id string) (*model.Book, []model.InventoryDetailDTO, error) {
+func (r *postgresRepository) GetBookByID(ctx context.Context, id string) (*model.BookDetailRes, []model.InventoryDetailDTO, error) {
 	query := `SELECT 
-		b.*, 
-		a.id AS author_id, a.name AS author_name, a.slug AS author_slug, a.bio AS author_bio,
-		c.id AS category_id, c.name AS category_name, c.slug AS category_slug,
-		p.id AS publisher_id, p.name AS publisher_name, p.slug AS publisher_slug, p.website AS publisher_website,
-		COALESCE(inv.total, 0) AS total_stock,
-		COALESCE(inv.details, '[]') AS inventories_json,
-		COALESCE(r.avg_rating, 0)::numeric(2,1) AS rating_average,
-		COALESCE(r.count, 0) AS rating_count
-	FROM books b
-	LEFT JOIN authors a ON b.author_id = a.id
-	LEFT JOIN categories c ON b.category_id = c.id
-	LEFT JOIN publishers p ON b.publisher_id = p.id
-	LEFT JOIN LATERAL (
-		-- FIXED: Use warehouse_inventory with warehouse details
-		SELECT 
-			SUM(wi.quantity - wi.reserved) AS total, 
-			json_agg(json_build_object(
-				'warehouse_id', wi.warehouse_id,
-				'warehouse_name', w.name,
-				'warehouse_code', w.code,
-				'quantity', wi.quantity,
-				'reserved', wi.reserved,
-				'available', wi.quantity - wi.reserved,
-				'alert_threshold', wi.alert_threshold,
-				'is_low_stock', wi.quantity < wi.alert_threshold,
-				'last_restocked_at', wi.last_restocked_at
-			) ORDER BY w.name) AS details
-		FROM warehouse_inventory wi
-		INNER JOIN warehouses w ON wi.warehouse_id = w.id
-		WHERE wi.book_id = b.id
-			AND w.deleted_at IS NULL
-			AND w.is_active = true
-	) inv ON true
-	LEFT JOIN LATERAL (
-		SELECT AVG(rating) AS avg_rating, COUNT(*) AS count
-		FROM reviews
-		WHERE book_id = b.id
-	) r ON true
-	WHERE b.id = $1 AND b.deleted_at IS NULL AND b.is_active = true;
-	`
+    b.id, b.title, b.slug, b.isbn, b.author_id, b.publisher_id, b.category_id,
+    b.price, b.compare_at_price, b.cost_price, b.cover_url, b.description,
+    b.pages, b.language, b.published_year, b.format, b.dimensions,
+    b.weight_grams, b.ebook_file_url, b.ebook_file_size_mb, b.ebook_format,
+    b.is_active, b.is_featured, b.view_count, b.sold_count,
+    b.meta_title, b.meta_description, 
+    COALESCE(b.meta_keywords, ARRAY[]::text[]) AS meta_keywords,
+    b.version, 
+    COALESCE(b.images, ARRAY[]::text[]) AS images,
+    b.created_at, b.updated_at, b.deleted_at,
+    a.name AS author_name, a.slug AS author_slug, a.bio AS author_bio,
+    c.name AS category_name, c.slug AS category_slug,
+    p.name AS publisher_name, p.slug AS publisher_slug, p.website AS publisher_website,
+    COALESCE(inv.total, 0) AS total_stock,
+    COALESCE(inv.details, '[]'::json) AS inventories_json,
+    COALESCE(r.avg_rating, 0)::numeric(2,1) AS rating_average,
+    COALESCE(r.count, 0) AS rating_count
+  FROM books b
+  LEFT JOIN authors a ON b.author_id = a.id
+  LEFT JOIN categories c ON b.category_id = c.id
+  LEFT JOIN publishers p ON b.publisher_id = p.id
+  LEFT JOIN LATERAL (
+    SELECT 
+      SUM(wi.quantity - wi.reserved) AS total, 
+      json_agg(json_build_object(
+        'warehouse_id', wi.warehouse_id,
+        'warehouse_name', w.name,
+        'warehouse_code', w.code,
+        'quantity', wi.quantity,
+        'reserved', wi.reserved,
+        'available', wi.quantity - wi.reserved,
+        'alert_threshold', wi.alert_threshold,
+        'is_low_stock', wi.quantity < wi.alert_threshold,
+        'last_restocked_at', wi.last_restocked_at
+      ) ORDER BY w.name) AS details
+    FROM warehouse_inventory wi
+    INNER JOIN warehouses w ON wi.warehouse_id = w.id
+    WHERE wi.book_id = b.id
+      AND w.deleted_at IS NULL
+      AND w.is_active = true
+  ) inv ON true
+  LEFT JOIN LATERAL (
+    SELECT AVG(rating) AS avg_rating, COUNT(*) AS count
+    FROM reviews
+    WHERE book_id = b.id
+  ) r ON true
+  WHERE b.id = $1 AND b.deleted_at IS NULL AND b.is_active = true`
 
 	row := r.pool.QueryRow(ctx, query, id)
-	var inventoriesJson string
-	var book model.Book // entity struct
 
-	err := row.Scan(&book) // You'll need to scan all fields properly
+	var book model.BookDetailRes
+	var inventoriesJSON []byte // Scan JSON as []byte
+
+	// Scan theo đúng thứ tự cột trong SELECT
+	err := row.Scan(
+		// b.* fields (43 cột từ books table)
+		&book.ID,
+		&book.Title,
+		&book.Slug,
+		&book.ISBN,
+		&book.AuthorID,
+		&book.PublisherID,
+		&book.CategoryID,
+		&book.Price,
+		&book.CompareAtPrice,
+		&book.CostPrice,
+		&book.CoverURL,
+		&book.Description,
+		&book.Pages,
+		&book.Language,
+		&book.PublishedYear,
+		&book.Format,
+		&book.Dimensions,
+		&book.WeightGrams,
+		&book.EbookFileURL,
+		&book.EbookFileSizeMB,
+		&book.EbookFormat,
+		&book.IsActive,
+		&book.IsFeatured,
+		&book.ViewCount,
+		&book.SoldCount,
+		&book.MetaTitle,
+		&book.MetaDescription,
+		&book.MetaKeywords,
+		&book.Version,
+		&book.Images,
+		&book.CreatedAt,
+		&book.UpdatedAt,
+		&book.DeletedAt,
+
+		// Author fields (3 cột)
+		&book.AuthorName,
+		&book.AuthorSlug,
+		&book.AuthorBio,
+
+		// Category fields (2 cột)
+		&book.CategoryName,
+		&book.CategorySlug,
+
+		// Publisher fields (3 cột)
+		&book.PublisherName,
+		&book.PublisherSlug,
+		&book.PublisherWebsite,
+
+		// Inventory aggregate (1 cột)
+		&book.TotalStock,
+		&inventoriesJSON, // Scan JSON vào []byte
+
+		// Rating aggregate (2 cột)
+		&book.RatingAverage,
+		&book.RatingCount,
+	)
+
 	if err == pgx.ErrNoRows {
 		return nil, nil, model.ErrBookNotFound
 	}
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("failed to scan book: %w", err)
 	}
 
+	// Parse inventories JSON
 	var inventories []model.InventoryDetailDTO
-	_ = json.Unmarshal([]byte(inventoriesJson), &inventories)
+	if len(inventoriesJSON) > 0 && string(inventoriesJSON) != "[]" {
+		if err := json.Unmarshal(inventoriesJSON, &inventories); err != nil {
+			return nil, nil, fmt.Errorf("failed to parse inventories: %w", err)
+		}
+	}
 
 	return &book, inventories, nil
 }
@@ -420,8 +488,7 @@ func (r *postgresRepository) UpdateBook(ctx context.Context, book *model.Book) e
 // CreateBook - Insert new book to database
 func (r *postgresRepository) CreateBook(ctx context.Context, book *model.Book) error {
 	query := `
-		INSERT INTO books (
-			id, title, slug, isbn, author_id, publisher_id, category_id,
+		INSERT INTO books ( title, slug, isbn, author_id, publisher_id, category_id,
 			price, compare_at_price, cost_price, cover_url, description,
 			pages, language, published_year, format, dimensions, weight_grams,
 			ebook_file_url, ebook_file_size_mb, ebook_format,
@@ -437,12 +504,11 @@ func (r *postgresRepository) CreateBook(ctx context.Context, book *model.Book) e
 			$22, $23, $24, $25,
 			$26, $27, $28,
 			$29, $30, $31, $32,
-			$33, $34
+			$33
 		)
 	`
 
-	_, err := r.pool.Exec(ctx, query,
-		book.ID, book.Title, book.Slug, book.ISBN, book.AuthorID, book.PublisherID, book.CategoryID,
+	_, err := r.pool.Exec(ctx, query, book.Title, book.Slug, book.ISBN, book.AuthorID, book.PublisherID, book.CategoryID,
 		book.Price, book.CompareAtPrice, book.CostPrice, book.CoverURL, book.Description,
 		book.Pages, book.Language, book.PublishedYear, book.Format, book.Dimensions, book.WeightGrams,
 		book.EbookFileURL, book.EbookFileSizeMB, book.EbookFormat,
@@ -495,7 +561,7 @@ func (r *postgresRepository) IncrementViewCount(ctx context.Context, bookID stri
 
 func (r *postgresRepository) ValidateAuthor(ctx context.Context, authorID string) (bool, error) {
 	var exists bool
-	err := r.pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM authors WHERE id = $1 AND deleted_at IS NULL)", authorID).Scan(&exists)
+	err := r.pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM authors WHERE id = $1)", authorID).Scan(&exists)
 	if err != nil {
 		log.Printf("[BookRepo] Validate author error: %v", err)
 		return false, err
@@ -505,7 +571,7 @@ func (r *postgresRepository) ValidateAuthor(ctx context.Context, authorID string
 
 func (r *postgresRepository) ValidateCategory(ctx context.Context, categoryID string) (bool, error) {
 	var exists bool
-	err := r.pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM categories WHERE id = $1 AND deleted_at IS NULL)", categoryID).Scan(&exists)
+	err := r.pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM categories WHERE id = $1)", categoryID).Scan(&exists)
 	if err != nil {
 		log.Printf("[BookRepo] Validate category error: %v", err)
 		return false, err
@@ -515,7 +581,7 @@ func (r *postgresRepository) ValidateCategory(ctx context.Context, categoryID st
 
 func (r *postgresRepository) ValidatePublisher(ctx context.Context, publisherID string) (bool, error) {
 	var exists bool
-	err := r.pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM publishers WHERE id = $1 AND deleted_at IS NULL)", publisherID).Scan(&exists)
+	err := r.pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM publishers WHERE id = $1)", publisherID).Scan(&exists)
 	if err != nil {
 		log.Printf("[BookRepo] Validate publisher error: %v", err)
 		return false, err
@@ -524,7 +590,7 @@ func (r *postgresRepository) ValidatePublisher(ctx context.Context, publisherID 
 }
 
 func (r *postgresRepository) CheckISBNExists(ctx context.Context, isbn string) (bool, error) {
-	query := `SELECT EXISTS(SELECT 1 FROM books WHERE isbn = $1 AND deleted_at IS NULL)`
+	query := `SELECT EXISTS(SELECT 1 FROM books WHERE isbn = $1)`
 	var exists bool
 	err := r.pool.QueryRow(ctx, query, isbn).Scan(&exists)
 	if err != nil {
@@ -534,7 +600,7 @@ func (r *postgresRepository) CheckISBNExists(ctx context.Context, isbn string) (
 }
 
 func (r *postgresRepository) GetBaseBookByID(ctx context.Context, id string) (*model.BaseBookResponse, error) {
-	query := `SELECT id, title FROM books WHERE id = $1 AND deleted_at IS NULL`
+	query := `SELECT id, title FROM books WHERE id = $1`
 	row := r.pool.QueryRow(ctx, query, id)
 	var book model.BaseBookResponse
 	err := row.Scan(&book.ID, &book.Title)
@@ -549,7 +615,7 @@ func (r *postgresRepository) GenerateUniqueSlug(ctx context.Context, baseSlug st
 	counter := 1
 
 	for {
-		query := `SELECT EXISTS(SELECT 1 FROM books WHERE slug = $1 AND deleted_at IS NULL)`
+		query := `SELECT EXISTS(SELECT 1 FROM books WHERE slug = $1)`
 		var exists bool
 		err := r.pool.QueryRow(ctx, query, slug).Scan(&exists)
 		if err != nil {
@@ -598,7 +664,7 @@ func (r *postgresRepository) CheckBookHasActiveOrders(ctx context.Context, bookI
 			JOIN orders o ON oi.order_id = o.id
 			WHERE oi.book_id = $1 
 				AND o.status IN ('pending', 'processing', 'confirmed', 'paid')
-				AND o.deleted_at IS NULL
+				AND o.cancelled_at IS NULL
 		)
 	`
 

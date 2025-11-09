@@ -1,9 +1,13 @@
 package model
 
 import (
+	"bookstore-backend/internal/shared/utils"
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/shopspring/decimal"
 )
 
 // Helper: Generate cache key from request
@@ -27,23 +31,27 @@ func GenerateCacheKey(prefix string, req ListBooksRequest) string {
 // Helper: Convert Book entity to DTO
 func BookToListDTO(book Book) ListBooksResponse {
 	return ListBooksResponse{
-		ID:    book.ID,
-		Title: book.Title,
-		Slug:  book.Slug,
-		// AuthorName:     book.AuthorName,
-		// PublisherName:  book.PublisherName,
-		Price:          book.Price,
-		CompareAtPrice: book.CompareAtPrice,
-		CoverURL:       book.CoverURL,
-		Language:       book.Language,
-		Format:         book.Format,
-		RatingAverage:  book.RatingAverage,
-		RatingCount:    book.RatingCount,
-		ViewCount:      book.ViewCount,
-		SoldCount:      book.SoldCount,
-		IsFeatured:     book.IsFeatured,
-		// TotalStock:     book.TotalStock,
-		CreatedAt: book.CreatedAt,
+		ID:              book.ID,
+		Title:           book.Title,
+		Slug:            book.Slug,
+		AuthorName:      book.AuthorName,
+		PublisherName:   book.PublisherName,
+		Price:           book.Price,
+		CompareAtPrice:  book.CompareAtPrice,
+		CoverURL:        book.CoverURL,
+		Language:        book.Language,
+		Format:          book.Format,
+		RatingAverage:   book.RatingAverage,
+		RatingCount:     book.RatingCount,
+		ViewCount:       book.ViewCount,
+		SoldCount:       book.SoldCount,
+		IsFeatured:      book.IsFeatured,
+		TotalStock:      book.TotalStock,
+		CreatedAt:       book.CreatedAt,
+		Images:          book.Images,
+		MetaTitle:       book.MetaTitle,
+		MetaDescription: book.MetaDescription,
+		MetaKeywords:    book.MetaKeywords,
 	}
 }
 
@@ -54,4 +62,73 @@ func hashString(s string) uint32 {
 		h = ((h << 5) + h) + uint32(s[i])
 	}
 	return h
+}
+func ToBookDetailResponse(b BookDetailRes, inventories []InventoryDetailDTO, reviews []ReviewDTO) *BookDetailResponse {
+	return &BookDetailResponse{
+		ID:              b.ID,
+		Title:           b.Title,
+		Author:          &AuthorDTO{ID: b.AuthorID, Name: *b.AuthorName},
+		Category:        &CategoryDTO{ID: b.CategoryID, Name: *b.CategoryName},
+		Publisher:       &PublisherDTO{ID: b.PublisherID, Name: *b.PublisherName},
+		Description:     b.Description,
+		Price:           b.Price,
+		Language:        b.Language,
+		Format:          b.Format,
+		CoverURL:        b.CoverURL,
+		PublishedYear:   b.PublishedYear,
+		ViewCount:       b.ViewCount,
+		SoldCount:       b.SoldCount,
+		TotalStock:      b.TotalStock,
+		Inventories:     inventories,
+		Reviews:         reviews,
+		Dimensions:      b.Dimensions,
+		WeightGrams:     b.WeightGrams,
+		EbookFileURL:    b.EbookFileURL,
+		EbookFileSizeMB: b.EbookFileSizeMB,
+		ISBN:            b.ISBN,
+		EbookFormat:     b.EbookFormat,
+		IsActive:        b.IsActive,
+		MetaTitle:       b.MetaTitle,
+		MetaDescription: b.MetaDescription,
+		MetaKeywords:    b.MetaKeywords,
+		Images:          b.Images,
+	}
+}
+
+func ToBookEntity(req CreateBookRequest, finalSlug string) *Book {
+	return &Book{
+		Title:           req.Title,
+		Slug:            finalSlug,
+		ISBN:            req.ISBN,
+		AuthorID:        utils.ParseStringToUUID(req.AuthorID),
+		PublisherID:     utils.ParseStringToUUID(req.PublisherID),
+		CategoryID:      utils.ParseStringToUUID(req.CategoryID),
+		Price:           decimal.NewFromFloat(req.Price),
+		CompareAtPrice:  utils.ParseFloatToDecimal(req.CompareAtPrice),
+		CostPrice:       utils.ParseFloatToDecimal(req.CostPrice),
+		CoverURL:        req.CoverURL,
+		Description:     req.Description,
+		Pages:           req.Pages,
+		Language:        req.Language,
+		PublishedYear:   req.PublishedYear,
+		Format:          req.Format,
+		Dimensions:      req.Dimensions,
+		WeightGrams:     req.WeightGrams,
+		EbookFileURL:    req.EbookFileURL,
+		EbookFileSizeMB: utils.ParseFloatToDecimal(req.EbookFileSizeMb),
+		EbookFormat:     req.EbookFormat,
+		IsActive:        req.IsActive,
+		IsFeatured:      req.IsFeatured,
+		MetaTitle:       req.MetaTitle,
+		MetaDescription: req.MetaDescription,
+		MetaKeywords:    req.MetaKeywords,
+		Images:          req.Images,
+		ViewCount:       0,
+		SoldCount:       0,
+		RatingAverage:   0.0,
+		RatingCount:     0,
+		Version:         0,
+		CreatedAt:       time.Now(),
+		UpdatedAt:       time.Now(),
+	}
 }
