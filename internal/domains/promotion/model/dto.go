@@ -1,6 +1,8 @@
 package model
 
 import (
+	"errors"
+	"regexp"
 	"strings"
 	"time"
 
@@ -75,20 +77,20 @@ func (c CartItem) Validate() error {
 
 // CreatePromotionRequest - Request để tạo promotion mới
 type CreatePromotionRequest struct {
-	Code                  string           `json:"code"`
-	Name                  string           `json:"name"`
-	Description           *string          `json:"description"`
-	DiscountType          string           `json:"discount_type"`
-	DiscountValue         decimal.Decimal  `json:"discount_value"`
-	MaxDiscountAmount     *decimal.Decimal `json:"max_discount_amount"`
-	MinOrderAmount        decimal.Decimal  `json:"min_order_amount"`
-	ApplicableCategoryIDs []uuid.UUID      `json:"applicable_category_ids"`
-	FirstOrderOnly        bool             `json:"first_order_only"`
-	MaxUses               *int             `json:"max_uses"`
-	MaxUsesPerUser        int              `json:"max_uses_per_user"`
-	StartsAt              string           `json:"starts_at"` // RFC3339 format
-	ExpiresAt             string           `json:"expires_at"`
-	IsActive              bool             `json:"is_active"`
+	Code                  string      `json:"code"`
+	Name                  string      `json:"name"`
+	Description           *string     `json:"description"`
+	DiscountType          string      `json:"discount_type"`
+	DiscountValue         float64     `json:"discount_value"`
+	MaxDiscountAmount     *float64    `json:"max_discount_amount"`
+	MinOrderAmount        float64     `json:"min_order_amount"`
+	ApplicableCategoryIDs []uuid.UUID `json:"applicable_category_ids"`
+	FirstOrderOnly        bool        `json:"first_order_only"`
+	MaxUses               *int        `json:"max_uses"`
+	MaxUsesPerUser        int         `json:"max_uses_per_user"`
+	StartsAt              string      `json:"starts_at"` // RFC3339 format
+	ExpiresAt             string      `json:"expires_at"`
+	IsActive              bool        `json:"is_active"`
 }
 
 // Validate validates CreatePromotionRequest
@@ -97,10 +99,16 @@ func (r CreatePromotionRequest) Validate() error {
 		validation.Field(&r.Code,
 			validation.Required.Error("Mã khuyến mãi bắt buộc"),
 			validation.Length(3, 50).Error("Mã khuyến mãi phải từ 3-50 ký tự"),
+			validation.Match(regexp.MustCompile("^[A-Z0-9]+$")).Error("Mã chỉ được chứa chữ hoa và số"),
 		),
 		validation.Field(&r.Name,
 			validation.Required.Error("Tên khuyến mãi bắt buộc"),
-			validation.Length(1, 200).Error("Tên phải từ 1-200 ký tự"),
+			validation.Length(3, 200).Error("Tên phải từ 3-200 ký tự"),
+		),
+		validation.Field(&r.Description,
+			validation.When(r.Description != nil,
+				validation.Length(0, 1000).Error("Mô tả không được vượt quá 1000 ký tự"),
+			),
 		),
 		validation.Field(&r.DiscountType,
 			validation.Required.Error("Loại giảm giá bắt buộc"),
@@ -108,11 +116,21 @@ func (r CreatePromotionRequest) Validate() error {
 		),
 		validation.Field(&r.DiscountValue,
 			validation.Required.Error("Giá trị giảm giá bắt buộc"),
-			validation.Min(decimal.NewFromFloat(0.01)).Error("Giá trị giảm giá phải > 0"),
+			validation.Min(0.01).Error("Giá trị giảm giá phải > 0"),
 			validation.By(r.validateDiscountValue),
 		),
+		validation.Field(&r.MaxDiscountAmount,
+			validation.When(r.MaxDiscountAmount != nil,
+				validation.Min(0.01).Error("Giá trị giảm tối đa phải > 0"),
+			),
+		),
 		validation.Field(&r.MinOrderAmount,
-			validation.Min(decimal.Zero).Error("Giá trị đơn hàng tối thiểu phải >= 0"),
+			validation.Min(0.0).Error("Giá trị đơn hàng tối thiểu phải >= 0"),
+		),
+		validation.Field(&r.MaxUses,
+			validation.When(r.MaxUses != nil,
+				validation.Min(1).Error("Số lượt sử dụng tối đa phải >= 1"),
+			),
 		),
 		validation.Field(&r.MaxUsesPerUser,
 			validation.Min(1).Error("Số lượt sử dụng/user phải >= 1"),
@@ -124,18 +142,37 @@ func (r CreatePromotionRequest) Validate() error {
 		validation.Field(&r.ExpiresAt,
 			validation.Required.Error("Thời gian kết thúc bắt buộc"),
 			validation.Date("2006-01-02T15:04:05Z07:00").Error("Định dạng thời gian không hợp lệ (RFC3339)"),
+			validation.By(r.validateDateRange),
 		),
 	)
 }
 
-// validateDiscountValue kiểm tra discount value theo discount type
+// validateDiscountValue kiểm tra percentage không vượt 100
 func (r CreatePromotionRequest) validateDiscountValue(value interface{}) error {
 	if r.DiscountType == "percentage" {
-		discountVal := value.(decimal.Decimal)
-		if discountVal.GreaterThan(decimal.NewFromInt(100)) {
-			return validation.NewError("discount_value_invalid", "Giảm giá theo % không được vượt quá 100")
+		if r.DiscountValue > 100 {
+			return errors.New("giảm giá phần trăm không được vượt quá 100")
 		}
 	}
+	return nil
+}
+
+// validateDateRange kiểm tra expires_at phải sau starts_at
+func (r CreatePromotionRequest) validateDateRange(value interface{}) error {
+	startsAt, err := time.Parse(time.RFC3339, r.StartsAt)
+	if err != nil {
+		return nil // Lỗi format đã được validate ở Field StartsAt
+	}
+
+	expiresAt, err := time.Parse(time.RFC3339, r.ExpiresAt)
+	if err != nil {
+		return nil // Lỗi format đã được validate ở Field ExpiresAt
+	}
+
+	if expiresAt.Before(startsAt) || expiresAt.Equal(startsAt) {
+		return errors.New("thời gian kết thúc phải sau thời gian bắt đầu")
+	}
+
 	return nil
 }
 

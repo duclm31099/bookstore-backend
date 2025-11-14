@@ -11,6 +11,7 @@ import (
 	"bookstore-backend/internal/domains/address/model"
 	"bookstore-backend/internal/domains/address/service"
 	"bookstore-backend/internal/shared/response"
+	"bookstore-backend/pkg/logger"
 )
 
 type AddressHandler struct {
@@ -50,6 +51,9 @@ func (h *AddressHandler) CreateAddress(c *gin.Context) {
 // GetAddress handles GET /addresses/:id
 func (h *AddressHandler) GetAddressById(c *gin.Context) {
 	userID, err := getUserContext(c)
+	logger.Info("userID", map[string]interface{}{
+		"userID": userID,
+	})
 	if err != nil {
 		response.Error(c, http.StatusUnauthorized, err.Error(), nil)
 		return // ← MUST return here
@@ -70,6 +74,9 @@ func (h *AddressHandler) GetAddressById(c *gin.Context) {
 // ListUserAddresses handles GET /addresses
 func (h *AddressHandler) ListUserAddresses(c *gin.Context) {
 	userID, err := getUserContext(c)
+	logger.Info("userID", map[string]interface{}{
+		"userID": userID,
+	})
 	if err != nil {
 		response.Error(c, http.StatusUnauthorized, err.Error(), nil)
 		return // ← MUST return here

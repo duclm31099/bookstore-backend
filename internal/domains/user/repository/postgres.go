@@ -50,11 +50,11 @@ func NewPostgresRepository(pool *pgxpool.Pool, cache cache.Cache) user.Repositor
 
 // Create tạo user mới trong database
 // Context: cho phép cancel operation, set timeout, pass metadata qua request chain
-func (r *postgresRepository) Create(ctx context.Context, u *user.User) error {
+func (r *postgresRepository) Create(ctx context.Context, u *user.User) (uuid.UUID, error) {
 	// SQL query - sử dụng $1, $2, ... placeholders để tránh SQL injection
 	query := `
 		INSERT INTO users (
-			id, email, password_hash, full_name, phone, role,
+			 email, password_hash, full_name, phone, role,
 			is_active, points, is_verified, 
 			verification_token, verification_sent_at,
 			verification_token_expires_at, created_at, updated_at
@@ -62,15 +62,16 @@ func (r *postgresRepository) Create(ctx context.Context, u *user.User) error {
 			$1, $2, $3, $4, $5, $6,
 			$7, $8, $9,
 			$10, $11,
-			$12, $13, $14
+			$12, $13
 		)
+		RETURNING id
 	`
 
 	// ExecContext: thực thi query với context
 	// - Context cho phép cancel query khi timeout hoặc user cancel request
 	// - Returns: sql.Result (affected rows, last insert id) và error
-	_, err := r.pool.Exec(ctx, query,
-		u.ID,
+	var userID uuid.UUID
+	err := r.pool.QueryRow(ctx, query,
 		u.Email,
 		u.PasswordHash,
 		u.FullName,
@@ -84,7 +85,7 @@ func (r *postgresRepository) Create(ctx context.Context, u *user.User) error {
 		u.VerificationTokenExpiresAt,
 		u.CreatedAt,
 		u.UpdatedAt,
-	)
+	).Scan(&userID)
 
 	if err != nil {
 		// Type assertion: convert error sang *pq.Error để kiểm tra PostgreSQL error code
@@ -94,16 +95,16 @@ func (r *postgresRepository) Create(ctx context.Context, u *user.User) error {
 			// Mapping PostgreSQL error thành domain error
 			if pqErr.Code == "23505" {
 				if strings.Contains(pqErr.Message, "email") {
-					return user.ErrEmailAlreadyExists
+					return uuid.Nil, user.ErrEmailAlreadyExists
 				}
 			}
 		}
 		// Wrap error với context để debugging dễ hơn
 		// fmt.Errorf với %w verb cho phép unwrap error chain
-		return fmt.Errorf("create user: %w", err)
+		return uuid.Nil, err
 	}
 
-	return nil
+	return userID, nil
 }
 
 // FindByID tìm user theo UUID với Redis caching
@@ -478,7 +479,7 @@ func (r *postgresRepository) UpdateLastLogin(ctx context.Context, userID uuid.UU
 	query := `
 		UPDATE users
 		SET last_login_at = NOW()
-		WHERE id = $1 AND deleted_at IS NULL
+		WHERE id = $1
 	`
 
 	// Ignore result - không cần check RowsAffected

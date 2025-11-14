@@ -11,6 +11,7 @@ import (
 	"bookstore-backend/internal/domains/user"
 	"bookstore-backend/internal/shared/middleware"
 	"bookstore-backend/internal/shared/response"
+	"bookstore-backend/pkg/jwt"
 	"bookstore-backend/pkg/logger"
 )
 
@@ -19,14 +20,21 @@ import (
 type UserHandler struct {
 	service     user.Service // Business logic layer
 	cartService service.ServiceInterface
+	jwtManager  *jwt.Manager
 }
 
 // NewUserHandler tạo handler instance
 // Constructor injection - nhận service qua parameter
-func NewUserHandler(service user.Service, cartService service.ServiceInterface) *UserHandler {
+func NewUserHandler(
+	service user.Service,
+	cartService service.ServiceInterface,
+	jwtManager *jwt.Manager,
+
+) *UserHandler {
 	return &UserHandler{
 		service:     service,
 		cartService: cartService,
+		jwtManager:  jwtManager,
 	}
 }
 
@@ -48,7 +56,9 @@ func (h *UserHandler) Register(c *gin.Context) {
 	if err := h.bindAndValidate(c, &req); err != nil {
 		return
 	}
-
+	logger.Info("bind and validate", map[string]interface{}{
+		"req": req,
+	})
 	// STEP 3: CALL SERVICE LAYER
 	// Service xử lý business logic: hash password, check duplicates, save to DB
 	// Context từ request: cho phép cancel operation khi client disconnect
@@ -64,6 +74,7 @@ func (h *UserHandler) Register(c *gin.Context) {
 	// 201 Created: resource mới được tạo thành công
 	// Location header: URL của resource mới (optional)
 	c.Header("Location", "/api/v1/users/"+userDTO.ID.String())
+
 	response.Success(c, http.StatusCreated, "User registered successfully. Please check your email to verify.", userDTO)
 }
 
@@ -131,7 +142,9 @@ func (h *UserHandler) Login(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, "Invalid request body", err)
 		return
 	}
-
+	logger.Info("get request", map[string]interface{}{
+		"req": req,
+	})
 	// STEP 2: VALIDATE
 	if err := req.Validate(); err != nil {
 		response.Error(c, http.StatusBadRequest, "Validation failed", err)
@@ -141,6 +154,10 @@ func (h *UserHandler) Login(c *gin.Context) {
 	// STEP 3: AUTHENTICATE
 	// Service verify password, generate JWT tokens
 	res, err := h.service.Login(c.Request.Context(), req)
+	logger.Info("login request", map[string]interface{}{
+		"res":   res,
+		"error": err,
+	})
 	if err != nil {
 		h.handleError(c, err)
 		return
@@ -160,10 +177,18 @@ func (h *UserHandler) Login(c *gin.Context) {
 	res.RefreshToken = "" // ← Đừng trả về body nữa
 
 	sessionID := middleware.GetSessionID(c)
+	logger.Info("out of if block", map[string]interface{}{
+		"sessionID": sessionID,
+	})
 	if sessionID != "" {
+		logger.Info("merge", map[string]interface{}{
+			"sessionID": sessionID,
+		})
 		// User had anonymous cart before login
-		_ = h.cartService.MergeCart(c.Request.Context(), sessionID, res.User.ID)
-
+		err = h.cartService.MergeCart(c.Request.Context(), sessionID, res.User.ID)
+		logger.Info("merge cart fail", map[string]interface{}{
+			"err": err,
+		})
 		// Clear session cookie (no longer needed)
 		c.SetCookie(
 			middleware.SessionCookieName,
@@ -566,14 +591,6 @@ func (h *UserHandler) bindAndValidate(c *gin.Context, req interface{}) error {
 	if err := c.ShouldBindJSON(req); err != nil {
 		response.Error(c, http.StatusBadRequest, "Invalid request body", err)
 		return err
-	}
-
-	// Type assert để check có Validate method
-	if v, ok := req.(interface{ Validate() error }); ok {
-		if err := v.Validate(); err != nil {
-			response.Error(c, http.StatusBadRequest, "Validation failed", err)
-			return err
-		}
 	}
 
 	return nil

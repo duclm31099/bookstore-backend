@@ -298,3 +298,16 @@ func (r *ResendVerificationRequest) isValidEmail(email string) error {
 		validation.Field(&r.Email, validation.Required, is.Email),
 	)
 }
+
+// internal/domains/user/job_payload.go
+type VerifyEmailPayload struct {
+	UserID string `json:"user_id"`
+	Email  string `json:"email"`
+	Token  string `json:"token"`
+}
+
+type ResetPasswordPayload struct {
+	UserID     string `json:"user_id"`
+	Email      string `json:"email"`
+	ResetToken string `json:"reset_token"`
+}

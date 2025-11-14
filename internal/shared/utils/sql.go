@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"os"
 	"reflect"
 	"strings"
 )
@@ -24,4 +25,11 @@ func StructArgs(v any, fields ...string) []any {
 		args[i] = rv.FieldByName(f).Interface()
 	}
 	return args
+}
+func GetEnvVariable(key, defaultValue string) string {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	return value
 }

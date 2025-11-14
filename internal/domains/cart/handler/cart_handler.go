@@ -10,6 +10,7 @@ import (
 	"bookstore-backend/internal/shared/middleware"
 	cartMiddleware "bookstore-backend/internal/shared/middleware"
 	"bookstore-backend/internal/shared/response"
+	"bookstore-backend/pkg/logger"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
@@ -296,21 +297,17 @@ func (h *Handler) ValidateCart(c *gin.Context) {
 
 // domains/cart/handler.go
 
-// ApplyPromoCode handles POST /me/cart/promo
+// ApplyPromoCode handles POST /cart/apply-promotion
 // @Summary Apply promo code
 // @Description Applies promo code and calculates discount
-// @Tags Cart
-// @Accept json
-// @Produce json
-// @Param request body ApplyPromoRequest true "Promo Request"
-// @Success 200 {object} SuccessResponse{data=ApplyPromoResponse}
-// @Failure 400 {object} ErrorResponse
-// @Failure 404 {object} ErrorResponse
-// @Router /me/cart/promo [post]
 func (h *Handler) ApplyPromoCode(c *gin.Context) {
 	userId, exist := c.Get("user_id")
-	if !exist {
-		response.Error(c, http.StatusUnauthorized, "Invalid user id", nil)
+	logger.Info("get user id", map[string]interface{}{
+		"userId": userId,
+		"exist":  exist,
+	})
+	if !exist || userId == nil {
+		response.Error(c, http.StatusUnauthorized, "Invalid user id - must login to use promotion", nil)
 		return
 	}
 

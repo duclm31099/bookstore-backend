@@ -166,7 +166,7 @@ func NewInvalidUserID(id string) *AddressError {
 func NewInvalidPhone(phone string) *AddressError {
 	return &AddressError{
 		Code:    "INVALID_PHONE",
-		Message: fmt.Sprintf("Phone format is invalid: %s (expected: 0xxx-xxx-xxx or +84-xxx-xxx-xxx)", phone),
+		Message: fmt.Sprintf("Phone format is invalid: %s", phone),
 	}
 }
 

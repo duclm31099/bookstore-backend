@@ -142,8 +142,9 @@ func (r *postgresRepository) UpdateExpiration(ctx context.Context, cartID uuid.U
 // INSERT or UPDATE if item already exists
 func (r *postgresRepository) AddItem(ctx context.Context, item *model.CartItem) error {
 	query := `
-		INSERT INTO cart_items (id, cart_id, book_id, quantity, price, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO cart_items ( 
+		cart_id, book_id, quantity, price, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (cart_id, book_id) DO UPDATE SET
 			quantity = EXCLUDED.quantity,
 			price = EXCLUDED.price,
@@ -151,7 +152,6 @@ func (r *postgresRepository) AddItem(ctx context.Context, item *model.CartItem) 
 	`
 
 	_, err := r.pool.Exec(ctx, query,
-		item.ID,
 		item.CartID,
 		item.BookID,
 		item.Quantity,

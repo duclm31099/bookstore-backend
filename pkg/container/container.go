@@ -77,6 +77,8 @@ import (
 	reviewHandler "bookstore-backend/internal/domains/review/handler"
 	reviewRepo "bookstore-backend/internal/domains/review/repository"
 	reviewService "bookstore-backend/internal/domains/review/service"
+
+	"github.com/hibiken/asynq"
 )
 
 type Container struct {
@@ -86,6 +88,7 @@ type Container struct {
 	JWTManager   *jwt.Manager
 	VNPayGateway gateway.VNPayGateway
 	MomoGateway  gateway.MomoGateway
+	AsynqClient  *asynq.Client
 
 	// ========================================
 	// REPOSITORY LAYER (DATA ACCESS)
@@ -154,8 +157,13 @@ type Container struct {
 //
 // Nếu thứ tự sai → panic (nil pointer dereference)
 func NewContainer() (*Container, error) {
-
+	redisOpt := asynq.RedisClientOpt{
+		Addr:     "localhost:6379", // có thể đọc từ config/env
+		Password: "redispassword",  // nếu có password redis
+		DB:       0,                // db index
+	}
 	c := &Container{}
+	c.AsynqClient = asynq.NewClient(redisOpt)
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -250,6 +258,7 @@ func (c *Container) initServices() error {
 	c.UserService = userService.NewUserService(
 		c.UserRepo,   // Inject repository
 		c.JWTManager, // Inject JWT secret từ config
+		c.AsynqClient,
 	)
 
 	c.CategoryService = categoryService.NewCategoryService(c.CategoryRepo)
@@ -258,7 +267,10 @@ func (c *Container) initServices() error {
 	c.AddressService = addressService.NewAddressService(c.AddressRepo)
 	c.BookService = bookService.NewService(c.BookRepo, c.Cache)
 	c.InventoryService = inventoryService.NewService(c.InventoryRepo)
-	c.CartService = cartService.NewCartService(c.CartRepo, c.InventoryService, c.AddressService, c.InventoryRepo)
+	c.CartService = cartService.NewCartService(
+		c.CartRepo, c.InventoryService,
+		c.AddressService, c.InventoryRepo, c.BookService,
+	)
 	c.PromotionService = promotionService.NewPromotionService(c.PromotionRepo, c.DB.Pool, c.CartService)
 	c.OrderSerivce = orderService.NewOrderService(c.OrderRepo, nil, c.InventoryRepo, c.AddressRepo, c.CartRepo, c.PromotionRepo, c.InventoryService)
 	c.PaymentService = paymentService.NewPaymentService(
@@ -275,7 +287,7 @@ func (c *Container) initServices() error {
 
 // initHandlers khởi tạo tất cả HTTP handlers
 func (c *Container) initHandlers() error {
-	c.UserHandler = userHandler.NewUserHandler(c.UserService, c.CartService)
+	c.UserHandler = userHandler.NewUserHandler(c.UserService, c.CartService, c.JWTManager)
 	c.CategoryHandler = categoryHandler.NewCategoryHandler(c.CategoryService)
 	c.AuthorHandler = authorHandler.NewAuthorHandler(c.AuthorService)
 	c.PublisherHandler = publisherHandler.NewPublisherHandler(c.PublisherService)
@@ -300,7 +312,13 @@ func (c *Container) Cleanup() {
 		c.DB.Pool.Close()
 		log.Println("✅ Database connections closed")
 	}
-
+	if c.AsynqClient != nil {
+		if err := c.AsynqClient.Close(); err != nil {
+			log.Printf("⚠️  AsynqClient close failed: %v", err)
+		} else {
+			log.Println("✅ Asynq client closed")
+		}
+	}
 	// Close Redis connections
 	if c.Cache != nil {
 		if rc, ok := c.Cache.(*infraCache.RedisCache); ok {

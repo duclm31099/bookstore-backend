@@ -1,45 +1,62 @@
-# Bookstore Backend
+# 🐳 Bước 1: Build Docker images
+make docker-build
 
-This is the backend for the Bookstore application.
 
-## Setup
+# 🚀 Bước 2: Start tất cả services
+make docker-up
 
-1. Install dependencies:
-   ```bash
-   go mod tidy
-   ```
 
-2. Run the API server:
-   ```bash
-   go run cmd/api/main.go
-   ```
 
-# Start all services
-docker compose up -d
-
-# Check status
+# 📊 Bước 3: Kiểm tra tất cả services đang chạy
 docker compose ps
 
-# View logs
+# Xem logs real-time (tất cả services):
 docker compose logs -f
 
-# View logs của 1 service cụ thể
-docker compose logs -f postgres
 
-# Stop all services
-docker compose down
+# Xem log Worker
 
-# Stop và xóa volumes (reset everything)
-docker compose down -v
+docker compose logs -f --tail=100 api      # API logs
+docker compose logs -f worker   # Worker logs
+docker compose logs -f postgres # Database logs
 
-# Restart một service
-docker compose restart postgres
 
-# Test connect từ command line
-psql -h localhost -p 5439 -U bookstore -d bookstore_dev
-# Password: secret
 
-docker compose ps
+# Test 4: Kiểm tra email trong MailHog
+Mở trình duyệt: http://localhost:8025
 
-# Nếu postgres không healthy:
-docker compose logs postgres
+# Test 5: Kiểm tra Asynq queue
+Mở trình duyệt: http://localhost:8081
+
+
+| Service       | URL                   | Mô tả                     |
+| ------------- | --------------------- | ------------------------- |
+| API Server    | http://localhost:8080 | Backend API endpoints     |
+| MailHog UI    | http://localhost:8025 | Xem email test đã gửi     |
+| Asynqmon      | http://localhost:8081 | Monitor background jobs   |
+| MinIO Console | http://localhost:9001 | Object storage management |
+
+
+
+
+# 🛑 Dừng tất cả services
+make docker-down
+# Hoặc: docker compose down
+
+
+# 🔄 Restart toàn bộ hệ thống
+make docker-restart
+
+
+# 1. Worker có chạy không?
+docker compose ps | grep worker
+
+# 2. Xem log worker
+docker compose logs worker
+
+# 3. Kiểm tra Redis connection
+docker exec -it bookstore_worker ping redis
+
+# 4. Kiểm tra queue stats
+docker exec -it bookstore_redis redis-cli
+> KEYS asynq:*

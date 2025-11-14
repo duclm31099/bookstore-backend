@@ -19,7 +19,7 @@ type Repository interface {
 
 	// Create tạo user mới
 	// Returns: ErrEmailAlreadyExists nếu email đã tồn tại
-	Create(ctx context.Context, user *User) error
+	Create(ctx context.Context, user *User) (uuid.UUID, error)
 
 	// FindByID tìm user theo ID
 	// Returns: ErrUserNotFound nếu không tìm thấy hoặc đã bị xóa (soft delete)

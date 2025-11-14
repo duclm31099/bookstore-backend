@@ -266,27 +266,6 @@ func (s *promotionService) UpdatePromotion(
 		return nil, err
 	}
 
-	// Step 2: Validate update restrictions dựa vào current_uses
-	if existing.CurrentUses > 0 {
-		// Rule: Không được thay đổi các trường critical
-		restrictedFields := []string{}
-
-		// Check code (nếu có trong request và khác với hiện tại)
-		// Note: Code update không được support trong UpdatePromotionRequest
-		// Nếu support: Phải check
-
-		// Check discount_type và discount_value
-		// Note: Cũng không support trong UpdatePromotionRequest để đơn giản
-		// Trong production: Nếu support, phải validate
-
-		// Check applicable_category_ids
-		// Tương tự, không support update field này nếu đã có usage
-
-		if len(restrictedFields) > 0 {
-			return nil, errors.New("Không thể thay đổi các trường quan trọng khi promotion đã được sử dụng")
-		}
-	}
-
 	// Step 3: Apply updates (chỉ update các field được gửi lên)
 	updated := *existing // Copy
 	hasChanges := false
@@ -636,16 +615,16 @@ func (s *promotionService) CreatePromotion(ctx context.Context, req *model.Creat
 			HTTPStatus: 400,
 		}
 	}
-
+	max_discount_amount := decimal.NewFromFloat(*req.MaxDiscountAmount)
 	// Build promotion model
 	promo := &model.Promotion{
 		Code:                  req.Code,
 		Name:                  req.Name,
 		Description:           req.Description,
 		DiscountType:          model.DiscountType(req.DiscountType),
-		DiscountValue:         req.DiscountValue,
-		MaxDiscountAmount:     req.MaxDiscountAmount,
-		MinOrderAmount:        req.MinOrderAmount,
+		DiscountValue:         decimal.NewFromFloat(req.DiscountValue),
+		MaxDiscountAmount:     &max_discount_amount,
+		MinOrderAmount:        decimal.NewFromFloat(req.MinOrderAmount),
 		ApplicableCategoryIDs: req.ApplicableCategoryIDs,
 		FirstOrderOnly:        req.FirstOrderOnly,
 		MaxUses:               req.MaxUses,

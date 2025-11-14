@@ -228,13 +228,12 @@ func ValidatePhoneVietnam(phone string) error {
 		return NewInvalidPhone("")
 	}
 
-	// Pattern: 0xxx-xxx-xxx (10 digits with dashes) or +84-xxx-xxx-xxx
-	vietnamPhoneRegex := regexp.MustCompile(`^(0\d{3}-\d{3}-\d{4}|\+84-\d{3}-\d{3}-\d{4})$`)
-
-	if !vietnamPhoneRegex.MatchString(phone) {
-		return NewInvalidPhone(phone)
+	if len(phone) < 10 {
+		return NewInvalidPhone("")
 	}
-
+	if len(phone) > 12 {
+		return NewInvalidPhone("")
+	}
 	return nil
 }
 

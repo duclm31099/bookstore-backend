@@ -379,14 +379,14 @@ func SetupRouter(c *container.Container) *gin.Engine {
 		promotion.POST("/validate", c.PublicProHandler.ValidatePromotion) // POST /v1/promotions/validate
 		promotion.GET("", c.PublicProHandler.ListActivePromotions)        // GET /v1/promotions
 
-		promotion.POST("/admin", c.AdminProHandler.CreatePromotion)                   // POST /v1/admin/promotions
-		promotion.GET("/admin/list-promotion", c.AdminProHandler.ListPromotions)      // GET /v1/admin/promotions
-		promotion.GET("/admin/:id", c.AdminProHandler.GetPromotionByID)               // GET /v1/admin/promotions/:id
-		promotion.PUT("/admin/:id", c.AdminProHandler.UpdatePromotion)                // PUT /v1/admin/promotions/:id
-		promotion.PATCH("/admin/:id/status", c.AdminProHandler.UpdatePromotionStatus) // PATCH /v1/admin/promotions/:id/status
-		promotion.DELETE("/admin/:id", c.AdminProHandler.DeletePromotion)             // DELETE /v1/admin/promotions/:id
-		promotion.GET("/admin/:id/usage", c.AdminProHandler.GetUsageHistory)          // GET /v1/admin/promotions/:id/usage
-		promotion.POST("/admin/:id/export", c.AdminProHandler.ExportUsageReport)      // POST /v1/admin/promotions/:id/export
+		promotion.POST("/create", c.AdminProHandler.CreatePromotion)            // POST /v1/admin/promotions
+		promotion.GET("/list-promotion", c.AdminProHandler.ListPromotions)      // GET /v1/admin/promotions
+		promotion.GET("/:id", c.AdminProHandler.GetPromotionByID)               // GET /v1/admin/promotions/:id
+		promotion.PUT("/:id", c.AdminProHandler.UpdatePromotion)                // PUT /v1/admin/promotions/:id
+		promotion.PATCH("/:id/status", c.AdminProHandler.UpdatePromotionStatus) // PATCH /v1/admin/promotions/:id/status
+		promotion.DELETE("/:id", c.AdminProHandler.DeletePromotion)             // DELETE /v1/admin/promotions/:id
+		promotion.GET("/:id/usage", c.AdminProHandler.GetUsageHistory)          // GET /v1/admin/promotions/:id/usage
+		promotion.POST("/:id/export", c.AdminProHandler.ExportUsageReport)      // POST /v1/admin/promotions/:id/export
 
 		// ========================================
 		// 📦 ORDER ROUTES (USER - PROTECTED)

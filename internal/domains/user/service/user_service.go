@@ -5,11 +5,13 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hibiken/asynq"
 	"golang.org/x/crypto/bcrypt"
 
 	"bookstore-backend/internal/domains/user"
@@ -20,16 +22,18 @@ import (
 
 // userService implement user.Service interface
 type userService struct {
-	repo       user.Repository // Data access layer
-	jwtManager *jwt.Manager    // JWT signing secret
+	repo        user.Repository // Data access layer
+	jwtManager  *jwt.Manager    // JWT signing secret
+	asynqClient *asynq.Client
 }
 
 // NewUserService tạo service instance
 // Inject repository qua constructor (Dependency Injection)
-func NewUserService(repo user.Repository, jwtManager *jwt.Manager) user.Service {
+func NewUserService(repo user.Repository, jwtManager *jwt.Manager, asynqClient *asynq.Client) user.Service {
 	return &userService{
-		repo:       repo,
-		jwtManager: jwtManager,
+		repo:        repo,
+		jwtManager:  jwtManager,
+		asynqClient: asynqClient, // Thêm dòng này!
 	}
 }
 
@@ -73,7 +77,6 @@ func (s *userService) Register(ctx context.Context, req user.RegisterRequest) (*
 	// 5. CREATE USER ENTITY
 	now := time.Now()
 	newUser := &user.User{
-		ID:                         uuid.New(),
 		Email:                      req.Email,
 		PasswordHash:               string(passwordHash),
 		FullName:                   req.FullName,
@@ -90,13 +93,21 @@ func (s *userService) Register(ctx context.Context, req user.RegisterRequest) (*
 	}
 
 	// 6. PERSIST TO DATABASE
-	if err := s.repo.Create(ctx, newUser); err != nil {
+	id, err := s.repo.Create(ctx, newUser)
+	if err != nil {
 		return nil, fmt.Errorf("create user: %w", err)
 	}
-
+	newUser.ID = id
 	// 7. SEND VERIFICATION EMAIL (Async)
-	// TODO: Queue email job với Asynq
-	// go s.emailService.SendVerificationEmail(newUser.Email, verificationToken)
+	// Gửi job qua Asynq
+	payload := user.VerifyEmailPayload{
+		UserID: id.String(),
+		Email:  req.Email,
+		Token:  verificationTokenHash,
+	}
+	b, _ := json.Marshal(payload)
+	task := asynq.NewTask("email:verification", b)
+	s.asynqClient.Enqueue(task, asynq.Queue("high"), asynq.Timeout(30*time.Second), asynq.MaxRetry(3))
 
 	// 8. RETURN DTO (không expose sensitive data)
 	dto := newUser.ToDTO()
@@ -136,7 +147,6 @@ func (s *userService) Login(ctx context.Context, req user.LoginRequest) (*user.L
 	}
 
 	// 5. GENERATE JWT TOKENS
-	// TODO: Implement JWT helper
 	accessToken, err := s.generateAccessToken(u)
 	if err != nil {
 		return nil, fmt.Errorf("generate access token: %w", err)
@@ -149,9 +159,9 @@ func (s *userService) Login(ctx context.Context, req user.LoginRequest) (*user.L
 
 	// 6. UPDATE LAST LOGIN TIME (fire-and-forget)
 	// Không quan trọng lắm, nếu fail thì bỏ qua
-	go func() {
-		_ = s.repo.UpdateLastLogin(context.Background(), u.ID)
-	}()
+	// go func() {
+	// 	_ = s.repo.UpdateLastLogin(context.Background(), u.ID)
+	// }()
 
 	// 7. RETURN LOGIN RESPONSE
 	dto := u.ToDTO()
@@ -184,9 +194,9 @@ func (s *userService) RefreshToken(ctx context.Context, refreshTokenStr string) 
 	if !u.IsActive {
 		return nil, user.ErrUserInactive
 	}
-
 	// 4. Generate new tokens
 	accessToken, err := s.generateAccessToken(u)
+
 	if err != nil {
 		return nil, fmt.Errorf("generate access token: %w", err)
 	}
@@ -227,7 +237,9 @@ func (s *userService) VerifyEmail(ctx context.Context, token string) error {
 	// 4. SEND WELCOME EMAIL (Async)
 	// TODO: Queue welcome email
 	// go s.emailService.SendWelcomeEmail(u.Email, u.FullName)
-
+	logger.Info("Verify email done", map[string]interface{}{
+		"MarkAsVerified": true,
+	})
 	return nil
 }
 
@@ -248,8 +260,8 @@ func (s *userService) ForgotPassword(ctx context.Context, req user.ForgotPasswor
 		return fmt.Errorf("generate token: %w", err)
 	}
 
-	// 4. SET TOKEN EXPIRY (60 minutes)
-	expiresAt := time.Now().Add(60 * time.Minute)
+	// 4. SET TOKEN EXPIRY (24 hours)
+	expiresAt := time.Now().Add(24 * 60 * time.Minute)
 	u.ResetToken = &resetToken
 	u.ResetTokenExpiresAt = &expiresAt
 
@@ -259,8 +271,14 @@ func (s *userService) ForgotPassword(ctx context.Context, req user.ForgotPasswor
 	}
 
 	// 6. SEND RESET EMAIL (Async)
-	// TODO: Queue password reset email
-	// go s.emailService.SendPasswordResetEmail(u.Email, resetToken)
+	payload := user.ResetPasswordPayload{
+		UserID:     u.ID.String(),
+		Email:      req.Email,
+		ResetToken: resetToken,
+	}
+	b, _ := json.Marshal(payload)
+	task := asynq.NewTask("email:reset_password", b)
+	s.asynqClient.Enqueue(task, asynq.Queue("high"), asynq.Timeout(30*time.Second), asynq.MaxRetry(3))
 	log.Printf("🔐 Reset token for %s: %s (expires: %v)", u.Email, resetToken, expiresAt)
 	return nil
 }
@@ -293,7 +311,14 @@ func (s *userService) ResendVerification(ctx context.Context, email string) erro
 	}
 
 	// 5. Send email
-	// go s.emailService.SendVerificationEmail(u.Email, token)
+	payload := user.VerifyEmailPayload{
+		Token:  newTokenHash,
+		UserID: u.ID.String(),
+		Email:  u.Email,
+	}
+	b, _ := json.Marshal(payload)
+	task := asynq.NewTask("email:verification", b)
+	s.asynqClient.Enqueue(task, asynq.Queue("high"), asynq.Timeout(30*time.Second), asynq.MaxRetry(3))
 
 	return nil
 }

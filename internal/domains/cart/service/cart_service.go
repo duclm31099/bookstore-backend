@@ -2,6 +2,7 @@ package service
 
 import (
 	addressService "bookstore-backend/internal/domains/address/service"
+	bookS "bookstore-backend/internal/domains/book/service"
 	"bookstore-backend/internal/domains/cart/model"
 	repo "bookstore-backend/internal/domains/cart/repository"
 	inventoryModel "bookstore-backend/internal/domains/inventory/model"
@@ -22,14 +23,22 @@ type CartService struct {
 	inventoryService inveService.ServiceInterface
 	inventoryRepo    inveRepo.RepositoryInterface
 	address          addressService.ServiceInterface
+	bookService      bookS.ServiceInterface
 }
 
-func NewCartService(r repo.RepositoryInterface, inventoryS inveService.ServiceInterface, addressSvc addressService.ServiceInterface, inventoryRepo inveRepo.RepositoryInterface) ServiceInterface {
+func NewCartService(
+	r repo.RepositoryInterface,
+	inventoryS inveService.ServiceInterface,
+	addressSvc addressService.ServiceInterface,
+	inventoryRepo inveRepo.RepositoryInterface,
+	book bookS.ServiceInterface,
+) ServiceInterface {
 	return &CartService{
 		repository:       r,
 		inventoryService: inventoryS,
 		address:          addressSvc,
 		inventoryRepo:    inventoryRepo,
+		bookService:      book,
 	}
 }
 
@@ -135,25 +144,18 @@ func (s *CartService) AddItem(ctx context.Context, cartID uuid.UUID, req model.A
 	}
 
 	// Step 5: Get current book price (from books table)
-	// TODO: Integrate with book service to get current price
-	currentPrice := decimal.NewFromInt(99) // Placeholder
+	book, err := s.bookService.GetBookDetail(ctx, req.BookID.String())
+	currentPrice := book.Price
 
 	// Step 5: Create or update cart item
-	var itemID uuid.UUID
 	if existingItem != nil {
 		// Update existing
-		itemID = existingItem.ID
 		existingItem.Quantity = req.Quantity
-		existingItem.UpdatedAt = time.Now()
-
 		if err := s.repository.AddItem(ctx, existingItem); err != nil {
 			return nil, fmt.Errorf("failed to update item: %w", err)
 		}
 	} else {
-		// Create new
-		itemID = uuid.New()
 		newItem := &model.CartItem{
-			ID:        itemID,
 			CartID:    cartID,
 			BookID:    req.BookID,
 			Quantity:  req.Quantity,
@@ -195,8 +197,11 @@ func (s *CartService) ListItems(ctx context.Context, cartID uuid.UUID, page int,
 
 	// Convert to responses
 	itemResponses := make([]model.CartItemResponse, len(items))
+	var subtotal decimal.Decimal
 	for i, item := range items {
 		itemResponses[i] = *item.ToItemResponse()
+		e := item.Price.Mul(decimal.NewFromInt(int64(item.Quantity)))
+		subtotal = subtotal.Add(e)
 	}
 
 	// Build response with pagination
@@ -206,6 +211,7 @@ func (s *CartService) ListItems(ctx context.Context, cartID uuid.UUID, page int,
 	}
 
 	response := cart.ToResponse(itemResponses)
+	response.Subtotal = subtotal
 	return response, nil
 }
 

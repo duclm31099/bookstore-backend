@@ -1,237 +1,291 @@
-.PHONY: clean-seed seed-1 seed-2 seed-3 seed-4 seed-5 seed-6 seed-7 seed-8 help run build test migrate-up migrate-down migrate-create docker-up docker-down clean dev dev-stop dev-logs dev-all dev-db
+.PHONY: help install dev dev-worker dev-db dev-stop dev-logs dev-all \
+        run run-worker build test test-coverage test-clean \
+        docker-build docker-up docker-down docker-restart docker-logs docker-ps \
+        migrate-up migrate-down migrate-create migrate-version \
+        seed clean-seed db-shell db-reset \
+        asynq-stats asynq-dashboard \
+        fmt lint clean
 
-
-# Variables
+# ========================================
+# VARIABLES
+# ========================================
 APP_NAME=bookstore-backend
 VERSION=1.0.0
 BUILD_DIR=bin
 GO=go
 GOFLAGS=-v
 
-# ========================================
-# HELP
-# ========================================
-
-help: ## Show this help
-	@echo "Available commands:"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-25s %s\n", $$1, $$2}'
-
-# ========================================
-# SETUP
-# ========================================
-
-install: ## Install dependencies
-	$(GO) mod download
-	$(GO) mod tidy
-
-# ========================================
-# DEVELOPMENT - HOT RELOAD (AIR)
-# ========================================
-
-dev: ## Run with hot reload using Air (requires: go install github.com/air-verse/air@latest)
-	@echo "🔥 Starting development server with hot reload..."
-	$(shell go env GOPATH)/bin/air
-
-dev-db: ## Start Docker containers (PostgreSQL + Redis)
-	@echo "🚀 Starting Docker containers..."
-	docker compose up -d postgres redis
-	@echo "✅ Docker containers started"
-
-dev-stop: ## Stop Docker containers
-	@echo "🛑 Stopping Docker containers..."
-	docker compose down
-	@echo "✅ Containers stopped"
-
-dev-logs: ## View Docker logs (real-time)
-	docker compose logs -f
-
-dev-help: ## Development workflow instructions
-	@echo "Development Workflow:"
-	@echo "1. Terminal 1: make dev-db     (start Docker)"
-	@echo "2. Terminal 2: make dev        (start app with hot reload)"
-	@echo "3. Terminal 3: make test       (run tests)"
-	@echo ""
-	@echo "When you edit Go files, app automatically restarts!"
-	@echo "Stop with: make dev-stop"
-
-# ========================================
-# RUNNING
-# ========================================
-
-run: ## Run the application (without hot reload)
-	$(GO) run cmd/api/main.go
-
-run-worker: ## Run background worker
-	$(GO) run cmd/worker/main.go
-
-build: ## Build the application
-	mkdir -p $(BUILD_DIR)
-	$(GO) build $(GOFLAGS) -o $(BUILD_DIR)/api cmd/api/main.go
-	$(GO) build $(GOFLAGS) -o $(BUILD_DIR)/worker cmd/worker/main.go
-	$(GO) build $(GOFLAGS) -o $(BUILD_DIR)/migrate cmd/migrate/main.go
-
-# ========================================
-# DATABASE MIGRATIONS - DEV
-# ========================================
-
-DB_URL=postgresql://bookstore:secret@localhost:5439/bookstore_dev?sslmode=disable
-
-migrate-up: ## Run database migrations (dev)
-	migrate -path ./migrations -database "$(DB_URL)" up
-
-migrate-down: ## Rollback last migration (dev)
-	migrate -path ./migrations -database "$(DB_URL)" down 1
-
-migrate-down-all: ## Rollback all migrations (dev)
-	migrate -path ./migrations -database "$(DB_URL)" down
-
-migrate-create: ## Create new migration (usage: make migrate-create name=create_books_table)
-	migrate create -ext sql -dir migrations -seq $(name)
-
-migrate-version: ## Show current migration version (dev)
-	migrate -path ./migrations -database "$(DB_URL)" version
-
-migrate-force: ## Force migration version (usage: make migrate-force version=1)
-	migrate -path ./migrations -database "$(DB_URL)" force $(version)
-
-# ========================================
-# DATABASE MIGRATIONS - TEST
-# ========================================
-
-migrate-test-up: ## Run migrations on test database
-	migrate -path migrations \
-		-database "postgresql://bookstore:secret@localhost:5439/bookstore_test?sslmode=disable" \
-		up
-
-migrate-test-down: ## Rollback test migrations
-	migrate -path migrations \
-		-database "postgresql://bookstore:secret@localhost:5439/bookstore_test?sslmode=disable" \
-		down 1
-
-migrate-test-reset: ## Reset test database (drop + up)
-	migrate -path migrations \
-		-database "postgresql://bookstore:secret@localhost:5439/bookstore_test?sslmode=disable" \
-		drop -f
-	migrate -path migrations \
-		-database "postgresql://bookstore:secret@localhost:5439/bookstore_test?sslmode=disable" \
-		up
-
-# ========================================
-# TESTING
-# ========================================
-
-test: ## Run all tests
-	go test ./tests/... -v
-
-test-coverage: ## Run tests with coverage
-	go test ./tests/... -cover -coverprofile=coverage.out
-	go tool cover -html=coverage.out -o coverage.html
-	@echo "✅ Coverage report: coverage.html"
-
-test-clean: ## Clean test database and run tests
-	@make migrate-test-reset
-	go test ./tests/... -v -count=1
-
-# ========================================
-# DOCKER
-# ========================================
-
-docker-up: ## Start all Docker containers
-	docker compose up -d
-
-docker-down: ## Stop all Docker containers
-	docker compose down
-
-docker-logs: ## View Docker logs (real-time)
-	docker compose logs -f
-
-docker-ps: ## List running containers
-	docker compose ps
-
-# ========================================
-# DATABASE UTILITIES
-# ========================================
-
-seed: ## Seed database with initial data
-	$(GO) run scripts/seed.go
-
-db-shell: ## Access PostgreSQL shell (dev database)
-	docker exec -it bookstore_postgres psql -U bookstore -d bookstore_dev
-
-db-table: ## Show users table schema
-	docker exec -it bookstore_postgres psql -U bookstore -d bookstore_dev -c "\d users"
-
-# ========================================
-# CODE QUALITY
-# ========================================
-
-fmt: ## Format code
-	$(GO) fmt ./...
-	goimports -w .
-
-lint: ## Run linters
-	golangci-lint run
-
-# ========================================
-# CLEANUP
-# ========================================
-# Database connection info
+# Database connection
 DB_HOST ?= localhost
 DB_PORT ?= 5439
 DB_NAME ?= bookstore_dev
 DB_USER ?= bookstore
 DB_PASSWORD ?= secret
-PSQL = PGPASSWORD=$(DB_PASSWORD) psql -h $(DB_HOST) -p $(DB_PORT) -U $(DB_USER) -d $(DB_NAME) -v ON_ERROR_STOP=1
+DB_URL=postgresql://$(DB_USER):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=disable
+PSQL=PGPASSWORD=$(DB_PASSWORD) psql -h $(DB_HOST) -p $(DB_PORT) -U $(DB_USER) -d $(DB_NAME) -v ON_ERROR_STOP=1
+
+# ========================================
+# HELP
+# ========================================
+help: ## Show available commands
+	@echo "📚 $(APP_NAME) - Development Commands"
+	@echo ""
+	@echo "🚀 Quick Start (Development):"
+	@echo "  1. make install          # Install Go dependencies"
+	@echo "  2. make dev-db           # Start infrastructure (DB, Redis, MailHog)"
+	@echo "  3. make migrate-up       # Run database migrations"
+	@echo "  4. make dev              # Start API with hot reload (Terminal 1)"
+	@echo "  5. make dev-worker       # Start Worker (Terminal 2)"
+	@echo ""
+	@echo "📋 Available Commands:"
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-25s\033[0m %s\n", $$1, $$2}'
+	@echo ""
+	@echo "📍 Service URLs:"
+	@echo "  API:           http://localhost:8080"
+	@echo "  MailHog UI:    http://localhost:8025"
+	@echo "  Asynqmon:      http://localhost:8081"
+	@echo "  MinIO Console: http://localhost:9001"
+
+# ========================================
+# SETUP
+# ========================================
+install: ## Install Go dependencies and Air
+	@echo "📦 Installing dependencies..."
+	$(GO) mod download
+	$(GO) mod tidy
+	@echo ""
+	@echo "🔥 Installing Air (hot reload tool)..."
+	@if ! command -v air > /dev/null; then \
+		go install github.com/air-verse/air@latest; \
+		echo "✅ Air installed"; \
+	else \
+		echo "✅ Air already installed"; \
+	fi
+	@echo ""
+	@echo "✅ Setup complete!"
+
+# ========================================
+# DEVELOPMENT - LOCAL (Hot Reload)
+# ========================================
+dev-db: ## Start infrastructure (PostgreSQL, Redis, MailHog, MinIO, Asynqmon)
+	@echo "🐳 Starting infrastructure containers..."
+	docker compose up -d postgres redis mailhog minio asynqmon
+	@echo "⏳ Waiting for PostgreSQL to be ready..."
+	@sleep 3
+	@echo "✅ Infrastructure started!"
+
+
+dev: ## Start API server with hot reload (Air)
+	@echo "🔥 Starting API server with hot reload..."
+	$(shell go env GOPATH)/bin/air
+
+dev-worker: ## Start background worker (local)
+	@echo "🔋 Starting background worker..."
+	$(GO) run cmd/worker/main.go
+
+dev-stop: ## Stop all Docker containers
+	@echo "🛑 Stopping Docker containers..."
+	docker compose down
+	@echo "✅ Containers stopped"
+
+dev-logs: ## View Docker container logs
+	docker compose logs -f
+
+dev-all: ## Setup full development environment
+	@echo "🚀 Setting up full development environment..."
+	@make dev-db
+	@sleep 3
+	@make migrate-up
+	@echo ""
+	@echo "✅ Setup complete!"
+	@echo ""
+	@echo "📝 Next steps:"
+	@echo "  Terminal 1: make dev         # Start API with hot reload"
+	@echo "  Terminal 2: make dev-worker  # Start Worker"
+	@echo ""
+	@echo "📍 Service URLs:"
+	@echo "  API:        http://localhost:8080"
+	@echo "  MailHog:    http://localhost:8025"
+	@echo "  Asynqmon:   http://localhost:8081"
+
+# ========================================
+# RUNNING (Without hot reload)
+# ========================================
+run: ## Run API server (production mode)
+	@echo "🚀 Starting API server..."
+	$(GO) run cmd/api/main.go
+
+run-worker: ## Run background worker (production mode)
+	@echo "🔋 Starting background worker..."
+	$(GO) run cmd/worker/main.go
+
+build: ## Build API and Worker binaries
+	@echo "🔨 Building binaries..."
+	mkdir -p $(BUILD_DIR)
+	$(GO) build $(GOFLAGS) -o $(BUILD_DIR)/api ./cmd/api
+	$(GO) build $(GOFLAGS) -o $(BUILD_DIR)/worker ./cmd/worker
+	@echo "✅ Binaries built in $(BUILD_DIR)/"
+
+# ========================================
+# DOCKER (Production-like)
+# ========================================
+docker-build: ## Build Docker images (for production testing)
+	@echo "🐳 Building Docker images..."
+	docker compose -f docker-compose.prod.yml build
+	@echo "✅ Images built successfully"
+
+docker-up: ## Start all services in Docker (production-like)
+	@echo "🐳 Starting all Docker services..."
+	docker compose -f docker-compose.prod.yml up -d
+	@echo "✅ All services started!"
+
+docker-down: ## Stop all Docker containers
+	@echo "🛑 Stopping Docker containers..."
+	docker compose -f docker-compose.prod.yml down
+	@echo "✅ Containers stopped"
+
+docker-logs: ## View Docker logs (all services)
+	docker compose -f docker-compose.prod.yml logs -f
+
+docker-ps: ## List running Docker containers
+	docker compose ps
+
+# ========================================
+# DATABASE MIGRATIONS
+# ========================================
+migrate-up: ## Run all database migrations
+	@echo "📈 Running migrations..."
+	migrate -path ./migrations -database "$(DB_URL)" up
+	@echo "✅ Migrations applied"
+
+migrate-down: ## Rollback last migration
+	@echo "📉 Rolling back last migration..."
+	migrate -path ./migrations -database "$(DB_URL)" down 1
+	@echo "✅ Migration rolled back"
+
+migrate-create: ## Create new migration (usage: make migrate-create name=add_users_table)
+	@if [ -z "$(name)" ]; then \
+		echo "❌ Error: name parameter required"; \
+		echo "Usage: make migrate-create name=add_users_table"; \
+		exit 1; \
+	fi
+	@echo "📝 Creating migration: $(name)"
+	migrate create -ext sql -dir migrations -seq $(name)
+	@echo "✅ Migration files created in migrations/"
+
+migrate-version: ## Show current migration version
+	migrate -path ./migrations -database "$(DB_URL)" version
+
+# ========================================
+# DATABASE UTILITIES
+# ========================================
+db-shell: ## Access PostgreSQL shell
+	docker exec -it bookstore_postgres psql -U $(DB_USER) -d $(DB_NAME)
+
+db-reset: ## Reset database (drop all + migrate + seed)
+	@echo "⚠️  Resetting database..."
+	@make clean-seed
+	@echo "✅ Database reset complete!"
+
+seed: ## Run all seed files
+	@echo "🌱 Seeding database..."
+	@for i in 1 2 3 4 5 6 7 8; do \
+		make -s seed-$$i; \
+	done
+	@echo "✅ All seeds completed!"
+
+clean-seed: ## Clear all data from database
+	@echo "🗑️  Truncating all tables..."
+	@$(PSQL) -c "TRUNCATE TABLE reviews, refund_requests, payment_webhook_logs, payment_transactions, order_status_history, promotion_usage, order_items, orders, promotions, warehouse_inventory, warehouses, books, addresses, authors, publishers, categories, users RESTART IDENTITY CASCADE;" 2>/dev/null || echo "⚠️  Some tables may not exist yet"
+	@echo "✅ All data cleared!"
+
+seed-1: ## Seed users data
+	@$(PSQL) -f seeds/001_users_seed.sql 2>/dev/null
+
+seed-2: ## Seed books data
+	@$(PSQL) -f seeds/002_book.sql 2>/dev/null
+
+seed-3: ## Seed inventory data
+	@$(PSQL) -f seeds/003_inventory.sql 2>/dev/null
+
+seed-4: ## Seed promotions data
+	@$(PSQL) -f seeds/004_promotion.sql 2>/dev/null
+
+seed-5: ## Seed orders data
+	@$(PSQL) -f seeds/005_order.sql 2>/dev/null
+
+seed-6: ## Seed payments data
+	@$(PSQL) -f seeds/006_payment.sql 2>/dev/null
+
+seed-7: ## Seed refunds data
+	@$(PSQL) -f seeds/007_refund.sql 2>/dev/null
+
+seed-8: ## Seed reviews data
+	@$(PSQL) -f seeds/008_review.sql 2>/dev/null
+
+# ========================================
+# ASYNQ MONITORING
+# ========================================
+asynq-stats: ## Show Asynq queue statistics
+	@echo "📊 Asynq Queue Statistics:"
+	@asynq stats 2>/dev/null || echo "⚠️  asynq CLI not installed. Run: go install github.com/hibiken/asynq/tools/asynq@latest"
+
+asynq-dashboard: ## Open Asynqmon dashboard
+	@echo "📊 Opening Asynqmon dashboard..."
+	@echo "URL: http://localhost:8081"
+
+# ========================================
+# TESTING
+# ========================================
+test: ## Run all tests
+	@echo "🧪 Running tests..."
+	go test ./tests/... -v
+
+test-coverage: ## Run tests with coverage report
+	@echo "🧪 Running tests with coverage..."
+	go test ./tests/... -cover -coverprofile=coverage.out
+	go tool cover -html=coverage.out -o coverage.html
+	@echo "✅ Coverage report: coverage.html"
+
+test-clean: ## Reset test database and run tests
+	@echo "🧹 Cleaning test database..."
+	@echo "🧪 Running tests..."
+	go test ./tests/... -v -count=1
+
+# ========================================
+# CODE QUALITY
+# ========================================
+fmt: ## Format Go code
+	@echo "🎨 Formatting code..."
+	$(GO) fmt ./...
+	@echo "✅ Code formatted"
+
+lint: ## Run linters
+	@echo "🔍 Running linters..."
+	@if command -v golangci-lint > /dev/null; then \
+		golangci-lint run; \
+		echo "✅ Linting complete"; \
+	else \
+		echo "⚠️  golangci-lint not installed"; \
+	fi
+
+# ========================================
+# CLEANUP
+# ========================================
 clean: ## Clean build artifacts and temp files
+	@echo "🧹 Cleaning..."
 	rm -rf $(BUILD_DIR)
 	rm -rf tmp/
 	rm -f coverage.out coverage.html
 	$(GO) clean
+	@echo "✅ Cleaned"
 
+clean-all: clean docker-down ## Clean everything including Docker
+	@echo "🧹 Deep cleaning..."
+	docker compose down -v
+	@echo "✅ All cleaned (including Docker volumes)"
+
+# ========================================
+# DEFAULT GOAL
+# ========================================
 .DEFAULT_GOAL := help
-# Clean all data
-clean-seed:
-	@echo "🗑️  Truncating all tables..."
-	@$(PSQL) -c "TRUNCATE TABLE reviews, refund_requests, payment_webhook_logs, payment_transactions, order_status_history, promotion_usage, order_items, orders, promotions, warehouse_inventory, warehouses, books, addresses, authors, publishers, categories, users RESTART IDENTITY CASCADE;"
-	@echo "✅ All data cleared!"
-
-# Run individual seed files
-seed-1:
-	@echo "🌱 Running: 001_users_seed.sql"
-	@$(PSQL) -f seeds/001_users_seed.sql
-	@echo "✅ Done!"
-
-seed-2:
-	@echo "🌱 Running: 002_book.sql"
-	@$(PSQL) -f seeds/002_book.sql
-	@echo "✅ Done!"
-
-seed-3:
-	@echo "🌱 Running: 003_inventory.sql"
-	@$(PSQL) -f seeds/003_inventory.sql
-	@echo "✅ Done!"
-
-seed-4:
-	@echo "🌱 Running: 004_promotion.sql"
-	@$(PSQL) -f seeds/004_promotion.sql
-	@echo "✅ Done!"
-
-seed-5:
-	@echo "🌱 Running: 005_order.sql"
-	@$(PSQL) -f seeds/005_order.sql
-	@echo "✅ Done!"
-
-seed-6:
-	@echo "🌱 Running: 006_payment.sql"
-	@$(PSQL) -f seeds/006_payment.sql
-	@echo "✅ Done!"
-
-seed-7:
-	@echo "🌱 Running: 007_refund.sql"
-	@$(PSQL) -f seeds/007_refund.sql
-	@echo "✅ Done!"
-
-seed-8:
-	@echo "🌱 Running: 008_review.sql"
-	@$(PSQL) -f seeds/008_review.sql
-	@echo "✅ Done!"
