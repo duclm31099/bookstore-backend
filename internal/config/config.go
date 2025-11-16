@@ -16,6 +16,7 @@ type Config struct {
 	Email    EmailConfig
 	VNPay    VNPayConfig
 	Momo     MomoConfig
+	MinIO    MinIOConfig
 }
 type VNPayConfig struct {
 	TmnCode    string // Merchant Code (e.g., "DEMOV01")
@@ -23,6 +24,13 @@ type VNPayConfig struct {
 	APIURL     string // VNPay API base URL
 	ReturnURL  string // Frontend callback URL
 	IPNURL     string // Backend webhook URL
+}
+type MinIOConfig struct {
+	Endpoint  string // localhost:9000
+	AccessKey string // minioadmin
+	SecretKey string // minioadmin
+	Bucket    string // bookstore
+	UseSSL    bool   // false for local
 }
 
 // =====================================================
@@ -76,6 +84,13 @@ type EmailConfig struct {
 // Load đọc config từ environment variables
 func Load() (*Config, error) {
 	cfg := &Config{
+		MinIO: MinIOConfig{
+			Endpoint:  getEnv("MINIO_ENDPOINT", "localhost:9000"),
+			AccessKey: getEnv("MINIO_ACCESS_KEY", "minioadmin"),
+			SecretKey: getEnv("MINIO_SECRET_KEY", "minioadmin"),
+			Bucket:    getEnv("MINIO_BUCKET", "bookstore"),
+			UseSSL:    false,
+		},
 		App: AppConfig{
 			Name:        getEnv("APP_NAME", "Bookstore API"),
 			Environment: getEnv("APP_ENV", "development"),

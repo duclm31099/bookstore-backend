@@ -7,14 +7,18 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log"
+
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
+	"github.com/rs/zerolog/log"
 	"golang.org/x/crypto/bcrypt"
 
 	"bookstore-backend/internal/domains/user"
+	"bookstore-backend/internal/infrastructure/email"
+	"bookstore-backend/internal/shared"
+	"bookstore-backend/pkg/cache"
 	"bookstore-backend/pkg/jwt"
 	"bookstore-backend/pkg/logger"
 	// TODO: Cần tạo JWT helper
@@ -25,15 +29,21 @@ type userService struct {
 	repo        user.Repository // Data access layer
 	jwtManager  *jwt.Manager    // JWT signing secret
 	asynqClient *asynq.Client
+	cache       cache.Cache
 }
 
 // NewUserService tạo service instance
 // Inject repository qua constructor (Dependency Injection)
-func NewUserService(repo user.Repository, jwtManager *jwt.Manager, asynqClient *asynq.Client) user.Service {
+func NewUserService(
+	repo user.Repository,
+	jwtManager *jwt.Manager,
+	asynqClient *asynq.Client,
+	cache cache.Cache) user.Service {
 	return &userService{
 		repo:        repo,
 		jwtManager:  jwtManager,
 		asynqClient: asynqClient, // Thêm dòng này!
+		cache:       cache,
 	}
 }
 
@@ -100,13 +110,14 @@ func (s *userService) Register(ctx context.Context, req user.RegisterRequest) (*
 	newUser.ID = id
 	// 7. SEND VERIFICATION EMAIL (Async)
 	// Gửi job qua Asynq
-	payload := user.VerifyEmailPayload{
-		UserID: id.String(),
-		Email:  req.Email,
-		Token:  verificationTokenHash,
+	link := fmt.Sprintf("http://localhost:8080/api/v1/auth/verify-email?token=%s", verificationTokenHash)
+	payload := email.VerificationEmailData{
+		VerifyLink: link,
+		Email:      req.Email,
+		ExpiresIn:  "24 giờ",
 	}
 	b, _ := json.Marshal(payload)
-	task := asynq.NewTask("email:verification", b)
+	task := asynq.NewTask(shared.TypeSendVerificationEmail, b)
 	s.asynqClient.Enqueue(task, asynq.Queue("high"), asynq.Timeout(30*time.Second), asynq.MaxRetry(3))
 
 	// 8. RETURN DTO (không expose sensitive data)
@@ -125,12 +136,26 @@ func (s *userService) Login(ctx context.Context, req user.LoginRequest) (*user.L
 	u, err := s.repo.FindByEmail(ctx, req.Email)
 	if err != nil {
 		// Không expose "email not found" - security best practice
-		// Attacker không biết email có tồn tại không
 		return nil, user.ErrInvalidCredentials
 	}
 
+	// ✅ 2.1. CHECK IF ACCOUNT IS LOCKED (Failed Login Protection)
+	lockKey := fmt.Sprintf("account_locked:%s", u.ID)
+	isLocked, _ := s.cache.Exists(ctx, lockKey)
+	if isLocked {
+		ttl, _ := s.cache.TTL(ctx, lockKey)
+		remainingMinutes := int(ttl.Minutes())
+
+		log.Warn().
+			Str("user_id", u.ID.String()).
+			Str("email", req.Email).
+			Int("remaining_minutes", remainingMinutes).
+			Msg("Login attempt on locked account")
+
+		return nil, fmt.Errorf("tài khoản bị khóa tạm thời, vui lòng thử lại sau %d phút", remainingMinutes)
+	}
+
 	// 3. CHECK USER STATUS
-	// Business rule: user phải active và verified
 	if !u.IsActive {
 		return nil, user.ErrUserInactive
 	}
@@ -139,11 +164,26 @@ func (s *userService) Login(ctx context.Context, req user.LoginRequest) (*user.L
 	}
 
 	// 4. VERIFY PASSWORD
-	// bcrypt.CompareHashAndPassword is constant-time comparison (security)
 	err = bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(req.Password))
 	if err != nil {
-		// Wrong password
+		// ✅ 4.1. TRACK FAILED LOGIN ATTEMPT
+		ipAddress := s.extractIPFromContext(ctx)
+		s.trackFailedLogin(ctx, u.ID.String(), ipAddress)
+
+		log.Warn().
+			Str("user_id", u.ID.String()).
+			Str("email", req.Email).
+			Str("ip_address", ipAddress).
+			Msg("Failed login attempt - wrong password")
+
 		return nil, user.ErrInvalidCredentials
+	}
+
+	// ✅ 4.2. CLEAR FAILED LOGIN ATTEMPTS ON SUCCESS
+	attemptKey := fmt.Sprintf("failed_login:%s", u.ID)
+	if err := s.cache.Delete(ctx, attemptKey); err != nil {
+		// Log but don't fail the login
+		log.Warn().Err(err).Str("user_id", u.ID.String()).Msg("Failed to clear login attempts")
 	}
 
 	// 5. GENERATE JWT TOKENS
@@ -158,19 +198,81 @@ func (s *userService) Login(ctx context.Context, req user.LoginRequest) (*user.L
 	}
 
 	// 6. UPDATE LAST LOGIN TIME (fire-and-forget)
-	// Không quan trọng lắm, nếu fail thì bỏ qua
 	// go func() {
 	// 	_ = s.repo.UpdateLastLogin(context.Background(), u.ID)
 	// }()
+
+	// ✅ 6.1. LOG SUCCESSFUL LOGIN (for security monitoring)
+	ipAddress := s.extractIPFromContext(ctx)
+	log.Info().
+		Str("user_id", u.ID.String()).
+		Str("email", u.Email).
+		Str("ip_address", ipAddress).
+		Msg("Successful login")
 
 	// 7. RETURN LOGIN RESPONSE
 	dto := u.ToDTO()
 	return &user.LoginResponse{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
-		ExpiresAt:    time.Now().Add(15 * time.Minute), // Access token TTL
+		ExpiresAt:    time.Now().Add(15 * time.Minute),
 		User:         dto,
 	}, nil
+}
+
+// trackFailedLogin enqueues a background job to track failed login attempts
+func (s *userService) trackFailedLogin(ctx context.Context, userID, ipAddress string) {
+	payload := shared.FailedLoginPayload{
+		UserID:    userID,
+		IPAddress: ipAddress,
+		Timestamp: time.Now(),
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to marshal failed login payload")
+		return
+	}
+
+	task := asynq.NewTask(shared.TypeProcessFailedLogin, data)
+
+	// ✅ Enqueue with proper options
+	_, err = s.asynqClient.EnqueueContext(
+		ctx,
+		task,
+		asynq.Queue("default"),        // Default priority
+		asynq.MaxRetry(1),             // Retry once if failed
+		asynq.Timeout(10*time.Second), // 10s timeout
+		asynq.ProcessIn(time.Second),  // Process immediately
+	)
+
+	if err != nil {
+		log.Error().
+			Err(err).
+			Str("user_id", userID).
+			Msg("Failed to enqueue failed login job")
+	} else {
+		log.Debug().
+			Str("user_id", userID).
+			Str("ip_address", ipAddress).
+			Msg("Failed login job enqueued")
+	}
+}
+
+// extractIPFromContext extracts IP address from request context
+func (s *userService) extractIPFromContext(ctx context.Context) string {
+	// ✅ Try to get IP from context (set by middleware)
+	if ip, ok := ctx.Value("client_ip").(string); ok && ip != "" {
+		return ip
+	}
+
+	// Try X-Forwarded-For header (set by middleware)
+	if ip, ok := ctx.Value("x_forwarded_for").(string); ok && ip != "" {
+		return ip
+	}
+
+	// Fallback to "unknown"
+	return "unknown"
 }
 
 func (s *userService) RefreshToken(ctx context.Context, refreshTokenStr string) (*user.LoginResponse, error) {
@@ -277,7 +379,7 @@ func (s *userService) ForgotPassword(ctx context.Context, req user.ForgotPasswor
 		ResetToken: resetToken,
 	}
 	b, _ := json.Marshal(payload)
-	task := asynq.NewTask("email:reset_password", b)
+	task := asynq.NewTask(shared.TypeSendResetEmail, b)
 	s.asynqClient.Enqueue(task, asynq.Queue("high"), asynq.Timeout(30*time.Second), asynq.MaxRetry(3))
 	log.Printf("🔐 Reset token for %s: %s (expires: %v)", u.Email, resetToken, expiresAt)
 	return nil
@@ -317,7 +419,7 @@ func (s *userService) ResendVerification(ctx context.Context, email string) erro
 		Email:  u.Email,
 	}
 	b, _ := json.Marshal(payload)
-	task := asynq.NewTask("email:verification", b)
+	task := asynq.NewTask(shared.TypeSendVerificationEmail, b)
 	s.asynqClient.Enqueue(task, asynq.Queue("high"), asynq.Timeout(30*time.Second), asynq.MaxRetry(3))
 
 	return nil

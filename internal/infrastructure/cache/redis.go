@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/redis/go-redis/v9/maintnotifications"
 
 	// Import cache interface từ pkg
 	pkgCache "bookstore-backend/pkg/cache"
@@ -33,6 +34,9 @@ func NewRedisCache(host, password string, db int) pkgCache.Cache {
 		DialTimeout:  5 * time.Second,
 		ReadTimeout:  3 * time.Second,
 		WriteTimeout: 3 * time.Second,
+		MaintNotificationsConfig: &maintnotifications.Config{
+			Mode: maintnotifications.ModeDisabled, // ✅ No warnings
+		},
 	})
 
 	return &RedisCache{
@@ -163,11 +167,6 @@ func (r *RedisCache) Ping(ctx context.Context) error {
 // ADDITIONAL HELPER METHODS (OPTIONAL)
 // ========================================
 
-// Exists kiểm tra key có tồn tại không
-func (r *RedisCache) Exists(ctx context.Context, keys ...string) (int64, error) {
-	return r.client.Exists(ctx, keys...).Result()
-}
-
 // Expire set TTL cho key đã tồn tại
 func (r *RedisCache) Expire(ctx context.Context, key string, ttl time.Duration) error {
 	return r.client.Expire(ctx, key, ttl).Err()
@@ -240,4 +239,18 @@ func (r *RedisCache) DeletePattern(ctx context.Context, pattern string) error {
 
 	log.Printf("[REDIS] DeletePattern: deleted %d keys matching %s", deletedCount, pattern)
 	return nil
+}
+
+// ✅ New methods for counter operations
+func (r *RedisCache) Increment(ctx context.Context, key string) (int64, error) {
+	return r.client.Incr(ctx, key).Result()
+}
+
+func (r *RedisCache) Exists(ctx context.Context, key string) (bool, error) {
+	count, err := r.client.Exists(ctx, key).Result()
+	return count > 0, err
+}
+
+func (r *RedisCache) TTL(ctx context.Context, key string) (time.Duration, error) {
+	return r.client.TTL(ctx, key).Result()
 }

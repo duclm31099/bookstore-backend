@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"bookstore-backend/internal/domains/category"
 	"bookstore-backend/pkg/cache"
@@ -1540,4 +1541,94 @@ func (r *postgresRepository) GetCategoryBookCount(
 	}
 
 	return count, nil
+}
+
+// FindByNameCaseInsensitive tìm category by name (case-insensitive)
+func (r *postgresRepository) FindByNameCaseInsensitive(ctx context.Context, name string) (*category.Category, error) {
+	query := `
+        SELECT id, name, slug, description, parent_id,
+               created_at, updated_at
+        FROM categories
+        WHERE LOWER(TRIM(name)) = LOWER(TRIM($1))
+        LIMIT 1
+    `
+
+	var category category.Category
+	err := r.pool.QueryRow(ctx, query, name).Scan(
+		&category.ID,
+		&category.Name,
+		&category.Slug,
+		&category.Description,
+		&category.ParentID,
+		&category.CreatedAt,
+		&category.UpdatedAt,
+	)
+
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, fmt.Errorf("category not found")
+		}
+		return nil, fmt.Errorf("failed to find category: %w", err)
+	}
+
+	return &category, nil
+}
+
+// FindBySlugWithTx tìm category by slug (trong transaction)
+func (r *postgresRepository) FindBySlugWithTx(ctx context.Context, tx pgx.Tx, slug string) (*category.Category, error) {
+	query := `
+        SELECT id, name, slug, description, parent_id,
+               created_at, updated_at
+        FROM categories
+        WHERE slug = $1
+        LIMIT 1
+    `
+
+	var category category.Category
+	err := tx.QueryRow(ctx, query, slug).Scan(
+		&category.ID,
+		&category.Name,
+		&category.Slug,
+		&category.Description,
+		&category.ParentID,
+		&category.CreatedAt,
+		&category.UpdatedAt,
+	)
+
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to find category: %w", err)
+	}
+
+	return &category, nil
+}
+
+// CreateWithTx tạo category trong transaction
+func (r *postgresRepository) CreateWithTx(ctx context.Context, tx pgx.Tx, category *category.Category) error {
+	query := `
+        INSERT INTO categories (id, name, slug, description, parent_id, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `
+
+	now := time.Now()
+	category.CreatedAt = now
+	category.UpdatedAt = now
+
+	_, err := tx.Exec(ctx, query,
+		category.ID,
+		category.Name,
+		category.Slug,
+		category.Description,
+		category.ParentID,
+		category.CreatedAt,
+		category.UpdatedAt,
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to create category: %w", err)
+	}
+
+	return nil
 }

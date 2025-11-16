@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -420,4 +421,94 @@ func (r *postgresRepository) ListWithBooks(ctx context.Context, offset, limit in
 	}
 
 	return publishers, nil
+}
+
+// FindByNameCaseInsensitive tìm publisher by name
+func (r *postgresRepository) FindByNameCaseInsensitive(ctx context.Context, name string) (*model.Publisher, error) {
+	query := `
+        SELECT id, name, slug, description, website,
+               created_at, updated_at, deleted_at
+        FROM publishers
+        WHERE LOWER(TRIM(name)) = LOWER(TRIM($1))
+        LIMIT 1
+    `
+
+	var publisher model.Publisher
+	err := r.pool.QueryRow(ctx, query, name).Scan(
+		&publisher.ID,
+		&publisher.Name,
+		&publisher.Slug,
+		&publisher.Description,
+		&publisher.Website,
+		&publisher.CreatedAt,
+		&publisher.UpdatedAt,
+	)
+
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, fmt.Errorf("publisher not found")
+		}
+		return nil, fmt.Errorf("failed to find publisher: %w", err)
+	}
+
+	return &publisher, nil
+}
+
+// FindBySlugWithTx tìm publisher by slug (trong transaction)
+func (r *postgresRepository) FindBySlugWithTx(ctx context.Context, tx pgx.Tx, slug string) (*model.Publisher, error) {
+	query := `
+        SELECT id, name, slug, description, website,
+               created_at, updated_at
+        FROM publishers
+        WHERE slug = $1
+        LIMIT 1
+    `
+
+	var publisher model.Publisher
+	err := tx.QueryRow(ctx, query, slug).Scan(
+		&publisher.ID,
+		&publisher.Name,
+		&publisher.Slug,
+		&publisher.Description,
+		&publisher.Website,
+		&publisher.CreatedAt,
+		&publisher.UpdatedAt,
+	)
+
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to find publisher: %w", err)
+	}
+
+	return &publisher, nil
+}
+
+// CreateWithTx tạo publisher trong transaction
+func (r *postgresRepository) CreateWithTx(ctx context.Context, tx pgx.Tx, publisher *model.Publisher) error {
+	query := `
+        INSERT INTO publishers (id, name, slug, description, website, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `
+
+	now := time.Now()
+	publisher.CreatedAt = now
+	publisher.UpdatedAt = now
+
+	_, err := tx.Exec(ctx, query,
+		publisher.ID,
+		publisher.Name,
+		publisher.Slug,
+		publisher.Description,
+		publisher.Website,
+		publisher.CreatedAt,
+		publisher.UpdatedAt,
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to create publisher: %w", err)
+	}
+
+	return nil
 }

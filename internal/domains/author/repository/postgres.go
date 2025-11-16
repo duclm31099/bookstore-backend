@@ -609,3 +609,91 @@ func (r *postgresRepository) invalidateListCache(ctx context.Context) {
 	// Pattern-based deletion for list caches
 	r.cache.DeletePattern(ctx, authorListKeyPrefix+"*")
 }
+
+// FindByNameCaseInsensitive tìm author by name (case-insensitive, trimmed)
+func (r *postgresRepository) FindByNameCaseInsensitive(ctx context.Context, name string) (*model.Author, error) {
+	query := `
+        SELECT id, name, slug, bio, 
+          created_at, updated_at
+        FROM authors
+        WHERE LOWER(TRIM(name)) = LOWER(TRIM($1))
+          AND deleted_at IS NULL
+        LIMIT 1
+    `
+
+	var author model.Author
+	err := r.pool.QueryRow(ctx, query, name).Scan(
+		&author.ID,
+		&author.Name,
+		&author.Slug,
+		&author.Bio,
+		&author.CreatedAt,
+		&author.UpdatedAt,
+	)
+
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, fmt.Errorf("author not found")
+		}
+		return nil, fmt.Errorf("failed to find author: %w", err)
+	}
+
+	return &author, nil
+}
+
+// FindBySlugWithTx tìm author by slug (trong transaction)
+func (r *postgresRepository) FindBySlugWithTx(ctx context.Context, tx pgx.Tx, slug string) (*model.Author, error) {
+	query := `
+        SELECT id, name, slug, bio,
+               created_at, updated_at
+        FROM authors
+        WHERE slug = $1 AND deleted_at IS NULL
+        LIMIT 1
+    `
+
+	var author model.Author
+	err := tx.QueryRow(ctx, query, slug).Scan(
+		&author.ID,
+		&author.Name,
+		&author.Slug,
+		&author.Bio,
+		&author.CreatedAt,
+		&author.UpdatedAt,
+	)
+
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil // Not found (không phải error)
+		}
+		return nil, fmt.Errorf("failed to find author: %w", err)
+	}
+
+	return &author, nil
+}
+
+// CreateWithTx tạo author trong transaction
+func (r *postgresRepository) CreateWithTx(ctx context.Context, tx pgx.Tx, author *model.Author) error {
+	query := `
+        INSERT INTO authors (id, name, slug, bio, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6)
+    `
+
+	now := time.Now()
+	author.CreatedAt = now
+	author.UpdatedAt = now
+
+	_, err := tx.Exec(ctx, query,
+		author.ID,
+		author.Name,
+		author.Slug,
+		author.Bio,
+		author.CreatedAt,
+		author.UpdatedAt,
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to create author: %w", err)
+	}
+
+	return nil
+}

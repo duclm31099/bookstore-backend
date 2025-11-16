@@ -1,16 +1,17 @@
 package container
 
 import (
+	"bookstore-backend/internal/config"
+	infraCache "bookstore-backend/internal/infrastructure/cache"
+	"bookstore-backend/internal/infrastructure/database"
+	"bookstore-backend/internal/infrastructure/storage"
+	"bookstore-backend/internal/shared/utils"
+	"bookstore-backend/pkg/cache"
+	"bookstore-backend/pkg/jwt"
 	"context"
 	"fmt"
 	"log"
 	"time"
-
-	"bookstore-backend/internal/config"
-	infraCache "bookstore-backend/internal/infrastructure/cache"
-	"bookstore-backend/internal/infrastructure/database"
-	"bookstore-backend/pkg/cache"
-	"bookstore-backend/pkg/jwt"
 
 	// User domain imports
 
@@ -82,65 +83,71 @@ import (
 )
 
 type Container struct {
-	Config       *config.Config
-	DB           *database.PostgresDB
-	Cache        cache.Cache
-	JWTManager   *jwt.Manager
-	VNPayGateway gateway.VNPayGateway
-	MomoGateway  gateway.MomoGateway
-	AsynqClient  *asynq.Client
-
+	Config         *config.Config
+	DB             *database.PostgresDB
+	Cache          cache.Cache
+	JWTManager     *jwt.Manager
+	VNPayGateway   gateway.VNPayGateway
+	MomoGateway    gateway.MomoGateway
+	AsynqClient    *asynq.Client
+	MinIOStorage   *storage.MinIOStorage
+	ImageProcessor *storage.ImageProcessor
 	// ========================================
 	// REPOSITORY LAYER (DATA ACCESS)
 	// ========================================
-	UserRepo      user.Repository
-	CategoryRepo  category.CategoryRepository
-	AuthorRepo    authorRepository.RepositoryInterface
-	PublisherRepo publisherRepo.RepositoryInterface
-	AddressRepo   addressRepo.RepositoryInterface
-	BookRepo      bookRepo.RepositoryInterface
-	InventoryRepo inventoryRepo.RepositoryInterface
-	CartRepo      cartRepo.RepositoryInterface
-	PromotionRepo promotionRepo.PromotionRepository
-	OrderRepo     orderRepo.OrderRepository
-	PaymentRepo   paymentRepo.PaymentRepoInteface
-	RefundRepo    paymentRepo.RefundRepoInterface
-	WebHookRepo   paymentRepo.WebhookRepoInterface
-	TxManager     paymentRepo.TransactionManager
-	ReviewRepo    reviewRepo.ReviewRepository
+	UserRepo       user.Repository
+	CategoryRepo   category.CategoryRepository
+	AuthorRepo     authorRepository.RepositoryInterface
+	PublisherRepo  publisherRepo.RepositoryInterface
+	AddressRepo    addressRepo.RepositoryInterface
+	BookRepo       bookRepo.RepositoryInterface
+	InventoryRepo  inventoryRepo.RepositoryInterface
+	CartRepo       cartRepo.RepositoryInterface
+	PromotionRepo  promotionRepo.PromotionRepository
+	OrderRepo      orderRepo.OrderRepository
+	PaymentRepo    paymentRepo.PaymentRepoInteface
+	RefundRepo     paymentRepo.RefundRepoInterface
+	WebHookRepo    paymentRepo.WebhookRepoInterface
+	TxManager      paymentRepo.TransactionManager
+	ReviewRepo     reviewRepo.ReviewRepository
+	ImageBookRepo  bookRepo.BookImageRepository
+	BulkImportRepo bookRepo.BulkImportRepoI
 	// ========================================
 	// SERVICE LAYER (BUSINESS LOGIC)
 	// ========================================
 
-	UserService      user.Service
-	CategoryService  category.CategoryService
-	AuthorService    authorService.ServiceInterface
-	PublisherService publisherService.ServiceInterface
-	AddressService   addressService.ServiceInterface
-	BookService      bookService.ServiceInterface
-	InventoryService inventoryService.ServiceInterface
-	CartService      cartService.ServiceInterface
-	PromotionService promotionService.ServiceInterface
-	OrderSerivce     orderService.OrderService
-	PaymentService   paymentService.PaymentService
-	RefundService    paymentService.RefundInterface
-	ReviewService    reviewService.ServiceInterface
+	UserService       user.Service
+	CategoryService   category.CategoryService
+	AuthorService     authorService.ServiceInterface
+	PublisherService  publisherService.ServiceInterface
+	AddressService    addressService.ServiceInterface
+	BookService       bookService.ServiceInterface
+	InventoryService  inventoryService.ServiceInterface
+	CartService       cartService.ServiceInterface
+	PromotionService  promotionService.ServiceInterface
+	OrderSerivce      orderService.OrderService
+	PaymentService    paymentService.PaymentService
+	RefundService     paymentService.RefundInterface
+	ReviewService     reviewService.ServiceInterface
+	ImageBookService  bookService.BookImageService
+	BulkImportService bookService.BulkImportServiceInterface
 	// ========================================
 	// HANDLER LAYER (HTTP)
 	// ========================================
-	UserHandler      *userHandler.UserHandler
-	CategoryHandler  *categoryHandler.CategoryHandler
-	AuthorHandler    *authorHandler.AuthorHandler
-	PublisherHandler *publisherHandler.PublisherHandler
-	AddressHandler   *addressHandler.AddressHandler
-	BookHandler      *bookHandler.Handler
-	InventoryHandler *inventoryHandler.Handler
-	CartHandler      *cartHandler.Handler
-	PublicProHandler *promotionHandler.PublicHandler
-	AdminProHandler  *promotionHandler.AdminHandler
-	OrderHandler     *orderHandler.OrderHandler
-	PaymentHandler   *paymentHandler.PaymentHandler
-	ReviewHandler    *reviewHandler.ReviewHandler
+	UserHandler       *userHandler.UserHandler
+	CategoryHandler   *categoryHandler.CategoryHandler
+	AuthorHandler     *authorHandler.AuthorHandler
+	PublisherHandler  *publisherHandler.PublisherHandler
+	AddressHandler    *addressHandler.AddressHandler
+	BookHandler       *bookHandler.Handler
+	InventoryHandler  *inventoryHandler.Handler
+	CartHandler       *cartHandler.Handler
+	PublicProHandler  *promotionHandler.PublicHandler
+	AdminProHandler   *promotionHandler.AdminHandler
+	OrderHandler      *orderHandler.OrderHandler
+	PaymentHandler    *paymentHandler.PaymentHandler
+	ReviewHandler     *reviewHandler.ReviewHandler
+	BulkImportHandler bookHandler.BulkImportHandler
 }
 
 // ========================================
@@ -213,6 +220,26 @@ func NewContainer() (*Container, error) {
 	jwtSecret := cfg.JWT.Secret // Use from config
 	c.JWTManager = jwt.NewManager(jwtSecret)
 
+	// MinIO Configuration
+	minioConfig := config.MinIOConfig{
+		Endpoint:  utils.GetEnvVariable("MINIO_ENDPOINT", "localhost:9000"),
+		AccessKey: utils.GetEnvVariable("MINIO_ACCESS_KEY", "minioadmin"),
+		SecretKey: utils.GetEnvVariable("MINIO_SECRET_KEY", "minioadmin"),
+		Bucket:    utils.GetEnvVariable("MINIO_BUCKET", "bookstore"),
+		UseSSL:    utils.GetEnvVariable("MINIO_USE_SSL", "false") == "true",
+	}
+
+	minioStorage, err := storage.NewMinIOStorage(minioConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to init MinIO storage: %w", err)
+	}
+	c.MinIOStorage = minioStorage
+	log.Println("✅ MinIO storage initialized")
+
+	// Image Processor
+	c.ImageProcessor = storage.NewImageProcessor()
+	log.Println("✅ Image processor initialized")
+
 	if err := c.initRepositories(); err != nil {
 		return nil, fmt.Errorf("failed to init repositories: %w", err)
 	}
@@ -250,6 +277,8 @@ func (c *Container) initRepositories() error {
 	c.RefundRepo = paymentRepo.NewRefundRepository(pool)
 	c.TxManager = paymentRepo.NewPostgresTransactionManager(pool)
 	c.ReviewRepo = reviewRepo.NewPostgresReviewRepository(pool)
+	c.ImageBookRepo = bookRepo.NewBookImageRepository(pool)
+	c.BulkImportRepo = bookRepo.NewBulkImportRepository(pool)
 	return nil
 }
 
@@ -259,13 +288,20 @@ func (c *Container) initServices() error {
 		c.UserRepo,   // Inject repository
 		c.JWTManager, // Inject JWT secret từ config
 		c.AsynqClient,
+		c.Cache,
 	)
-
+	c.BulkImportService = bookService.NewBulkImportService(
+		c.BookRepo, c.ImageBookRepo, c.AuthorRepo,
+		c.CategoryRepo, c.PublisherRepo, c.ImageBookRepo, c.DB.Pool, c.MinIOStorage,
+		c.ImageProcessor, c.AsynqClient,
+	)
 	c.CategoryService = categoryService.NewCategoryService(c.CategoryRepo)
 	c.AuthorService = authorService.NewAuthorService(c.AuthorRepo)
 	c.PublisherService = publisherService.NewPublisherService(c.PublisherRepo)
 	c.AddressService = addressService.NewAddressService(c.AddressRepo)
-	c.BookService = bookService.NewService(c.BookRepo, c.Cache)
+	c.BookService = bookService.NewService(
+		c.BookRepo, c.Cache, c.ImageProcessor, c.MinIOStorage, c.ImageBookRepo, c.AsynqClient,
+	)
 	c.InventoryService = inventoryService.NewService(c.InventoryRepo)
 	c.CartService = cartService.NewCartService(
 		c.CartRepo, c.InventoryService,
@@ -282,6 +318,7 @@ func (c *Container) initServices() error {
 		c.VNPayGateway, c.MomoGateway, c.OrderSerivce,
 	)
 	c.ReviewService = reviewService.NewReviewService(c.ReviewRepo)
+	c.ImageBookService = bookService.NewBookImageService(c.ImageBookRepo, c.MinIOStorage, c.ImageProcessor)
 	return nil
 }
 
@@ -292,10 +329,11 @@ func (c *Container) initHandlers() error {
 	c.AuthorHandler = authorHandler.NewAuthorHandler(c.AuthorService)
 	c.PublisherHandler = publisherHandler.NewPublisherHandler(c.PublisherService)
 	c.AddressHandler = addressHandler.NewAddressHandler(c.AddressService)
-	c.BookHandler = bookHandler.NewHandler(c.BookService, c.Cache)
+	c.BookHandler = bookHandler.NewHandler(c.BookService, c.Cache, c.ImageProcessor)
 	c.InventoryHandler = inventoryHandler.NewHandler(c.InventoryService)
 	c.ReviewHandler = reviewHandler.NewReviewHandler(c.ReviewService)
 	c.CartHandler = cartHandler.NewHandler(c.CartService)
+	c.BulkImportHandler = *bookHandler.NewBulkImportHandler(c.BulkImportService)
 	c.AdminProHandler = promotionHandler.NewAdminHandler(c.PromotionService)
 	c.PublicProHandler = promotionHandler.NewPublicHandler(c.PromotionService, c.CartService)
 	c.PaymentHandler = paymentHandler.NewPaymentHandler(c.PaymentService, c.RefundService)

@@ -24,4 +24,9 @@ type Cache interface {
 	Ping(ctx context.Context) error
 
 	DeletePattern(ctx context.Context, pattern string) error // ← THÊM METHOD MỚI
+	// ✅ Thêm methods cho failed login tracking
+	Increment(ctx context.Context, key string) (int64, error)
+	Exists(ctx context.Context, key string) (bool, error)
+	Expire(ctx context.Context, key string, ttl time.Duration) error
+	TTL(ctx context.Context, key string) (time.Duration, error)
 }

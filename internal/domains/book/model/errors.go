@@ -24,6 +24,10 @@ var (
 	ErrVersionConflict          = errors.New("version conflict: book was modified by another user")
 	ErrISBNAlreadyExists        = errors.New("ISBN already exists")
 	ErrPublisherNotFound        = errors.New("publisher not found")
+	ErrInvalidImageCount        = errors.New("book must have 3-7 images")
+	ErrImageValidationFail      = errors.New("one or more images are invalid")
+	ErrImageTooLarge            = errors.New("image exceeds maximum size (5MB)")
+	ErrInvalidImageFormat       = errors.New("image must be JPEG or PNG format")
 	ErrBookHasActiveOrders      = errors.New("book has active orders and cannot be deleted")
 	ErrBookHasReservedInventory = errors.New("book has reserved inventory and cannot be deleted")
 )
@@ -83,4 +87,20 @@ func HandleBookError(c *gin.Context, err error) bool {
 	log.Printf("[Handler] Error updating book: %v", err)
 	response.Error(c, http.StatusInternalServerError, "Failed to update book", "Internal server error")
 	return true
+}
+
+// ImageValidationError chứa chi tiết lỗi từng ảnh
+type ImageValidationError struct {
+	Index   int    `json:"index"`
+	URL     string `json:"url"`
+	Message string `json:"message"`
+}
+
+type ImageValidationErrors struct {
+	Message string                 `json:"message"`
+	Errors  []ImageValidationError `json:"errors"`
+}
+
+func (e *ImageValidationErrors) Error() string {
+	return e.Message
 }

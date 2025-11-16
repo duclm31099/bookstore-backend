@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/lib/pq"
@@ -317,53 +318,53 @@ func (r *postgresRepository) executeListQuery(ctx context.Context, query string,
 
 func (r *postgresRepository) GetBookByID(ctx context.Context, id string) (*model.BookDetailRes, []model.InventoryDetailDTO, error) {
 	query := `SELECT 
-    b.id, b.title, b.slug, b.isbn, b.author_id, b.publisher_id, b.category_id,
-    b.price, b.compare_at_price, b.cost_price, b.cover_url, b.description,
-    b.pages, b.language, b.published_year, b.format, b.dimensions,
-    b.weight_grams, b.ebook_file_url, b.ebook_file_size_mb, b.ebook_format,
-    b.is_active, b.is_featured, b.view_count, b.sold_count,
-    b.meta_title, b.meta_description, 
-    COALESCE(b.meta_keywords, ARRAY[]::text[]) AS meta_keywords,
-    b.version, 
-    COALESCE(b.images, ARRAY[]::text[]) AS images,
-    b.created_at, b.updated_at, b.deleted_at,
-    a.name AS author_name, a.slug AS author_slug, a.bio AS author_bio,
-    c.name AS category_name, c.slug AS category_slug,
-    p.name AS publisher_name, p.slug AS publisher_slug, p.website AS publisher_website,
-    COALESCE(inv.total, 0) AS total_stock,
-    COALESCE(inv.details, '[]'::json) AS inventories_json,
-    COALESCE(r.avg_rating, 0)::numeric(2,1) AS rating_average,
-    COALESCE(r.count, 0) AS rating_count
-  FROM books b
-  LEFT JOIN authors a ON b.author_id = a.id
-  LEFT JOIN categories c ON b.category_id = c.id
-  LEFT JOIN publishers p ON b.publisher_id = p.id
-  LEFT JOIN LATERAL (
-    SELECT 
-      SUM(wi.quantity - wi.reserved) AS total, 
-      json_agg(json_build_object(
-        'warehouse_id', wi.warehouse_id,
-        'warehouse_name', w.name,
-        'warehouse_code', w.code,
-        'quantity', wi.quantity,
-        'reserved', wi.reserved,
-        'available', wi.quantity - wi.reserved,
-        'alert_threshold', wi.alert_threshold,
-        'is_low_stock', wi.quantity < wi.alert_threshold,
-        'last_restocked_at', wi.last_restocked_at
-      ) ORDER BY w.name) AS details
-    FROM warehouse_inventory wi
-    INNER JOIN warehouses w ON wi.warehouse_id = w.id
-    WHERE wi.book_id = b.id
-      AND w.deleted_at IS NULL
-      AND w.is_active = true
-  ) inv ON true
-  LEFT JOIN LATERAL (
-    SELECT AVG(rating) AS avg_rating, COUNT(*) AS count
-    FROM reviews
-    WHERE book_id = b.id
-  ) r ON true
-  WHERE b.id = $1 AND b.deleted_at IS NULL AND b.is_active = true`
+        b.id, b.title, b.slug, b.isbn, b.author_id, b.publisher_id, b.category_id,
+        b.price, b.compare_at_price, b.cost_price, b.cover_url, b.description,
+        b.pages, b.language, b.published_year, b.format, b.dimensions,
+        b.weight_grams, b.ebook_file_url, b.ebook_file_size_mb, b.ebook_format,
+        b.is_active, b.is_featured, b.view_count, b.sold_count,
+        b.meta_title, b.meta_description, 
+        COALESCE(b.meta_keywords, ARRAY[]::text[]) AS meta_keywords,
+        b.version, 
+        COALESCE(b.images, ARRAY[]::text[]) AS images,
+        b.created_at, b.updated_at, b.deleted_at,
+        a.name AS author_name, a.slug AS author_slug, a.bio AS author_bio,
+        c.name AS category_name, c.slug AS category_slug,
+        p.name AS publisher_name, p.slug AS publisher_slug, p.website AS publisher_website,
+        COALESCE(inv.total, 0) AS total_stock,
+        COALESCE(inv.details, '[]'::json) AS inventories_json,
+        COALESCE(r.avg_rating, 0)::numeric(2,1) AS rating_average,
+        COALESCE(r.count, 0) AS rating_count
+    FROM books b
+    LEFT JOIN authors a ON b.author_id = a.id
+    LEFT JOIN categories c ON b.category_id = c.id
+    LEFT JOIN publishers p ON b.publisher_id = p.id
+    LEFT JOIN LATERAL (
+        SELECT 
+            SUM(wi.quantity - wi.reserved) AS total, 
+            json_agg(json_build_object(
+                'warehouse_id', wi.warehouse_id,
+                'warehouse_name', w.name,
+                'warehouse_code', w.code,
+                'quantity', wi.quantity,
+                'reserved', wi.reserved,
+                'available', wi.quantity - wi.reserved,
+                'alert_threshold', wi.alert_threshold,
+                'is_low_stock', wi.quantity < wi.alert_threshold,
+                'last_restocked_at', wi.last_restocked_at
+            ) ORDER BY w.name) AS details
+        FROM warehouse_inventory wi
+        INNER JOIN warehouses w ON wi.warehouse_id = w.id
+        WHERE wi.book_id = b.id
+            AND w.deleted_at IS NULL
+            AND w.is_active = true
+    ) inv ON true
+    LEFT JOIN LATERAL (
+        SELECT AVG(rating) AS avg_rating, COUNT(*) AS count
+        FROM reviews
+        WHERE book_id = b.id
+    ) r ON true
+    WHERE b.id = $1 AND b.deleted_at IS NULL`
 
 	row := r.pool.QueryRow(ctx, query, id)
 
@@ -486,7 +487,7 @@ func (r *postgresRepository) UpdateBook(ctx context.Context, book *model.Book) e
 }
 
 // CreateBook - Insert new book to database
-func (r *postgresRepository) CreateBook(ctx context.Context, book *model.Book) error {
+func (r *postgresRepository) CreateBook(ctx context.Context, book *model.Book) (uuid.UUID, error) {
 	query := `
 		INSERT INTO books ( title, slug, isbn, author_id, publisher_id, category_id,
 			price, compare_at_price, cost_price, cover_url, description,
@@ -506,9 +507,10 @@ func (r *postgresRepository) CreateBook(ctx context.Context, book *model.Book) e
 			$29, $30, $31, $32,
 			$33
 		)
+		RETURNING id
 	`
-
-	_, err := r.pool.Exec(ctx, query, book.Title, book.Slug, book.ISBN, book.AuthorID, book.PublisherID, book.CategoryID,
+	var bookID uuid.UUID
+	err := r.pool.QueryRow(ctx, query, book.Title, book.Slug, book.ISBN, book.AuthorID, book.PublisherID, book.CategoryID,
 		book.Price, book.CompareAtPrice, book.CostPrice, book.CoverURL, book.Description,
 		book.Pages, book.Language, book.PublishedYear, book.Format, book.Dimensions, book.WeightGrams,
 		book.EbookFileURL, book.EbookFileSizeMB, book.EbookFormat,
@@ -516,13 +518,13 @@ func (r *postgresRepository) CreateBook(ctx context.Context, book *model.Book) e
 		book.MetaTitle, book.MetaDescription, pq.Array(book.MetaKeywords),
 		book.RatingAverage, book.RatingCount, book.Version, pq.Array(book.Images),
 		book.CreatedAt, book.UpdatedAt,
-	)
+	).Scan(&bookID)
 
 	if err != nil {
-		return fmt.Errorf("failed to insert book: %w", err)
+		return uuid.Nil, fmt.Errorf("failed to insert book: %w", err)
 	}
 
-	return nil
+	return bookID, nil
 }
 
 func (r *postgresRepository) GetReviewsHighlight(ctx context.Context, bookID string) ([]model.ReviewDTO, error) {
@@ -695,4 +697,89 @@ func (r *postgresRepository) CheckBookHasReservedInventory(ctx context.Context, 
 	}
 
 	return exists, nil
+}
+
+// CreateBookWithTx tạo book trong transaction
+func (r *postgresRepository) CreateBookWithTx(ctx context.Context, tx pgx.Tx, book *model.Book) error {
+	query := `
+        INSERT INTO books (
+            id, title, slug, isbn, author_id, publisher_id, category_id,
+            price, compare_at_price, cost_price, description,
+            pages, language, published_year, format, dimensions, weight_grams,
+            is_active, is_featured,
+            meta_title, meta_description, meta_keywords,
+            version, created_at, updated_at
+        ) VALUES (
+            $1, $2, $3, $4, $5, $6, $7,
+            $8, $9, $10, $11,
+            $12, $13, $14, $15, $16, $17,
+            $18, $19,
+            $20, $21, $22,
+            $23, $24, $25
+        )
+    `
+
+	now := time.Now()
+	book.CreatedAt = now
+	book.UpdatedAt = now
+
+	_, err := tx.Exec(ctx, query,
+		book.ID,
+		book.Title,
+		book.Slug,
+		book.ISBN,
+		book.AuthorID,
+		book.PublisherID,
+		book.CategoryID,
+		book.Price,
+		book.CompareAtPrice,
+		book.CostPrice,
+		book.Description,
+		book.Pages,
+		book.Language,
+		book.PublishedYear,
+		book.Format,
+		book.Dimensions,
+		book.WeightGrams,
+		book.IsActive,
+		book.IsFeatured,
+		book.MetaTitle,
+		book.MetaDescription,
+		book.MetaKeywords,
+		book.Version,
+		book.CreatedAt,
+		book.UpdatedAt,
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to create book: %w", err)
+	}
+
+	return nil
+}
+
+// FindBySlugWithTx tìm book by slug (trong transaction)
+func (r *postgresRepository) FindBySlugWithTx(ctx context.Context, tx pgx.Tx, slug string) (*model.Book, error) {
+	query := `
+        SELECT id, title, slug
+        FROM books
+        WHERE slug = $1 AND deleted_at IS NULL
+        LIMIT 1
+    `
+
+	var book model.Book
+	err := tx.QueryRow(ctx, query, slug).Scan(
+		&book.ID,
+		&book.Title,
+		&book.Slug,
+	)
+
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil // Not found
+		}
+		return nil, fmt.Errorf("failed to find book: %w", err)
+	}
+
+	return &book, nil
 }

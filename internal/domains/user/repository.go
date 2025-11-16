@@ -99,4 +99,7 @@ type Repository interface {
 
 	// CountByRole đếm số user theo role (for analytics)
 	CountByRole(ctx context.Context, role Role) (int, error)
+
+	DeleteExpiredVerifyTokens(ctx context.Context, cutoffTime time.Time) (int, error)
+	DeleteExpiredResetTokens(ctx context.Context, cutoffTime time.Time) (int, error)
 }

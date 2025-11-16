@@ -1,7 +1,10 @@
 package handler
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strconv"
@@ -9,24 +12,28 @@ import (
 
 	"bookstore-backend/internal/domains/book/model"
 	service "bookstore-backend/internal/domains/book/service"
+	"bookstore-backend/internal/infrastructure/storage"
 	"bookstore-backend/internal/shared/response"
 	"bookstore-backend/internal/shared/utils"
 	"bookstore-backend/pkg/cache"
+	"bookstore-backend/pkg/logger"
 
 	"github.com/gin-gonic/gin"
 )
 
 // Handler - HTTP Handler (single file)
 type Handler struct {
-	service service.ServiceInterface
-	cache   cache.Cache
+	service        service.ServiceInterface
+	cache          cache.Cache
+	imageProcessor *storage.ImageProcessor // ✅ Inject qua DI
 }
 
 // NewHandler - Constructor with DI
-func NewHandler(service service.ServiceInterface, cache cache.Cache) *Handler {
+func NewHandler(service service.ServiceInterface, cache cache.Cache, imageProcessor *storage.ImageProcessor) *Handler {
 	return &Handler{
-		service: service,
-		cache:   cache,
+		service:        service,
+		imageProcessor: imageProcessor,
+		cache:          cache,
 	}
 }
 
@@ -130,8 +137,6 @@ func (h *Handler) GetBookDetail(c *gin.Context) {
 	response.Success(c, http.StatusOK, "Get book successfully", detail)
 }
 
-// CreateBook - POST /v1/admin/books
-// Yêu cầu: Admin role (middleware check trước khi vào handler)
 func (h *Handler) CreateBook(c *gin.Context) {
 	var req model.CreateBookRequest
 
@@ -149,7 +154,27 @@ func (h *Handler) CreateBook(c *gin.Context) {
 		return
 	}
 
-	// 3. Call service to create book
+	// ✅ 3. Validate images TRƯỚC KHI tạo book
+	if len(req.Images) > 0 {
+		if err := h.validateImages(c.Request.Context(), req.Images); err != nil {
+			log.Printf("[Handler] Image validation failed: %v", err)
+
+			// ✅ Kiểm tra nếu là ImageValidationErrors, trả về chi tiết
+			if imgErr, ok := err.(*model.ImageValidationErrors); ok {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error":   "Image validation failed",
+					"message": imgErr.Message,
+					"details": imgErr.Errors,
+				})
+				return
+			}
+
+			response.Error(c, http.StatusBadRequest, "Image validation failed", err.Error())
+			return
+		}
+	}
+
+	// 4. Call service to create book
 	err := h.service.CreateBook(c.Request.Context(), req)
 
 	// Handle specific business errors
@@ -158,10 +183,83 @@ func (h *Handler) CreateBook(c *gin.Context) {
 		return
 	}
 
-	// 4. Return success
+	// 5. Return success
 	response.Success(c, http.StatusCreated, "Book created successfully", nil)
 }
 
+func (h *Handler) validateImages(ctx context.Context, imageURLs []string) error {
+	if len(imageURLs) > 7 {
+		return model.ErrInvalidImageCount
+	}
+
+	var validationErrors []model.ImageValidationError
+	validCount := 0
+
+	for i, imgURL := range imageURLs {
+		if err := h.validateSingleImage(ctx, imgURL); err != nil {
+			validationErrors = append(validationErrors, model.ImageValidationError{
+				Index:   i + 1,
+				URL:     imgURL,
+				Message: err.Error(),
+			})
+			continue
+		}
+		validCount++
+	}
+
+	return nil
+}
+
+// ✅ validateSingleImage kiểm tra 1 URL ảnh
+func (h *Handler) validateSingleImage(ctx context.Context, url string) error {
+	// Timeout cho việc download (tránh block quá lâu)
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	// HTTP Request với context
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to fetch: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Check HTTP status
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
+	}
+
+	// Check Content-Type
+	contentType := resp.Header.Get("Content-Type")
+	if contentType != "image/jpeg" && contentType != "image/png" && contentType != "image/jpg" {
+		return fmt.Errorf("invalid content-type: %s (expected image/jpeg or image/png)", contentType)
+	}
+
+	// Read và validate image
+	// Limit read để tránh OOM nếu file quá lớn
+	const maxSize = 10 * 1024 * 1024 // 10MB
+	limitedReader := io.LimitReader(resp.Body, maxSize)
+
+	data, err := io.ReadAll(limitedReader)
+	if err != nil {
+		return fmt.Errorf("failed to read image: %w", err)
+	}
+
+	// Validate image format và size
+	if err := h.imageProcessor.ValidateImage(data); err != nil {
+		return fmt.Errorf("invalid image: %w", err)
+	}
+
+	return nil
+}
 func (h *Handler) UpdateBook(c *gin.Context) {
 	id := c.Param("id")
 
@@ -268,4 +366,51 @@ func (h *Handler) SearchBooks(c *gin.Context) {
 		"results": results,
 		"meta":    meta,
 	})
+}
+
+// ExportBooks - GET /v1/admin/books/export
+// Yêu cầu: Admin role
+func (h *Handler) ExportBooks(c *gin.Context) {
+	var req model.ListBooksRequest
+
+	// Bind query params (search, category, price_min, price_max, language, sort, page, limit, is_active)
+	if err := c.ShouldBindQuery(&req); err != nil {
+		logger.Error("[ExportBooks] Invalid query params", err)
+		response.Error(c, http.StatusBadRequest, "Invalid query params", err.Error())
+		return
+	}
+
+	// Ép limit tối đa 100 (phòng trường hợp FE gửi >100)
+	if req.Limit <= 0 {
+		req.Limit = 20
+	}
+	if req.Limit > 100 {
+		req.Limit = 100
+	}
+
+	// Luôn export books active (list API đã default như vậy, nhưng nếu cần:
+	// req.IsActive = utils.BoolPtr(true)
+
+	// Gọi service
+	f, _, err := h.service.ExportBooksToExcel(c.Request.Context(), req)
+	if err != nil {
+		logger.Error("[ExportBooks] Failed to export", err)
+		response.Error(c, http.StatusInternalServerError, "Failed to export books", err.Error())
+		return
+	}
+
+	// Chuẩn bị headers tải file
+	now := time.Now().Format("20060102_1504") // yyyyMMdd_HHmm
+	fileName := fmt.Sprintf("book_list_%s.xlsx", now)
+
+	c.Header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", fileName))
+	c.Header("Content-Transfer-Encoding", "binary")
+	c.Header("Expires", "0")
+
+	// Ghi file vào response
+	if err := f.Write(c.Writer); err != nil {
+		logger.Error("[ExportBooks] Failed to write excel file", err)
+		// Ở đây response đã bắt đầu stream, nên không thể gửi JSON error nữa
+	}
 }

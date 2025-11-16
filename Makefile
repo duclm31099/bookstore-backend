@@ -79,9 +79,11 @@ dev: ## Start API server with hot reload (Air)
 	@echo "🔥 Starting API server with hot reload..."
 	$(shell go env GOPATH)/bin/air
 
+# Makefile
 dev-worker: ## Start background worker (local)
 	@echo "🔋 Starting background worker..."
-	$(GO) run cmd/worker/main.go
+	cd cmd/worker && $(GO) run .
+
 
 dev-stop: ## Stop all Docker containers
 	@echo "🛑 Stopping Docker containers..."

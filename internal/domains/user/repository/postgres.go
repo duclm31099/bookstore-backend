@@ -18,6 +18,7 @@ import (
 
 	user "bookstore-backend/internal/domains/user"
 	"bookstore-backend/pkg/cache"
+	"bookstore-backend/pkg/logger"
 )
 
 // postgresRepository là concrete implementation của user.Repository interface
@@ -834,3 +835,59 @@ func (r *postgresRepository) CountByRole(ctx context.Context, role user.Role) (i
 // 	}
 // 	return nil
 // }
+
+func (r *postgresRepository) DeleteExpiredVerifyTokens(ctx context.Context, cutoffTime time.Time) (int, error) {
+	query := `
+		UPDATE users
+		SET 
+			verification_token = NULL,
+			verification_sent_at = NULL,
+			verification_token_expires_at = NULL
+			updated_at = NOW()
+		WHERE
+			verification_token IS NOT NULL
+			AND verification_sent_at IS NOT NULL
+			AND verification_token_expires_at < $1
+			AND is_verified = false
+	`
+
+	result, err := r.pool.Exec(ctx, query, cutoffTime)
+	if err != nil {
+		logger.Error("Query delete expired verify token failed due to ", err)
+		return 0, err
+	}
+
+	if result.RowsAffected() == 0 {
+		logger.Error("Query delete expired verify token failed -> ", err)
+		return 0, err
+	}
+
+	return int(result.RowsAffected()), nil
+}
+
+func (r *postgresRepository) DeleteExpiredResetTokens(ctx context.Context, cutoffTime time.Time) (int, error) {
+	query := `
+		UPDATE users
+		SET 
+			reset_token = NULL
+			reset_token_expires_at = NULL
+			updated_at = NOW()
+		WHERE
+			reset_token IS NOT NULL
+			AND reset_token_expires_at < $1
+			AND reset_token_expires_at IS NOT NULL
+	`
+
+	result, err := r.pool.Exec(ctx, query, cutoffTime)
+	if err != nil {
+		logger.Error("Query delete expired reset token failed due to ", err)
+		return 0, err
+	}
+
+	if result.RowsAffected() == 0 {
+		logger.Error("Query delete expired reset token failed -> ", err)
+		return 0, err
+	}
+
+	return int(result.RowsAffected()), nil
+}

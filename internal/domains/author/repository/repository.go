@@ -5,6 +5,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // Repository defines the interface for Author data access operations
@@ -54,6 +55,9 @@ type RepositoryInterface interface {
 	// Useful for uniqueness validation before insert/update
 	ExistsBySlug(ctx context.Context, slug string) (bool, error)
 
+	FindByNameCaseInsensitive(ctx context.Context, name string) (*model.Author, error)
+	FindBySlugWithTx(ctx context.Context, tx pgx.Tx, slug string) (*model.Author, error)
+	CreateWithTx(ctx context.Context, tx pgx.Tx, author *model.Author) error
 	// GetBookCount returns number of books by author
 	// For denormalized data in AuthorDetailResponse
 	GetBookCount(ctx context.Context, authorID uuid.UUID) (int, error)

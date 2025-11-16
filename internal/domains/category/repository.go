@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // ============================================================
@@ -18,6 +19,11 @@ type CategoryRepository interface {
 	GetBySlug(ctx context.Context, slug string) (*Category, error)
 
 	GetAll(ctx context.Context, filter *CategoryFilter) ([]Category, int64, error)
+
+	// NEW: Methods for bulk import
+	FindByNameCaseInsensitive(ctx context.Context, name string) (*Category, error)
+	FindBySlugWithTx(ctx context.Context, tx pgx.Tx, slug string) (*Category, error)
+	CreateWithTx(ctx context.Context, tx pgx.Tx, category *Category) error
 
 	// GetTree lấy toàn bộ category tree (recursive)
 	// SELECT * FROM category_tree (đã ordered by path)

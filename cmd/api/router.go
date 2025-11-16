@@ -42,6 +42,7 @@ func SetupRouter(c *container.Container) *gin.Engine {
 		// AUTH ROUTES (PUBLIC)
 		// ========================================
 		auth := v1.Group("/auth")
+		auth.Use()
 		{
 			// FR-AUTH-001: User Registration
 			auth.POST("/register", c.UserHandler.Register)
@@ -64,12 +65,15 @@ func SetupRouter(c *container.Container) *gin.Engine {
 		// ========================================
 		users := v1.Group("/users")
 		// TODO: Add Auth middleware
-		users.Use(middleware.AuthMiddleware(c.Config.JWT.Secret))
+		users.Use(
+			middleware.AuthMiddleware(c.Config.JWT.Secret),
+			middleware.IPExtractorMiddleware(),
+		)
 		{
 			// Profile endpoints
 			users.GET("/me", c.UserHandler.GetProfile)
 			users.PUT("/me", c.UserHandler.UpdateProfile)
-			users.PUT("/me/password", c.UserHandler.ChangePassword)
+			users.PUT("/change-password", c.UserHandler.ChangePassword)
 		}
 
 		// ========================================
@@ -214,6 +218,9 @@ func SetupRouter(c *container.Container) *gin.Engine {
 			bookRouter.DELETE("/:id", c.BookHandler.DeleteBook)
 			bookRouter.POST("", c.BookHandler.CreateBook)
 			bookRouter.GET("/search", c.BookHandler.SearchBooks)
+			// In admin routes
+			bookRouter.POST("/bulk-import", c.BulkImportHandler.ImportBooks)
+			bookRouter.GET("/export", c.BookHandler.ExportBooks)
 		}
 
 		// ---------------------------------- INVENTORY ROUTES ------------------------------------
