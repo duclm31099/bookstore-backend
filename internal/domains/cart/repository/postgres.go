@@ -32,7 +32,8 @@ func (r *postgresRepository) GetByUserID(ctx context.Context, userID uuid.UUID) 
 	query := `
         SELECT 
             id, user_id, session_id, items_count, subtotal, version,
-            created_at, updated_at, expires_at
+            created_at, updated_at, expires_at,
+            promo_code, discount, total, promo_metadata -- ✅ Add promo fields
         FROM carts
         WHERE user_id = $1
     `
@@ -48,6 +49,10 @@ func (r *postgresRepository) GetByUserID(ctx context.Context, userID uuid.UUID) 
 		&cart.CreatedAt,
 		&cart.UpdatedAt,
 		&cart.ExpiresAt,
+		&cart.PromoCode,     // ✅ Add
+		&cart.Discount,      // ✅ Add
+		&cart.Total,         // ✅ Add
+		&cart.PromoMetadata, // ✅ Add
 	)
 
 	if err != nil {
@@ -64,9 +69,10 @@ func (r *postgresRepository) GetBySessionID(ctx context.Context, sessionID strin
 	query := `
         SELECT 
             id, user_id, session_id, items_count, subtotal, version,
-            created_at, updated_at, expires_at
+            created_at, updated_at, expires_at,
+            promo_code, discount, total, promo_metadata -- ✅ Add promo fields
         FROM carts
-        WHERE session_id = $1
+        WHERE user_id = $1
     `
 
 	var cart model.Cart
@@ -80,6 +86,10 @@ func (r *postgresRepository) GetBySessionID(ctx context.Context, sessionID strin
 		&cart.CreatedAt,
 		&cart.UpdatedAt,
 		&cart.ExpiresAt,
+		&cart.PromoCode,     // ✅ Add
+		&cart.Discount,      // ✅ Add
+		&cart.Total,         // ✅ Add
+		&cart.PromoMetadata, // ✅ Add
 	)
 
 	if err != nil {
@@ -146,14 +156,21 @@ func (r *postgresRepository) CreateOrGet(ctx context.Context, cart *model.Cart) 
 	}
 
 	query := `
-        INSERT INTO carts ( user_id, session_id, items_count, subtotal, version, created_at, updated_at, expires_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        INSERT INTO carts (
+            user_id, session_id, items_count, subtotal, version, 
+            created_at, updated_at, expires_at,
+            promo_code, discount, total, promo_metadata
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         ON CONFLICT (` + conflictColumn + `) 
         WHERE ` + conflictColumn + ` IS NOT NULL
         DO UPDATE SET
             expires_at = EXCLUDED.expires_at,
             updated_at = EXCLUDED.updated_at
-        RETURNING id, user_id, session_id, items_count, subtotal, version, created_at, updated_at, expires_at
+        RETURNING 
+            id, user_id, session_id, items_count, subtotal, version, 
+            created_at, updated_at, expires_at,
+            promo_code, discount, total, promo_metadata
     `
 
 	var result model.Cart
@@ -166,6 +183,10 @@ func (r *postgresRepository) CreateOrGet(ctx context.Context, cart *model.Cart) 
 		cart.CreatedAt,
 		cart.UpdatedAt,
 		cart.ExpiresAt,
+		cart.PromoCode,     // ✅ Add
+		cart.Discount,      // ✅ Add
+		cart.Total,         // ✅ Add
+		cart.PromoMetadata, // ✅ Add
 	).Scan(
 		&result.ID,
 		&result.UserID,
@@ -176,6 +197,10 @@ func (r *postgresRepository) CreateOrGet(ctx context.Context, cart *model.Cart) 
 		&result.CreatedAt,
 		&result.UpdatedAt,
 		&result.ExpiresAt,
+		&result.PromoCode,     // ✅ Add
+		&result.Discount,      // ✅ Add
+		&result.Total,         // ✅ Add
+		&result.PromoMetadata, // ✅ Add
 	)
 
 	if err != nil {
@@ -224,36 +249,42 @@ func (r *postgresRepository) AddItem(ctx context.Context, item *model.CartItem) 
 }
 
 func (r *postgresRepository) GetItemsWithBooks(ctx context.Context, cartID uuid.UUID, page int, limit int) ([]model.CartItemWithBook, int, error) {
-	offset := (page - 1) * limit
+	// Handle fetch all case
+	var limitClause string
+
+	var args []interface{}
+
+	if limit > 0 && page > 0 {
+		offset := (page - 1) * limit
+		limitClause = fmt.Sprintf("LIMIT $%d OFFSET $%d", len(args)+2, len(args)+3)
+		args = append(args, cartID, limit, offset)
+	} else {
+		// Fetch all - no limit/offset
+		limitClause = ""
+
+		args = []interface{}{cartID}
+	}
 
 	// Single query with window function for count + optimized join
 	query := `
         SELECT 
-            ci.id, 
-            ci.cart_id, 
-            ci.book_id, 
-            ci.quantity, 
-            ci.price, 
-            ci.created_at, 
-            ci.updated_at,
-            b.title as book_title,
-            b.slug as book_slug,
-            b.cover_url as book_cover_url,
+            ci.id, ci.cart_id, ci.book_id, ci.quantity, ci.price, 
+            ci.created_at, ci.updated_at,
+            b.title, b.slug, b.cover_url,
             a.name as book_author,
             b.price as current_price,
             b.is_active,
             COALESCE(bts.available, 0) as total_stock,
-            COUNT(*) OVER() as total_count -- ✅ Get count in same query
+            COUNT(*) OVER() as total_count
         FROM cart_items ci
         LEFT JOIN books b ON ci.book_id = b.id
         LEFT JOIN authors a ON b.author_id = a.id
-        LEFT JOIN books_total_stock bts ON b.id = bts.book_id -- ✅ Use view
+        LEFT JOIN books_total_stock bts ON b.id = bts.book_id
         WHERE ci.cart_id = $1
         ORDER BY ci.created_at DESC
-        LIMIT $2 OFFSET $3
-    `
+        ` + limitClause
 
-	rows, err := r.pool.Query(ctx, query, cartID, limit, offset)
+	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to query items: %w", err)
 	}
@@ -486,7 +517,7 @@ func (r *postgresRepository) RemoveCartPromo(ctx context.Context, cartID uuid.UU
 		UPDATE carts
 		SET 
 			promo_code = NULL,
-			discount = NULL,
+			discount = 0,
 			total = NULL,
 			updated_at = NOW()
 		WHERE id = $1
@@ -574,7 +605,8 @@ func (r *postgresRepository) GetByUserIDWithTx(ctx context.Context, tx pgx.Tx, u
 	query := `
         SELECT 
             id, user_id, session_id, items_count, subtotal, version,
-            created_at, updated_at, expires_at
+            created_at, updated_at, expires_at,
+						promo_code, discount, total, promo_metadata
         FROM carts
         WHERE user_id = $1
         FOR UPDATE -- Lock row for transaction
@@ -591,6 +623,10 @@ func (r *postgresRepository) GetByUserIDWithTx(ctx context.Context, tx pgx.Tx, u
 		&cart.CreatedAt,
 		&cart.UpdatedAt,
 		&cart.ExpiresAt,
+		&cart.PromoCode,
+		&cart.Discount, // ✅ Not pointer, scan directly
+		&cart.Total,
+		&cart.PromoMetadata, // ✅ Scan JSONB into map
 	)
 
 	if err != nil {
@@ -961,4 +997,20 @@ func (r *postgresRepository) ClearCartPromo(ctx context.Context, cartID uuid.UUI
 	}
 
 	return nil
+}
+
+// GetUserEmail retrieves user email by user ID
+func (r *postgresRepository) GetUserEmail(ctx context.Context, userID uuid.UUID) (string, error) {
+	query := `SELECT email FROM users WHERE id = $1`
+
+	var email string
+	err := r.pool.QueryRow(ctx, query, userID).Scan(&email)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", fmt.Errorf("user not found")
+		}
+		return "", fmt.Errorf("get user email: %w", err)
+	}
+
+	return email, nil
 }

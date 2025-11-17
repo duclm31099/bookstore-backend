@@ -382,14 +382,6 @@ func (h *Handler) RemovePromoCode(c *gin.Context) {
 // Checkout handles POST /me/cart/checkout
 // @Summary Complete checkout process
 // @Description Converts cart to order with full validation
-// @Tags Cart
-// @Accept json
-// @Produce json
-// @Param request body CheckoutRequest true "Checkout Request"
-// @Success 201 {object} SuccessResponse{data=CheckoutResponse}
-// @Failure 400 {object} ErrorResponse
-// @Failure 422 {object} ErrorResponse
-// @Failure 500 {object} ErrorResponse
 // @Router /me/cart/checkout [post]
 func (h *Handler) Checkout(c *gin.Context) {
 	// ===================================
@@ -464,7 +456,5 @@ func (h *Handler) Checkout(c *gin.Context) {
 		statusCode = http.StatusUnprocessableEntity // 422
 	}
 
-	response.Success(c, statusCode,
-		fmt.Sprintf("Checkout %s", result.Status),
-		result)
+	response.Success(c, statusCode, "Checkout completed", result)
 }

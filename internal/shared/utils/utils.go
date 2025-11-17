@@ -1,10 +1,13 @@
 package utils
 
 import (
+	"encoding/json"
+	"fmt"
 	"regexp"
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/hibiken/asynq"
 	"github.com/shopspring/decimal"
 )
 
@@ -85,4 +88,21 @@ func IsValidUUID(u string) bool {
 		return false
 	}
 	return true
+}
+
+// MarshalTask creates an Asynq task with JSON payload
+func MarshalTask(taskType string, payload interface{}) (*asynq.Task, error) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshal task payload: %w", err)
+	}
+	return asynq.NewTask(taskType, data), nil
+}
+
+// UnmarshalTask unmarshals Asynq task payload into target struct
+func UnmarshalTask(task *asynq.Task, target interface{}) error {
+	if err := json.Unmarshal(task.Payload(), target); err != nil {
+		return fmt.Errorf("unmarshal task payload: %w", err)
+	}
+	return nil
 }

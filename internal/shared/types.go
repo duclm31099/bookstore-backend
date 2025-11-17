@@ -1,6 +1,8 @@
 package shared
 
-import "time"
+import (
+	"time"
+)
 
 // SecurityAlertType defines types of security alerts
 type SecurityAlertType string
@@ -20,6 +22,10 @@ const (
 	TypeProcessBookImage       = "book:process_image"
 	TypeDeleteBookImages       = "book:delete_images"
 	TypeInventorySyncBookStock = "inventory:sync_book_stock"
+	TypeClearCart              = "cart:clear"
+	TypeSendOrderConfirmation  = "order:send_confirmation"
+	TypeAutoReleaseReservation = "inventory:auto_release_reservation"
+	TypeTrackCheckout          = "analytics:track_checkout"
 )
 
 // SecurityAlertPayload represents data for security alert

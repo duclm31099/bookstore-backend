@@ -314,7 +314,8 @@ func (c *Container) initServices() error {
 	c.InventoryService = inventoryService.NewService(c.InventoryRepo, c.AsynqClient)
 	c.CartService = cartService.NewCartService(
 		c.CartRepo, c.InventoryService,
-		c.AddressService, c.InventoryRepo, c.BookService,
+		c.AddressService, c.InventoryRepo,
+		c.BookService, c.OrderRepo, c.AsynqClient,
 	)
 	c.PromotionService = promotionService.NewPromotionService(c.PromotionRepo, c.DB.Pool, c.CartService)
 	c.OrderSerivce = orderService.NewOrderService(

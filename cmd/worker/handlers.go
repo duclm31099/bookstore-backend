@@ -4,6 +4,7 @@ import (
 	"github.com/hibiken/asynq"
 
 	bookJob "bookstore-backend/internal/domains/book/job"
+	cartJob "bookstore-backend/internal/domains/cart/job"
 	inventoryJob "bookstore-backend/internal/domains/inventory/job"
 	"bookstore-backend/internal/domains/user/job"
 	"bookstore-backend/internal/infrastructure/email"
@@ -28,7 +29,11 @@ type HandlerRegistry struct {
 	processBookImage *bookJob.ProcessImageHandler
 	deleteBookImages *bookJob.DeleteImagesHandler
 
-	inventorySync *inventoryJob.InventorySyncHandler
+	inventorySync          *inventoryJob.InventorySyncHandler
+	clearCart              *cartJob.ClearCartHandler
+	sendOrderConfirmation  *cartJob.SendOrderConfirmationHandler
+	autoReleaseReservation *cartJob.AutoReleaseReservationHandler
+	trackCheckout          *cartJob.TrackCheckoutHandler
 }
 
 // initializeHandlers creates all job handlers with their dependencies
@@ -54,6 +59,12 @@ func initializeHandlers(c *container.Container, cfg *Config) *HandlerRegistry {
 			c.InventoryRepo,
 			c.Cache,
 		),
+
+		// Cart
+		clearCart:              cartJob.NewClearCartHandler(c.CartRepo),
+		sendOrderConfirmation:  cartJob.NewSendOrderConfirmationHandler(emailSvc),
+		autoReleaseReservation: cartJob.NewAutoReleaseReservationHandler(c.OrderRepo, c.InventoryService),
+		trackCheckout:          cartJob.NewTrackCheckoutHandler(),
 	}
 }
 
@@ -73,4 +84,10 @@ func (h *HandlerRegistry) RegisterHandlers(mux *asynq.ServeMux) {
 	mux.HandleFunc(shared.TypeDeleteBookImages, h.deleteBookImages.ProcessTask)
 	// Inventory
 	mux.HandleFunc(shared.TypeInventorySyncBookStock, h.inventorySync.ProcessTask)
+
+	// Cart
+	mux.HandleFunc(shared.TypeClearCart, h.clearCart.ProcessTask)
+	mux.HandleFunc(shared.TypeSendOrderConfirmation, h.sendOrderConfirmation.ProcessTask)
+	mux.HandleFunc(shared.TypeAutoReleaseReservation, h.autoReleaseReservation.ProcessTask)
+	mux.HandleFunc(shared.TypeTrackCheckout, h.trackCheckout.ProcessTask)
 }

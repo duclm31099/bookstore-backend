@@ -66,6 +66,7 @@ type RepositoryInterface interface {
 	// UpdateCartPromo updates cart with promo code and discount
 	GetCartAndItem(ctx context.Context, cartID uuid.UUID, itemID uuid.UUID) (*model.Cart, *model.CartItem, error)
 	// RemoveCartPromo removes promo from cart
+	GetUserEmail(ctx context.Context, userID uuid.UUID) (string, error)
 	RemoveCartPromo(ctx context.Context, cartID uuid.UUID) error
 	GetItemWithBookByID(ctx context.Context, itemID uuid.UUID) (*model.CartItemWithBook, error)
 	// Transaction-aware methods

@@ -127,6 +127,7 @@ type OrderItem struct {
 	Price        decimal.Decimal `json:"price"`
 	Subtotal     decimal.Decimal `json:"subtotal"`
 	CreatedAt    time.Time       `json:"created_at"`
+	WarehouseID  *uuid.UUID      `json:"warehouse_id"`
 }
 
 // CalculateSubtotal calculates item subtotal
