@@ -1,5 +1,7 @@
 package model
 
+import "errors"
+
 // Checkout Error Codes Reference
 
 const (
@@ -35,4 +37,9 @@ const (
 	// System
 	ErrCheckoutLockFailed        = "LOCK_FAILED"
 	ErrCheckoutTransactionFailed = "TRANSACTION_FAILED"
+)
+
+var (
+	ErrItemNotFound        = errors.New("item not found")
+	ErrItemNotBelongToCart = errors.New("item does not belong to cart")
 )

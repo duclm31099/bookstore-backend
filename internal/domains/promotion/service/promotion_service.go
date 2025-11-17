@@ -217,7 +217,7 @@ func (s *promotionService) ApplyPromotionToCart(
 	fmt.Printf("validationResult %w", validationResult)
 
 	// Step 4: Store promo in cart
-	c, err := s.cart.ApplyPromoCode(ctx, cart.ID, code, userID.String())
+	c, err := s.cart.ApplyPromoCode(ctx, cart.ID, code, userID)
 	if err != nil {
 		return nil, fmt.Errorf("apply promotion to cart: %w", err)
 	}

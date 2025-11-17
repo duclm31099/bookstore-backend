@@ -21,6 +21,11 @@ type CartValidationResult struct {
 	ItemValidations []ItemValidation        `json:"item_validations"`
 	TotalValue      decimal.Decimal         `json:"total_value"`
 	EstimatedTotal  decimal.Decimal         `json:"estimated_total"`
+	SnapshotTotal   decimal.Decimal         `json:"snapshot_total"`
+}
+type ClearCartResponse struct {
+	DeletedCount int    `json:"deleted_count"`
+	Message      string `json:"message"`
 }
 
 // CartValidationError represents validation error
@@ -270,4 +275,43 @@ type PaymentCheckoutInfo struct {
 	ExpiresAt      *time.Time `json:"expires_at,omitempty"`      // Payment deadline
 	PaymentGateway string     `json:"payment_gateway,omitempty"` // Stripe, VNPay, etc
 	RedirectURL    *string    `json:"redirect_url,omitempty"`    // URL to complete payment
+}
+type ValidatePromoRequest struct {
+	PromoCode string
+	UserID    uuid.UUID
+	CartTotal decimal.Decimal
+	CartID    uuid.UUID // For checking if user is first-time buyer
+}
+
+// PromotionValidationResult contains validation result and promo details
+type PromotionValidationResult struct {
+	// Validation status
+	IsValid bool
+	Reason  string // Reason if invalid
+
+	// Promotion details
+	PromotionID uuid.UUID
+	Code        string
+	Name        string
+	Description string
+
+	// Discount calculation
+	DiscountType  string // "percentage" or "fixed"
+	DiscountValue decimal.Decimal
+	MaxDiscount   *decimal.Decimal
+
+	// Constraints
+	MinOrderAmount        decimal.Decimal
+	ApplicableCategoryIDs []uuid.UUID
+	FirstOrderOnly        bool
+
+	// Usage limits
+	MaxUses        *int
+	MaxUsesPerUser int
+	CurrentUses    int
+	UserUsageCount int
+
+	// Validity period
+	StartsAt  time.Time
+	ExpiresAt time.Time
 }

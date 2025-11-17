@@ -175,7 +175,7 @@ type RepositoryInterface interface {
 		ctx context.Context, tx pgx.Tx,
 		warehouseID uuid.UUID, bookID uuid.UUID, quantity int, userid *uuid.UUID,
 	) error
-
+	GetBookTotalStock(ctx context.Context, bookID string) (*model.BookTotalStock, error)
 	// ReleaseStockWithTx releases stock using provided transaction
 	ReleaseStockWithTx(ctx context.Context, tx pgx.Tx,
 		warehouseID uuid.UUID, bookID uuid.UUID, quantity int, userid *uuid.UUID) error

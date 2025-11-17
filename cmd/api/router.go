@@ -223,6 +223,22 @@ func SetupRouter(c *container.Container) *gin.Engine {
 			bookRouter.GET("/export", c.BookHandler.ExportBooks)
 		}
 
+		// ----------------------------------- WAREHOUSE ----------------------------
+		warehouses := v1.Group("/warehouses")
+		{
+			warehouses.POST("", c.WarehouseHandler.CreateWarehouse)          // Tạo kho mới
+			warehouses.PUT(":id", c.WarehouseHandler.UpdateWarehouse)        // Cập nhật thông tin kho
+			warehouses.DELETE(":id", c.WarehouseHandler.SoftDeleteWarehouse) // Xóa (soft)
+			warehouses.GET(":id", c.WarehouseHandler.GetWarehouseByID)       // Lấy chi tiết kho (by id)
+			warehouses.GET("", c.WarehouseHandler.ListWarehouses)            // List warehouse (filter, paging)
+
+			warehouses.GET(":id", c.WarehouseHandler.GetWarehouseByID)                              // Xem chi tiết kho
+			warehouses.GET("/code/:code", c.WarehouseHandler.GetWarehouseByCode)                    // Lấy kho theo code
+			warehouses.GET("", c.WarehouseHandler.ListActiveWarehouses)                             // List các kho đang hoạt động (không phân trang)
+			warehouses.GET("/nearest-with-stock", c.WarehouseHandler.FindNearestWarehouseWithStock) // Tìm kho gần nhất còn stock cho book
+			warehouses.GET("/validate-stock", c.WarehouseHandler.ValidateWarehouseHasStock)         // Validate kho còn hàng theo đầu sách (optional)
+
+		}
 		// ---------------------------------- INVENTORY ROUTES ------------------------------------
 
 		inventoryRouter := v1.Group("/inventories")

@@ -2,11 +2,13 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hibiken/asynq"
 	"github.com/shopspring/decimal"
 
 	addressModel "bookstore-backend/internal/domains/address/model"
@@ -18,6 +20,9 @@ import (
 	"bookstore-backend/internal/domains/order/repository"
 	modelPromo "bookstore-backend/internal/domains/promotion/model"
 	promo "bookstore-backend/internal/domains/promotion/repository"
+	warehouse "bookstore-backend/internal/domains/warehouse/service"
+	"bookstore-backend/internal/shared"
+	"bookstore-backend/pkg/logger"
 )
 
 // =====================================================
@@ -25,63 +30,71 @@ import (
 // =====================================================
 type orderService struct {
 	orderRepo        repository.OrderRepository
-	warehouseRepo    repository.WarehouseRepository
+	warehouseService warehouse.Service
 	inventoryRepo    invenRepo.RepositoryInterface
 	addressRepo      address.RepositoryInterface
 	cartRepo         cart.RepositoryInterface
 	promoRepo        promo.PromotionRepository
 	inventorySerivce invenSer.ServiceInterface
+	asynq            *asynq.Client // DI từ container, queue riêng inventory
+
 }
 
 // NewOrderService creates a new order service
 func NewOrderService(
 	orderRepo repository.OrderRepository,
-	warehouseRepo repository.WarehouseRepository,
+	warehouseService warehouse.Service,
 	inventoryRepo invenRepo.RepositoryInterface,
 	addressRepo address.RepositoryInterface,
 	cartRepo cart.RepositoryInterface,
 	promoRepo promo.PromotionRepository,
 	inventorySerivce invenSer.ServiceInterface,
+	asynq *asynq.Client,
+
 ) OrderService {
 	return &orderService{
 		orderRepo:        orderRepo,
-		warehouseRepo:    warehouseRepo,
+		warehouseService: warehouseService,
 		inventoryRepo:    inventoryRepo,
 		addressRepo:      addressRepo,
 		cartRepo:         cartRepo,
 		promoRepo:        promoRepo,
 		inventorySerivce: inventorySerivce,
+		asynq:            asynq,
 	}
 }
 
 // =====================================================
 // CREATE ORDER - MAIN BUSINESS LOGIC
 // =====================================================
-
 func (s *orderService) CreateOrder(ctx context.Context, userID uuid.UUID, req model.CreateOrderRequest) (*model.CreateOrderResponse, error) {
 	// Step 1: Validate request
 	if err := req.Validate(); err != nil {
 		return nil, model.NewOrderError(model.ErrCodeOrderNotFound, "Invalid request", err)
 	}
 
-	// Step 2: Validate address and get address details (including province for warehouse selection)
+	// Step 2: Get address and coordinates (for warehouse selection)
 	address, err := s.addressRepo.GetDefaultByUserID(ctx, userID)
 	if err != nil {
-		return nil, model.NewOrderError(model.ErrCodeInvalidAddress, "Invalid address", err)
+		return nil, model.NewOrderError(model.ErrCodeInvalidAddress, "Invalid or missing address", err)
 	}
 
-	// Step 3: Get cart items (validate items from request against books in DB)
-	// For simplicity, we'll fetch book details for each item in the request
-	// In production, you might want to validate against cart or fetch from book service
+	// Validate address có tọa độ (nếu cần thiết cho lookup kho gần nhất)
+	// Nếu address chưa có lat/lon, có thể fallback về province mapping hoặc geocode
+	// if address.Latitude == 0 || address.Longitude == 0 {
+	// 	return nil, model.NewOrderError(model.ErrCodeInvalidAddress, "Address must have valid coordinates", nil)
+	// }
+
+	// Step 3: Validate và lấy book items
 	bookItems, err := s.validateAndFetchBookItems(ctx, req.Items)
 	if err != nil {
 		return nil, err
 	}
 
-	// Step 4: Calculate order subtotal from items
+	// Step 4: Calculate order subtotal
 	subtotal := s.calculateItemsSubtotal(bookItems)
 
-	// Step 5: Validate and apply promotion (if provided)
+	// Step 5: Validate và apply promotion (nếu có)
 	var promotion *modelPromo.Promotion
 	var discountAmount decimal.Decimal
 	if req.PromoCode != nil && *req.PromoCode != "" {
@@ -89,13 +102,9 @@ func (s *orderService) CreateOrder(ctx context.Context, userID uuid.UUID, req mo
 		if err != nil {
 			return nil, model.NewOrderError(model.ErrCodePromoInvalid, "Invalid promotion code", err)
 		}
-
-		// Validate promotion
 		if err := s.validatePromotion(promotion, subtotal, userID); err != nil {
 			return nil, err
 		}
-
-		// Calculate discount
 		discountAmount = s.calculateDiscount(promotion, subtotal)
 	} else {
 		discountAmount = decimal.Zero
@@ -105,49 +114,78 @@ func (s *orderService) CreateOrder(ctx context.Context, userID uuid.UUID, req mo
 	isCOD := req.PaymentMethod == model.PaymentMethodCOD
 	_, finalDiscount, shippingFee, codFee, taxAmount, total := model.CalculateOrderAmounts(
 		subtotal,
-		decimal.Zero, // Will be calculated in calculateDiscount
+		decimal.Zero,
 		decimal.Zero,
 		discountAmount,
-		"", // Type determined in calculateDiscount
+		"",
 		isCOD,
 	)
 
-	// Step 7: Select warehouse based on province
-	warehouseCode := model.GetWarehouseCodeByProvince(address.Province)
-	warehouseID, err := s.warehouseRepo.GetWarehouseIDByCode(ctx, warehouseCode)
-	if err != nil {
-		// Fallback to default warehouse
-		warehouseID, err = s.warehouseRepo.GetWarehouseIDByCode(ctx, model.DefaultWarehouseCode)
-		if err != nil {
-			return nil, model.NewOrderError(model.ErrCodeInvalidWarehouse, "No warehouse available", err)
+	// ==================== WAREHOUSE SELECTION (SỬ DỤNG WAREHOUSE SERVICE MỚI) ====================
+	// Step 7: Tìm kho gần nhất có đủ hàng cho TẤT CẢ books trong đơn
+	// Logic: Với mỗi book, tìm kho gần nhất còn đủ stock, sau đó chọn kho xuất hiện nhiều nhất
+	// hoặc đơn giản: chọn kho đầu tiên có thể fulfill toàn bộ đơn (tuỳ business bạn)
+
+	// Đơn giản nhất (v1): Giả định order chỉ ship từ 1 kho duy nhất
+	// → Chọn kho gần nhất mà có thể đáp ứng TẤT CẢ item (loop qua từng item check)
+
+	var selectedWarehouseID uuid.UUID
+	var selectedWarehouseName string
+
+	// Tìm kho gần nhất cho item đầu tiên (làm ví dụ)
+	// Trong thực tế, nên loop qua tất cả item và chọn kho phù hợp nhất
+	firstItem := bookItems[0]
+	nearestWH, err := s.warehouseService.FindNearestWarehouseWithStock(
+		ctx,
+		firstItem.BookID,
+		address.Latitude,
+		address.Longitude,
+		firstItem.Quantity,
+	)
+	if err != nil || nearestWH == nil {
+		return nil, model.NewOrderError(
+			model.ErrCodeInsufficientStock,
+			fmt.Sprintf("No warehouse with stock found for book: %s", firstItem.BookTitle),
+			err,
+		)
+	}
+
+	selectedWarehouseID = nearestWH.ID
+	selectedWarehouseName = nearestWH.Name
+
+	// Validate kho này có đủ stock cho TẤT CẢ items không (vòng lặp check)
+	for _, item := range bookItems {
+		hasStock, err := s.warehouseService.ValidateWarehouseHasStock(
+			ctx,
+			selectedWarehouseID,
+			item.BookID,
+			item.Quantity,
+		)
+		if err != nil || !hasStock {
+			// Nếu kho này không đủ stock cho 1 item bất kỳ
+			// Logic nâng cao: Tìm kho gần tiếp theo hoặc split shipment
+			// Logic đơn giản: Trả lỗi hết hàng
+			return nil, model.NewOrderError(
+				model.ErrCodeInsufficientStock,
+				fmt.Sprintf("Warehouse %s does not have sufficient stock for book: %s", selectedWarehouseName, item.BookTitle),
+				nil,
+			)
 		}
 	}
 
-	// Step 8: Start transaction for atomic operations
+	// ==================== TRANSACTION BEGINS ====================
+	// Step 8: Start transaction
 	tx, err := s.orderRepo.BeginTx(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer s.orderRepo.RollbackTx(ctx, tx)
 
-	// Step 9: Reserve inventory for all items
+	// Step 9: Reserve inventory cho tất cả items TẠI KHO ĐÃ CHỌN
 	for _, item := range bookItems {
-		// Check available stock first
-		available, err := s.inventorySerivce.CheckAvailableStock(ctx, warehouseID, item.BookID, item.Quantity)
+		err = s.inventoryRepo.ReserveStockWithTx(ctx, tx, selectedWarehouseID, item.BookID, item.Quantity, &userID)
 		if err != nil {
-			return nil, fmt.Errorf("failed to check stock: %w", err)
-		}
-		if !available {
-			return nil, model.NewOrderError(
-				model.ErrCodeInsufficientStock,
-				fmt.Sprintf("Insufficient stock for book: %s", item.BookTitle),
-				model.ErrInsufficientStock,
-			)
-		}
-
-		// Reserve stock using database function
-		err = s.inventoryRepo.ReserveStockWithTx(ctx, tx, warehouseID, item.BookID, item.Quantity, &userID)
-		if err != nil {
+			// Nếu reserve fail (race condition, hết hàng đột ngột), rollback transaction
 			return nil, model.NewOrderError(
 				model.ErrCodeInsufficientStock,
 				fmt.Sprintf("Failed to reserve stock for book: %s", item.BookTitle),
@@ -156,7 +194,7 @@ func (s *orderService) CreateOrder(ctx context.Context, userID uuid.UUID, req mo
 		}
 	}
 
-	// Step 10: Create order entity
+	// Step 10: Tạo order entity
 	orderID := uuid.New()
 	var promotionID *uuid.UUID
 	if promotion != nil {
@@ -168,7 +206,7 @@ func (s *orderService) CreateOrder(ctx context.Context, userID uuid.UUID, req mo
 		UserID:         userID,
 		AddressID:      req.AddressID,
 		PromotionID:    promotionID,
-		WarehouseID:    &warehouseID,
+		WarehouseID:    &selectedWarehouseID,
 		Subtotal:       subtotal,
 		ShippingFee:    shippingFee,
 		CODFee:         codFee,
@@ -181,30 +219,27 @@ func (s *orderService) CreateOrder(ctx context.Context, userID uuid.UUID, req mo
 		Version:        0,
 	}
 
-	// Set initial order status based on payment method
-	// COD orders are immediately confirmed, online payment orders are pending
 	if isCOD {
 		order.Status = model.OrderStatusConfirmed
-		order.PaymentStatus = model.PaymentStatusPending // COD payment is pending until delivery
 	} else {
-		order.Status = model.OrderStatusPending // Wait for payment
+		order.Status = model.OrderStatusPending
 	}
 
-	// Step 11: Create order in database
+	// Step 11: Tạo order trong DB
 	if err := s.orderRepo.CreateOrderWithTx(ctx, tx, order); err != nil {
 		return nil, fmt.Errorf("failed to create order: %w", err)
 	}
 
-	// Step 12: Create order items
+	// Step 12: Tạo order items
 	orderItems := s.buildOrderItems(orderID, bookItems)
 	if err := s.orderRepo.CreateOrderItemsWithTx(ctx, tx, orderItems); err != nil {
 		return nil, fmt.Errorf("failed to create order items: %w", err)
 	}
 
-	// Step 13: Create initial order status history
+	// Step 13: Tạo order status history
 	statusHistory := &model.OrderStatusHistory{
 		OrderID:    orderID,
-		FromStatus: nil, // Initial status
+		FromStatus: nil,
 		ToStatus:   order.Status,
 		ChangedBy:  &userID,
 		Notes:      nil,
@@ -213,28 +248,24 @@ func (s *orderService) CreateOrder(ctx context.Context, userID uuid.UUID, req mo
 		return nil, fmt.Errorf("failed to create order status history: %w", err)
 	}
 
-	// Step 14: Create promotion usage record (if promotion was used)
-	usage := &modelPromo.PromotionUsage{
-		PromotionID:    promotion.ID,
-		UserID:         userID,
-		OrderID:        orderID,
-		DiscountAmount: discountAmount,
-	}
+	// Step 14: Tạo promotion usage (nếu có)
 	if promotion != nil {
+		usage := &modelPromo.PromotionUsage{
+			PromotionID:    promotion.ID,
+			UserID:         userID,
+			OrderID:        orderID,
+			DiscountAmount: discountAmount,
+		}
 		if err := s.promoRepo.CreateUsage(ctx, tx, usage); err != nil {
 			return nil, fmt.Errorf("failed to create promotion usage: %w", err)
 		}
 	}
 
-	// Step 15: Clear user's cart (items were successfully ordered)
-	// Note: We're clearing the entire cart. In production, you might want to
-	// only remove items that were actually ordered if cart can have more items.
+	// Step 15: Clear cart
 	cart, err := s.cartRepo.GetByUserID(ctx, userID)
 	if err == nil && cart != nil {
 		if _, err := s.cartRepo.ClearCartItems(ctx, cart.ID); err != nil {
-			// Non-critical error, log but don't fail the order
-			// In production, you should log this properly
-			fmt.Printf("Warning: failed to clear cart: %v\n", err)
+			logger.Error("Warning: failed to clear cart after order", err)
 		}
 	}
 
@@ -243,14 +274,31 @@ func (s *orderService) CreateOrder(ctx context.Context, userID uuid.UUID, req mo
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	// Step 17: Return response
-	// Note: For VNPay/Momo, payment_url will be generated by separate payment service
+	// ==================== POST-COMMIT: ENQUEUE INVENTORY SYNC JOB ====================
+	// Step 17: Enqueue InventorySyncJob cho từng book trong đơn
+	for _, item := range orderItems {
+		payload := shared.InventorySyncPayload{
+			BookID: item.BookID.String(),
+			Source: "SALE", // Source chính xác là SALE khi order thành công
+		}
+		b, err := json.Marshal(payload)
+		if err == nil {
+			task := asynq.NewTask(shared.TypeInventorySyncBookStock, b)
+			if _, err := s.asynq.Enqueue(task, asynq.Queue("inventory")); err != nil {
+				logger.Error("Failed to enqueue InventorySyncJob after order", err)
+			}
+		} else {
+			logger.Error("InventorySyncJob payload marshal error after order", err)
+		}
+	}
+
+	// Step 18: Trả response
 	response := &model.CreateOrderResponse{
 		OrderID:     orderID,
 		OrderNumber: order.OrderNumber,
 		Total:       total,
 		Status:      order.Status,
-		PaymentURL:  nil, // Will be set by payment service endpoint
+		PaymentURL:  nil, // Sẽ được set bởi payment service
 	}
 
 	return response, nil
@@ -420,7 +468,18 @@ func (s *orderService) CancelOrder(ctx context.Context, orderID uuid.UUID, userI
 	if err := s.orderRepo.CommitTx(ctx, tx); err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
-
+	// ===== Enqueue InventorySyncJob cho từng book trong đơn =====
+	for _, item := range items {
+		payload := shared.InventorySyncPayload{
+			BookID: item.BookID.String(),
+			Source: "RELEASE", // hoặc "ORDER_CANCELLED"
+		}
+		b, _ := json.Marshal(payload)
+		task := asynq.NewTask(shared.TypeInventorySyncBookStock, b)
+		if _, err := s.asynq.Enqueue(task, asynq.Queue("inventory")); err != nil {
+			logger.Error("Failed to enqueue InventorySyncJob after cancel order", err)
+		}
+	}
 	// Note: For paid orders, refund will be handled manually by admin
 	// as per business requirement
 
@@ -977,6 +1036,18 @@ func (s *orderService) CancelOrderBySystem(
 	// Step 7: Commit transaction
 	if err := s.orderRepo.CommitTx(ctx, tx); err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+	// ===== Enqueue InventorySyncJob cho từng book trong đơn =====
+	for _, item := range items {
+		payload := shared.InventorySyncPayload{
+			BookID: item.BookID.String(),
+			Source: "RELEASE", // hoặc "ORDER_CANCELLED"
+		}
+		b, _ := json.Marshal(payload)
+		task := asynq.NewTask(shared.TypeInventorySyncBookStock, b)
+		if _, err := s.asynq.Enqueue(task, asynq.Queue("inventory")); err != nil {
+			logger.Error("Failed to enqueue InventorySyncJob after cancel order", err)
+		}
 	}
 
 	// TODO: Send notification to user

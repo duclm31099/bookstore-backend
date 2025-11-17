@@ -40,7 +40,7 @@ type ServiceInterface interface {
 	// Validates: quantity > 0, quantity ≤ 100
 	// If quantity = 0 → removes item
 	UpdateItemQuantity(ctx context.Context, cartID uuid.UUID, itemID uuid.UUID, quantity int) (*model.CartItemResponse, error)
-
+	ValidatePromoCode(ctx context.Context, req *model.ValidatePromoRequest) (*model.PromotionValidationResult, error)
 	// RemoveItem removes item from cart
 	// Returns: error if item not found
 	RemoveItem(ctx context.Context, cartID uuid.UUID, itemID uuid.UUID) error
@@ -48,15 +48,15 @@ type ServiceInterface interface {
 	// ClearCart removes all items from cart but keeps cart itself
 	// Used when user wants to empty cart
 	// Returns: error if failed
-	ClearCart(ctx context.Context, cartID uuid.UUID) error
+	ClearCart(ctx context.Context, cartID uuid.UUID) (int, error)
 	// ValidateCart validates cart before checkout
 	// Returns: validation result with errors and warnings
 	// Does NOT modify cart
-	ValidateCart(ctx context.Context, cartID uuid.UUID, userId string) (*model.CartValidationResult, error)
+	ValidateCart(ctx context.Context, cartID uuid.UUID, userId uuid.UUID) (*model.CartValidationResult, error)
 
 	// ApplyPromoCode applies promo code to cart
 	// Returns: discount info if valid, error if invalid/expired
-	ApplyPromoCode(ctx context.Context, cartID uuid.UUID, promoCode string, userId string) (*model.ApplyPromoResponse, error)
+	ApplyPromoCode(ctx context.Context, cartID uuid.UUID, promoCode string, userId uuid.UUID) (*model.ApplyPromoResponse, error)
 
 	// RemovePromoCode removes promo from cart
 	RemovePromoCode(ctx context.Context, cartID uuid.UUID) error

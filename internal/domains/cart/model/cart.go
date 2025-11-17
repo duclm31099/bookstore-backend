@@ -33,15 +33,24 @@ type CartResponse struct {
 	DiscountAmount *decimal.Decimal `json:"discount_amount,omitempty"`
 	Total          *decimal.Decimal `json:"total,omitempty"`
 
-	ExpiresAt time.Time `json:"expires_at"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ExpiresAt  time.Time `json:"expires_at"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+	Pagination `json:"pagination"`
+}
+
+type Pagination struct {
+	Page       int `json:"page"`
+	PageSize   int `json:"page_size"`
+	TotalItems int `json:"total_items"`
+	TotalPages int `json:"total_pages"`
 }
 
 // CartItemResponse represents cart item with book details
 type CartItemResponse struct {
 	ID       uuid.UUID       `json:"id"`
 	BookID   uuid.UUID       `json:"book_id"`
+	CartID   uuid.UUID       `json:"cart_id"`
 	Quantity int             `json:"quantity"`
 	Price    decimal.Decimal `json:"price"`    // Snapshot price
 	Subtotal decimal.Decimal `json:"subtotal"` // quantity * price
@@ -54,9 +63,10 @@ type CartItemResponse struct {
 	CurrentPrice   decimal.Decimal `json:"current_price"` // Current book price (may differ from snapshot)
 	IsAvailable    bool            `json:"is_available"`
 	AvailableStock int             `json:"available_stock"`
-
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	IsActive       bool            `json:"is_active"`
+	CreatedAt      time.Time       `json:"created_at"`
+	TotalStock     int             `json:"total_stock"`
+	UpdatedAt      time.Time       `json:"updated_at"`
 }
 
 // CartItemWithBook is used for query with JOIN

@@ -12,13 +12,14 @@ const (
 	AlertSuspiciousActivity SecurityAlertType = "suspicious_activity"
 	AlertAccountLocked      SecurityAlertType = "account_locked"
 
-	TypeCleanupExpiredToken   = "auth:cleanup_expired_tokens"
-	TypeProcessFailedLogin    = "auth:process_failed_login"
-	TypeSendSecurityAlert     = "auth:send_security_alert"
-	TypeSendVerificationEmail = "email:verification"
-	TypeSendResetEmail        = "email:reset_password"
-	TypeProcessBookImage      = "book:process_image"
-	TypeDeleteBookImages      = "book:delete_images"
+	TypeCleanupExpiredToken    = "auth:cleanup_expired_tokens"
+	TypeProcessFailedLogin     = "auth:process_failed_login"
+	TypeSendSecurityAlert      = "auth:send_security_alert"
+	TypeSendVerificationEmail  = "email:verification"
+	TypeSendResetEmail         = "email:reset_password"
+	TypeProcessBookImage       = "book:process_image"
+	TypeDeleteBookImages       = "book:delete_images"
+	TypeInventorySyncBookStock = "inventory:sync_book_stock"
 )
 
 // SecurityAlertPayload represents data for security alert
@@ -42,4 +43,10 @@ type UserBasicInfo struct {
 	ID       string
 	Email    string
 	FullName string
+}
+
+type InventorySyncPayload struct {
+	BookID        string `json:"book_id"`                  // UUID của book
+	Source        string `json:"source,omitempty"`         // RESERVE|RELEASE|SALE|ADMIN_ADJUST|BULK_INVENTORY (optional)
+	CorrelationID string `json:"correlation_id,omitempty"` // trace id (optional)
 }

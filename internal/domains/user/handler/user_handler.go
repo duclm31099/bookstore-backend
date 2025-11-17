@@ -176,29 +176,25 @@ func (h *UserHandler) Login(c *gin.Context) {
 	// ✅ STEP 5: REMOVE REFRESH TOKEN FROM RESPONSE BODY
 	res.RefreshToken = "" // ← Đừng trả về body nữa
 
+	// Set refresh token cookie
+	c.SetCookie("refresh_token", res.RefreshToken, 7*24*3600, "/", "", true, true)
+	res.RefreshToken = ""
+
+	// Merge cart if user had anonymous session
 	sessionID := middleware.GetSessionID(c)
-	logger.Info("out of if block", map[string]interface{}{
-		"sessionID": sessionID,
-	})
 	if sessionID != "" {
-		logger.Info("merge", map[string]interface{}{
-			"sessionID": sessionID,
-		})
-		// User had anonymous cart before login
-		err = h.cartService.MergeCart(c.Request.Context(), sessionID, res.User.ID)
-		logger.Info("merge cart fail", map[string]interface{}{
-			"err": err,
-		})
-		// Clear session cookie (no longer needed)
-		c.SetCookie(
-			middleware.SessionCookieName,
-			"",
-			-1,
-			"/",
-			"",
-			true,
-			true,
-		)
+		if err := h.cartService.MergeCart(c.Request.Context(), sessionID, res.User.ID); err != nil {
+			// Log error but DON'T fail login
+			logger.Info("Failed to merge cart after login", map[string]interface{}{
+				"user_id":    res.User.ID,
+				"session_id": sessionID,
+				"error":      err.Error(),
+			})
+
+		}
+
+		// Clear session cookie
+		c.SetCookie(middleware.SessionCookieName, "", -1, "/", "", true, true)
 	}
 
 	// STEP 6: SUCCESS

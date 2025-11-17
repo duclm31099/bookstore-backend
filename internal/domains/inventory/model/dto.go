@@ -444,3 +444,13 @@ type ReservationMetrics struct {
 	AvgDurationMinutes int            `json:"avg_duration_minutes"`
 	ConversionRate     float64        `json:"conversion_rate_percent"` // reserved → sale
 }
+
+// BookTotalStock đại diện cho 1 row trong view books_total_stock
+type BookTotalStock struct {
+	BookID              string   `json:"book_id"`
+	TotalQuantity       int      `json:"total_quantity"`
+	TotalReserved       int      `json:"total_reserved"`
+	Available           int      `json:"available"`
+	WarehouseCount      int      `json:"warehouse_count"`
+	WarehousesWithStock []string `json:"warehouses_with_stock"`
+}

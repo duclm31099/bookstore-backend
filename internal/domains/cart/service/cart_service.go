@@ -9,9 +9,11 @@ import (
 	inveRepo "bookstore-backend/internal/domains/inventory/repository"
 	inveService "bookstore-backend/internal/domains/inventory/service"
 	"bookstore-backend/internal/shared/utils"
+	"bookstore-backend/pkg/logger"
 	"context"
 	"fmt"
 	"math/rand"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -32,6 +34,7 @@ func NewCartService(
 	addressSvc addressService.ServiceInterface,
 	inventoryRepo inveRepo.RepositoryInterface,
 	book bookS.ServiceInterface,
+
 ) ServiceInterface {
 	return &CartService{
 		repository:       r,
@@ -47,25 +50,32 @@ func (s *CartService) GetOrCreateCart(ctx context.Context, userID *uuid.UUID, se
 	var cart *model.Cart
 	var err error
 
-	// Step 1: Fetch existing cart
-	if userID != nil {
-		cart, err = s.repository.GetByUserID(ctx, *userID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get user cart: %w", err)
-		}
-	} else if sessionID != nil {
-		cart, err = s.repository.GetBySessionID(ctx, *sessionID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get session cart: %w", err)
-		}
-	} else {
+	// Step 1: Validate input
+	if userID == nil && sessionID == nil {
 		return nil, fmt.Errorf("either user_id or session_id must be provided")
 	}
 
-	// Step 2: Create new cart if not exists
+	// Step 2: Fetch existing cart
+	if userID != nil {
+		cart, err = s.repository.GetByUserID(ctx, *userID)
+	} else {
+		cart, err = s.repository.GetBySessionID(ctx, *sessionID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get cart: %w", err)
+	}
+
+	// Step 3: Check if cart expired
+	if cart != nil && cart.ExpiresAt.Before(time.Now()) {
+		// Cart expired → clear items and reset
+		_ = s.repository.DeleteCart(ctx, cart.ID) // Best effort
+		cart = nil                                // Force create new cart
+	}
+
+	// Step 4: Create new cart if not exists
+	var createdCart *model.Cart
 	if cart == nil {
 		cart = &model.Cart{
-			ID:         uuid.New(),
 			UserID:     userID,
 			SessionID:  sessionID,
 			ItemsCount: 0,
@@ -76,19 +86,24 @@ func (s *CartService) GetOrCreateCart(ctx context.Context, userID *uuid.UUID, se
 			ExpiresAt:  time.Now().Add(30 * 24 * time.Hour),
 		}
 
-		if err := s.repository.Create(ctx, cart); err != nil {
+		// Use INSERT ... ON CONFLICT to prevent duplicate cart
+		createdCart, err = s.repository.CreateOrGet(ctx, cart)
+		if err != nil {
 			return nil, fmt.Errorf("failed to create cart: %w", err)
 		}
 	} else {
-		// Step 3: Update expiration (keep-alive)
-		_ = s.repository.UpdateExpiration(ctx, cart.ID) // Ignore error, non-critical
+		// Step 5: Update expiration (keep-alive)
+		if err := s.repository.UpdateExpiration(ctx, createdCart.ID); err != nil {
+			// Log warning but don't fail request
+			logger.Error("Failed to update cart expiration", err)
+		}
 	}
 
-	// Step 4: Fetch all items with book details
-	items, _, err := s.repository.GetItemsWithBooks(ctx, cart.ID, 1, 1000) // Get all (max 1000)
+	// Step 6: Fetch all items with book details (no hardcode limit)
+	items, _, err := s.repository.GetItemsWithBooks(ctx, createdCart.ID, 0, 0) // 0,0 = fetch all
 	if err != nil {
 		// Log but continue - return cart without items
-		fmt.Printf("⚠️  Warning: failed to get cart items: %v\n", err)
+		logger.Error("Failed to get cart items", err)
 		return cart.ToResponse([]model.CartItemResponse{}), nil
 	}
 
@@ -101,7 +116,6 @@ func (s *CartService) GetOrCreateCart(ctx context.Context, userID *uuid.UUID, se
 	return cart.ToResponse(itemResponses), nil
 }
 
-// AddItem implements ServiceInterface.AddItem
 func (s *CartService) AddItem(ctx context.Context, cartID uuid.UUID, req model.AddToCartRequest) (*model.CartItemResponse, error) {
 	// Step 1: Validate cart exists and not expired
 	cart, err := s.repository.GetByID(ctx, cartID)
@@ -109,74 +123,122 @@ func (s *CartService) AddItem(ctx context.Context, cartID uuid.UUID, req model.A
 		return nil, fmt.Errorf("failed to get cart: %w", err)
 	}
 	if cart == nil {
-		return nil, fmt.Errorf("cart not found: %s", cartID)
+		return nil, fmt.Errorf("cart not found")
 	}
 	if cart.IsExpired() {
 		return nil, fmt.Errorf("cart has expired")
 	}
 
-	// Step 2: Check if book already in cart
+	// Step 2: Validate request quantity
+	if req.Quantity <= 0 || req.Quantity > 100 {
+		return nil, model.ErrInvalidQuantity
+	}
+
+	// Step 3: Get book and validate
+	book, err := s.bookService.GetBookDetail(ctx, req.BookID.String())
+	if err != nil {
+		return nil, fmt.Errorf("book not found: %w", err)
+	}
+	if !book.IsActive {
+		return nil, fmt.Errorf("book is not available")
+	}
+
+	// Step 4: Check existing item
 	existingItem, err := s.repository.GetItemByBookInCart(ctx, cartID, req.BookID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check existing item: %w", err)
 	}
 
-	// Step 3: Validate quantity
-	if req.Quantity <= 0 || req.Quantity > 100 {
-		return nil, fmt.Errorf("%w: quantity=%d", model.ErrInvalidQuantity, req.Quantity)
-	}
+	// Step 5: Calculate final quantity and validate
+	var finalQuantity int
+	var isUpdate bool
 
-	// Step 4: Verify stock availability (from inventory service)
-	// Check all warehouses for simplicity for now
-	inventories, err := s.inventoryRepo.GetInventoriesByBook(ctx, req.BookID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to check stock availability: %w", err)
-	}
-
-	// Calculate total available stock across warehouses
-	totalAvailable := 0
-	for _, inv := range inventories {
-		totalAvailable += inv.AvailableQuantity
-	}
-
-	if totalAvailable < req.Quantity {
-		return nil, fmt.Errorf("insufficient stock: requested %d, available %d", req.Quantity, totalAvailable)
-	}
-
-	// Step 5: Get current book price (from books table)
-	book, err := s.bookService.GetBookDetail(ctx, req.BookID.String())
-	currentPrice := book.Price
-
-	// Step 5: Create or update cart item
 	if existingItem != nil {
-		// Update existing
-		existingItem.Quantity = req.Quantity
-		if err := s.repository.AddItem(ctx, existingItem); err != nil {
-			return nil, fmt.Errorf("failed to update item: %w", err)
+		finalQuantity = existingItem.Quantity + req.Quantity
+		isUpdate = true
+	} else {
+		finalQuantity = req.Quantity
+		isUpdate = false
+	}
+
+	if finalQuantity > 100 {
+		currentQty := 0
+		if existingItem != nil {
+			currentQty = existingItem.Quantity
+		}
+		return nil, fmt.Errorf("maximum 100 items per product (current: %d, adding: %d)", currentQty, req.Quantity)
+	}
+
+	// Step 6: Check stock availability (only for increment)
+	if isUpdate {
+		incrementQty := req.Quantity
+		if incrementQty > 0 {
+			// Only check stock for increment
+			totalAvailable := s.getTotalAvailableStock(ctx, req.BookID)
+			if totalAvailable < incrementQty {
+				return nil, fmt.Errorf("insufficient stock: requested %d more, available %d", incrementQty, totalAvailable)
+			}
 		}
 	} else {
-		newItem := &model.CartItem{
-			CartID:    cartID,
-			BookID:    req.BookID,
-			Quantity:  req.Quantity,
-			Price:     currentPrice, // Snapshot price
-			CreatedAt: time.Now(),
-			UpdatedAt: time.Now(),
-		}
-
-		if err := s.repository.AddItem(ctx, newItem); err != nil {
-			return nil, fmt.Errorf("failed to add item: %w", err)
+		totalAvailable := s.getTotalAvailableStock(ctx, req.BookID)
+		if totalAvailable < req.Quantity {
+			return nil, fmt.Errorf("insufficient stock: requested %d, available %d", req.Quantity, totalAvailable)
 		}
 	}
 
-	// Step 6: Fetch item with book details
-	items, _, err := s.repository.GetItemsWithBooks(ctx, cartID, 1, 1)
-	if err != nil || len(items) == 0 {
-		return nil, fmt.Errorf("failed to fetch added item: %w", err)
+	// Step 7: Add or update item
+	item := &model.CartItem{
+		CartID:    cartID,
+		BookID:    req.BookID,
+		Quantity:  finalQuantity,
+		Price:     book.Price, // Always use current price
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
 
-	response := items[0].ToItemResponse()
+	if existingItem != nil {
+		item.ID = existingItem.ID
+		item.CreatedAt = existingItem.CreatedAt
+	}
+
+	// Use AddItem with ON CONFLICT (handles both insert and update)
+	savedItem, err := s.repository.AddItem(ctx, item)
+	if err != nil {
+		return nil, fmt.Errorf("failed to save item: %w", err)
+	}
+
+	// Step 8: Build response
+	response := &model.CartItemResponse{
+		ID:           savedItem.ID,
+		CartID:       savedItem.CartID,
+		BookID:       savedItem.BookID,
+		Quantity:     savedItem.Quantity,
+		Price:        savedItem.Price,
+		BookTitle:    book.Title,
+		BookSlug:     utils.GenerateSlugBook(book.Title),
+		BookCoverURL: book.CoverURL,
+		BookAuthor:   book.Author.Name,
+		CurrentPrice: book.Price,
+		IsActive:     book.IsActive,
+		TotalStock:   s.getTotalAvailableStock(ctx, req.BookID),
+		CreatedAt:    savedItem.CreatedAt,
+		UpdatedAt:    savedItem.UpdatedAt,
+	}
+
 	return response, nil
+}
+
+// Helper method
+func (s *CartService) getTotalAvailableStock(ctx context.Context, bookID uuid.UUID) int {
+	inventories, err := s.inventoryRepo.GetInventoriesByBook(ctx, bookID)
+	if err != nil {
+		return 0
+	}
+	total := 0
+	for _, inv := range inventories {
+		total += inv.AvailableQuantity
+	}
+	return total
 }
 
 // ListItems implements ServiceInterface.ListItems
@@ -189,29 +251,42 @@ func (s *CartService) ListItems(ctx context.Context, cartID uuid.UUID, page int,
 		limit = 20
 	}
 
-	// Fetch items with book details
+	// Step 1: Fetch cart from DB (validate exists + get metadata)
+	cart, err := s.repository.GetByID(ctx, cartID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get cart: %w", err)
+	}
+	if cart == nil {
+		return nil, fmt.Errorf("cart not found")
+	}
+
+	// Step 2: Check if cart expired
+	if cart.IsExpired() {
+		return nil, fmt.Errorf("cart has expired")
+	}
+
+	// Step 3: Fetch items with book details (paginated)
 	items, totalCount, err := s.repository.GetItemsWithBooks(ctx, cartID, page, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list items: %w", err)
 	}
 
-	// Convert to responses
+	// Step 4: Convert to responses
 	itemResponses := make([]model.CartItemResponse, len(items))
-	var subtotal decimal.Decimal
 	for i, item := range items {
 		itemResponses[i] = *item.ToItemResponse()
-		e := item.Price.Mul(decimal.NewFromInt(int64(item.Quantity)))
-		subtotal = subtotal.Add(e)
 	}
 
-	// Build response with pagination
-	cart := &model.Cart{
-		ID:         cartID,
-		ItemsCount: totalCount,
-	}
-
+	// Step 5: Build response
+	// ✅ Use cart from DB (has correct ItemsCount, Subtotal, etc from triggers)
 	response := cart.ToResponse(itemResponses)
-	response.Subtotal = subtotal
+
+	// Add pagination metadata
+	response.Page = page
+	response.PageSize = limit
+	response.TotalItems = totalCount
+	response.TotalPages = (totalCount + limit - 1) / limit
+
 	return response, nil
 }
 
@@ -223,7 +298,17 @@ func (s *CartService) GetUserCartID(ctx context.Context, userID uuid.UUID) (uuid
 	}
 
 	if cart == nil {
+		return uuid.Nil, nil // No cart
+	}
+
+	// Check if expired
+	if cart.IsExpired() {
+		// Option A: Clear và trả nil (như không có cart)
+		_ = s.repository.DeleteCart(ctx, cart.ID)
 		return uuid.Nil, nil
+
+		// Option B: Trả lỗi rõ ràng
+		// return uuid.Nil, fmt.Errorf("cart expired")
 	}
 
 	return cart.ID, nil
@@ -231,19 +316,32 @@ func (s *CartService) GetUserCartID(ctx context.Context, userID uuid.UUID) (uuid
 
 // GetOrCreateCartBySession implements ServiceInterface.GetOrCreateCartBySession (for middleware)
 func (s *CartService) GetOrCreateCartBySession(ctx context.Context, sessionID string) (uuid.UUID, error) {
+	// Step 1: Try to get existing cart
 	cart, err := s.repository.GetBySessionID(ctx, sessionID)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("failed to get session cart: %w", err)
 	}
 
-	if cart != nil && cart.ExpiresAt.After(time.Now()) {
-		_ = s.repository.UpdateExpiration(ctx, cart.ID)
-		return cart.ID, nil
+	// Step 2: If cart exists, check if expired
+	if cart != nil {
+		if cart.IsExpired() {
+			// Clear expired cart items
+			if err := s.repository.DeleteCart(ctx, cart.ID); err != nil {
+				logger.Error("Failed to clear expired cart items", err)
+			}
+			// Treat as no cart (will create new below)
+			cart = nil
+		} else {
+			// Update expiration (keep-alive)
+			if err := s.repository.UpdateExpiration(ctx, cart.ID); err != nil {
+				logger.Error("Failed to update cart expiration", err)
+			}
+			return cart.ID, nil
+		}
 	}
 
-	// Create new cart for session
+	// Step 3: Create new cart (with race condition protection)
 	newCart := &model.Cart{
-		ID:         uuid.New(),
 		UserID:     nil,
 		SessionID:  &sessionID,
 		ItemsCount: 0,
@@ -254,48 +352,60 @@ func (s *CartService) GetOrCreateCartBySession(ctx context.Context, sessionID st
 		ExpiresAt:  time.Now().Add(30 * 24 * time.Hour),
 	}
 
-	if err := s.repository.Create(ctx, newCart); err != nil {
+	// Use CreateOrGet instead of Create (handles race condition)
+	createdCart, err := s.repository.CreateOrGet(ctx, newCart)
+	if err != nil {
 		return uuid.Nil, fmt.Errorf("failed to create session cart: %w", err)
 	}
 
-	return newCart.ID, nil
+	return createdCart.ID, nil
 }
 
 // domains/cart/service_impl.go
 
 // MergeCart implements ServiceInterface.MergeCart
 func (s *CartService) MergeCart(ctx context.Context, sessionID string, userID uuid.UUID) error {
-	// ===================================
-	// STEP 1: Get anonymous cart (source)
-	// ===================================
+	// Step 1: Get anonymous cart
 	anonymousCart, err := s.repository.GetBySessionID(ctx, sessionID)
 	if err != nil {
 		return fmt.Errorf("failed to get anonymous cart: %w", err)
 	}
 
-	// No anonymous cart → nothing to merge
 	if anonymousCart == nil {
-		return nil
+		return nil // No cart to merge
 	}
 
-	// Check if expired
 	if anonymousCart.IsExpired() {
-		// Delete expired cart and return
 		_ = s.repository.DeleteCart(ctx, anonymousCart.ID)
 		return nil
 	}
 
-	// ===================================
-	// STEP 2: Get user cart (target)
-	// ===================================
-	userCart, err := s.repository.GetByUserID(ctx, userID)
+	// Step 2: Get anonymous cart items
+	anonymousItems, _, err := s.repository.GetItemsWithBooks(ctx, anonymousCart.ID, 0, 0) // Fetch all
+	if err != nil {
+		return fmt.Errorf("failed to get anonymous cart items: %w", err)
+	}
+
+	if len(anonymousItems) == 0 {
+		_ = s.repository.DeleteCart(ctx, anonymousCart.ID)
+		return nil
+	}
+
+	// ===== BEGIN TRANSACTION =====
+	tx, err := s.repository.BeginTx(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer s.repository.RollbackTx(ctx, tx)
+
+	// Step 3: Get or create user cart (within transaction)
+	userCart, err := s.repository.GetByUserIDWithTx(ctx, tx, userID)
 	if err != nil {
 		return fmt.Errorf("failed to get user cart: %w", err)
 	}
 
-	// If no user cart exists, create one
 	if userCart == nil {
-		userCart = &model.Cart{
+		newCart := &model.Cart{
 			ID:         uuid.New(),
 			UserID:     &userID,
 			SessionID:  nil,
@@ -306,73 +416,81 @@ func (s *CartService) MergeCart(ctx context.Context, sessionID string, userID uu
 			UpdatedAt:  time.Now(),
 			ExpiresAt:  time.Now().Add(30 * 24 * time.Hour),
 		}
-
-		if err := s.repository.Create(ctx, userCart); err != nil {
+		// Use CreateOrGetWithTx to handle race condition
+		userCart, err = s.repository.CreateOrGetWithTx(ctx, tx, newCart)
+		if err != nil {
 			return fmt.Errorf("failed to create user cart: %w", err)
 		}
 	}
 
-	// ===================================
-	// STEP 3: Get items from anonymous cart
-	// ===================================
-	anonymousItems, _, err := s.repository.GetItemsWithBooks(ctx, anonymousCart.ID, 1, 1000)
-	if err != nil {
-		return fmt.Errorf("failed to get anonymous cart items: %w", err)
-	}
-
-	// No items → just delete anonymous cart
-	if len(anonymousItems) == 0 {
-		_ = s.repository.DeleteCart(ctx, anonymousCart.ID)
-		return nil
-	}
-
-	// ===================================
-	// STEP 4: Get items from user cart
-	// ===================================
-	userItems, _, err := s.repository.GetItemsWithBooks(ctx, userCart.ID, 1, 1000)
+	// Step 4: Get existing user cart items (within transaction with lock)
+	userItems, err := s.repository.GetItemsByCartIDWithTx(ctx, tx, userCart.ID)
 	if err != nil {
 		return fmt.Errorf("failed to get user cart items: %w", err)
 	}
 
-	// Create map for quick lookup
-	userItemsByBook := make(map[uuid.UUID]*model.CartItemWithBook)
+	userItemsByBook := make(map[uuid.UUID]*model.CartItem)
 	for i := range userItems {
 		userItemsByBook[userItems[i].BookID] = &userItems[i]
 	}
 
-	// ===================================
-	// STEP 5: Merge items
-	// ===================================
+	// Step 5: Merge items
 	for _, anonItem := range anonymousItems {
+		// Validate book still active
+		book, err := s.bookService.GetBookDetail(ctx, anonItem.BookID.String())
+		if err != nil || !book.IsActive {
+			// Skip inactive books
+			logger.Error("Skipping inactive book in merge", err)
+			continue
+		}
+
 		existingUserItem, exists := userItemsByBook[anonItem.BookID]
 
 		if exists {
-			// Item exists in both carts → keep higher quantity
-			if anonItem.Quantity > existingUserItem.Quantity {
-				// Update user cart item with anonymous quantity
-				existingUserItem.Quantity = anonItem.Quantity
-				existingUserItem.UpdatedAt = time.Now()
-
-				if err := s.repository.UpdateItem(ctx, &existingUserItem.CartItem); err != nil {
-					return fmt.Errorf("failed to update existing item: %w", err)
-				}
+			// Merge: ADD quantities together (not max)
+			newQty := existingUserItem.Quantity + anonItem.Quantity
+			if newQty > 100 {
+				newQty = 100 // Cap at max
 			}
-			// Else: keep user's quantity (higher or equal)
+
+			// Update with latest price
+			updateItem := &model.CartItem{
+				ID:        existingUserItem.ID,
+				CartID:    userCart.ID,
+				BookID:    anonItem.BookID,
+				Quantity:  newQty,
+				Price:     book.Price, // Use current price
+				UpdatedAt: time.Now(),
+			}
+
+			if err := s.repository.UpdateItemWithTx(ctx, tx, updateItem); err != nil {
+				return fmt.Errorf("failed to update item: %w", err)
+			}
 		} else {
-			// Item only in anonymous cart → transfer to user cart
-			if err := s.repository.TransferItem(ctx, &anonItem.CartItem, userCart.ID); err != nil {
+			// Transfer item to user cart
+			transferItem := &model.CartItem{
+				CartID:    userCart.ID,
+				BookID:    anonItem.BookID,
+				Quantity:  anonItem.Quantity,
+				Price:     book.Price, // Use current price
+				CreatedAt: time.Now(),
+				UpdatedAt: time.Now(),
+			}
+
+			if err := s.repository.AddItemWithTx(ctx, tx, transferItem); err != nil {
 				return fmt.Errorf("failed to transfer item: %w", err)
 			}
 		}
 	}
 
-	// ===================================
-	// STEP 6: Delete anonymous cart
-	// ===================================
-	// This will CASCADE delete all remaining items
-	if err := s.repository.DeleteCart(ctx, anonymousCart.ID); err != nil {
-		// Log but don't fail - merge was successful
-		fmt.Printf("⚠️  Warning: failed to delete anonymous cart: %v\n", err)
+	// Step 6: Delete anonymous cart (CASCADE will delete items)
+	if err := s.repository.DeleteCartWithTx(ctx, tx, anonymousCart.ID); err != nil {
+		return fmt.Errorf("failed to delete anonymous cart: %w", err)
+	}
+
+	// ===== COMMIT TRANSACTION =====
+	if err := s.repository.CommitTx(ctx, tx); err != nil {
+		return fmt.Errorf("failed to commit merge: %w", err)
 	}
 
 	return nil
@@ -380,125 +498,108 @@ func (s *CartService) MergeCart(ctx context.Context, sessionID string, userID uu
 
 // domains/cart/service_impl.go
 
-// UpdateItemQuantity implements ServiceInterface.UpdateItemQuantity
 func (s *CartService) UpdateItemQuantity(ctx context.Context, cartID uuid.UUID, itemID uuid.UUID, quantity int) (*model.CartItemResponse, error) {
-	// ===================================
-	// STEP 1: Validate cart and quantity
-	// ===================================
-	cart, err := s.repository.GetByID(ctx, cartID)
+	// Step 1: Validate quantity
+	if quantity < 0 || quantity > 100 {
+		return nil, model.ErrInvalidQuantity
+	}
+
+	// Step 2: Get cart and item in single query (optimized)
+	cart, item, err := s.repository.GetCartAndItem(ctx, cartID, itemID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get cart: %w", err)
+		return nil, fmt.Errorf("failed to get cart and item: %w", err)
 	}
 	if cart == nil {
-		return nil, fmt.Errorf("cart not found: %s", cartID)
+		return nil, fmt.Errorf("cart not found")
+	}
+	if item == nil {
+		return nil, fmt.Errorf("item not found")
 	}
 	if cart.IsExpired() {
 		return nil, fmt.Errorf("cart has expired")
 	}
 
-	if quantity < 0 || quantity > 100 {
-		return nil, fmt.Errorf("%w: quantity=%d", model.ErrInvalidQuantity, quantity)
-	}
-
-	// ===================================
-	// STEP 2: Get item from cart
-	// ===================================
-	item, err := s.repository.GetItemByID(ctx, itemID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get item: %w", err)
-	}
-
-	// Verify item belongs to this cart
-	if item.CartID != cartID {
-		return nil, fmt.Errorf("item does not belong to this cart")
-	}
-
-	// ===================================
-	// STEP 3: Handle quantity = 0 (remove)
-	// ===================================
+	// Step 3: Handle quantity = 0 (remove item)
 	if quantity == 0 {
-		// Remove item and update cart totals
 		if err := s.repository.DeleteItem(ctx, itemID); err != nil {
 			return nil, fmt.Errorf("failed to remove item: %w", err)
 		}
-
-		// Update cart totals
-		// Repository will handle updating item count and totals
-
-		return nil, nil // Return nil for removed item
+		// Return response indicating deletion
+		return &model.CartItemResponse{
+			ID:       itemID,
+			IsActive: false,
+		}, nil
 	}
 
-	// ===================================
-	// STEP 4: Verify stock if increasing quantity
-	// ===================================
+	// Step 4: Validate book still active and get current price
+	book, err := s.bookService.GetBookDetail(ctx, item.BookID.String())
+	if err != nil {
+		return nil, fmt.Errorf("book not found: %w", err)
+	}
+	if !book.IsActive {
+		return nil, fmt.Errorf("book is no longer available")
+	}
+
+	// Step 5: Check stock if increasing quantity
 	if quantity > item.Quantity {
-		// Check all warehouses for simplicity for now
-		inventories, err := s.inventoryRepo.GetInventoriesByBook(ctx, item.BookID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to check stock availability: %w", err)
-		}
-
-		// Calculate total available stock across warehouses
-		totalAvailable := 0
-		for _, inv := range inventories {
-			totalAvailable += inv.AvailableQuantity
-		}
-
 		additionalQty := quantity - item.Quantity
+		totalAvailable := s.getTotalAvailableStock(ctx, item.BookID)
+
 		if totalAvailable < additionalQty {
-			return nil, fmt.Errorf("insufficient stock: need %d more units, only %d available",
+			return nil, fmt.Errorf("insufficient stock: need %d more, only %d available",
 				additionalQty, totalAvailable)
 		}
 	}
 
-	// ===================================
-	// STEP 5: Update quantity and cart totals
-	// ===================================
-	// oldQuantity := item.Quantity
+	// Step 6: Update item
 	item.Quantity = quantity
+	item.Price = book.Price // Update to current price (business decision)
 	item.UpdatedAt = time.Now()
 
 	if err := s.repository.UpdateItem(ctx, item); err != nil {
 		return nil, fmt.Errorf("failed to update item: %w", err)
 	}
 
-	// Cart totals will be updated by repository when updating item
-
-	// ===================================
-	// STEP 6: Fetch updated item with book details
-	// ===================================
-	items, _, err := s.repository.GetItemsWithBooks(ctx, cartID, 1, 1)
-	if err != nil || len(items) == 0 {
+	// Step 7: Fetch updated item with book details
+	updatedItem, err := s.repository.GetItemWithBookByID(ctx, itemID)
+	if err != nil {
 		return nil, fmt.Errorf("failed to fetch updated item: %w", err)
 	}
 
-	response := items[0].ToItemResponse()
-	return response, nil
+	return updatedItem.ToItemResponse(), nil
 }
 
 // domains/cart/service_impl.go
 
 // RemoveItem implements ServiceInterface.RemoveItem
 func (s *CartService) RemoveItem(ctx context.Context, cartID uuid.UUID, itemID uuid.UUID) error {
-	// ===================================
-	// STEP 1: Get item to verify it exists and belongs to cart
-	// ===================================
+	// Validate cart
+	cart, err := s.repository.GetByID(ctx, cartID)
+	if err != nil {
+		return fmt.Errorf("failed to get cart: %w", err)
+	}
+	if cart == nil {
+		return model.ErrCartNotFound
+	}
+	if cart.IsExpired() {
+		return model.ErrCartExpired
+	}
+
+	// Get item to check existence and ownership separately
 	item, err := s.repository.GetItemByID(ctx, itemID)
 	if err != nil {
 		return fmt.Errorf("failed to get item: %w", err)
 	}
-
-	// Verify item belongs to this cart
+	if item == nil {
+		return model.ErrItemNotFound
+	}
 	if item.CartID != cartID {
-		return fmt.Errorf("item does not belong to this cart: item_cart=%s, provided_cart=%s",
-			item.CartID, cartID)
+		return model.ErrItemNotBelongToCart // Custom error code
 	}
 
-	// ===================================
-	// STEP 2: Delete item
-	// ===================================
+	// Delete
 	if err := s.repository.DeleteItem(ctx, itemID); err != nil {
-		return fmt.Errorf("failed to remove item: %w", err)
+		return fmt.Errorf("failed to delete item: %w", err)
 	}
 
 	return nil
@@ -507,26 +608,40 @@ func (s *CartService) RemoveItem(ctx context.Context, cartID uuid.UUID, itemID u
 // domains/cart/service_impl.go
 
 // ClearCart implements ServiceInterface.ClearCart
-func (s *CartService) ClearCart(ctx context.Context, cartID uuid.UUID) error {
-	// ===================================
-	// STEP 1: Delete all items from cart
-	// ===================================
+func (s *CartService) ClearCart(ctx context.Context, cartID uuid.UUID) (int, error) {
+	// Step 1: Validate cart exists and not expired
+	cart, err := s.repository.GetByID(ctx, cartID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get cart: %w", err)
+	}
+	if cart == nil {
+		return 0, model.ErrCartNotFound
+	}
+	if cart.IsExpired() {
+		return 0, model.ErrCartExpired
+	}
+
+	// Step 2: Clear all items
 	deletedCount, err := s.repository.ClearCartItems(ctx, cartID)
 	if err != nil {
-		return fmt.Errorf("failed to clear cart: %w", err)
+		return 0, fmt.Errorf("failed to clear cart items: %w", err)
 	}
 
+	// Step 3: Log activity
 	if deletedCount > 0 {
-		fmt.Printf("✅ Cleared %d items from cart %s\n", deletedCount, cartID)
+		logger.Info("Cart cleared", map[string]interface{}{
+			"cart_id":       cartID,
+			"deleted_count": deletedCount,
+		})
 	}
 
-	return nil
+	return deletedCount, nil
 }
 
 // domains/cart/service_impl.go
 
 // ValidateCart implements ServiceInterface.ValidateCart
-func (s *CartService) ValidateCart(ctx context.Context, cartID uuid.UUID, userId string) (*model.CartValidationResult, error) {
+func (s *CartService) ValidateCart(ctx context.Context, cartID uuid.UUID, userID uuid.UUID) (*model.CartValidationResult, error) {
 	result := &model.CartValidationResult{
 		IsValid:         true,
 		CartStatus:      "valid",
@@ -535,68 +650,62 @@ func (s *CartService) ValidateCart(ctx context.Context, cartID uuid.UUID, userId
 		ItemValidations: []model.ItemValidation{},
 	}
 
-	uid := utils.ParseStringToUUID(userId)
-	// ===================================
-	// STEP 1: Get cart
-	// ===================================
-	// TODO: Get cart from repo
-	cart, err := s.repository.GetByUserID(ctx, uid)
+	// Step 1: Get cart by ID (not userID)
+	cart, err := s.repository.GetByID(ctx, cartID)
 	if err != nil {
+		return nil, fmt.Errorf("failed to get cart: %w", err)
+	}
+	if cart == nil {
 		result.IsValid = false
 		result.CartStatus = "error"
 		result.Errors = append(result.Errors, model.CartValidationError{
-			Code:     "CART_NOT_FOUND",
-			Message:  fmt.Sprintf("Cart not found: %v", err),
-			Severity: "error",
+			Code:    "CART_NOT_FOUND",
+			Message: "Cart not found",
 		})
 		return result, nil
 	}
 
-	// ===================================
-	// STEP 2: Check if expired
-	// ===================================
+	// Step 2: Validate ownership (if userID provided)
+	if userID != uuid.Nil && cart.UserID != nil && *cart.UserID != userID {
+		result.IsValid = false
+		result.CartStatus = "error"
+		result.Errors = append(result.Errors, model.CartValidationError{
+			Code:    "CART_NOT_OWNED",
+			Message: "Cart does not belong to user",
+		})
+		return result, nil
+	}
+
+	// Step 3: Check if expired
 	if cart.IsExpired() {
 		result.IsValid = false
 		result.CartStatus = "error"
 		result.Errors = append(result.Errors, model.CartValidationError{
-			Code:     "CART_EXPIRED",
-			Message:  "Cart has expired",
-			Severity: "error",
+			Code:    "CART_EXPIRED",
+			Message: "Cart has expired",
 		})
 		return result, nil
 	}
 
-	// ===================================
-	// STEP 3: Get items with book details
-	// ===================================
-	items, _, err := s.repository.GetItemsWithBooks(ctx, cartID, 1, 1000)
+	// Step 4: Get all items with book details
+	items, _, err := s.repository.GetItemsWithBooks(ctx, cartID, 0, 0) // Fetch all
 	if err != nil {
-		result.IsValid = false
-		result.CartStatus = "error"
-		result.Errors = append(result.Errors, model.CartValidationError{
-			Code:     "ITEMS_FETCH_FAILED",
-			Message:  fmt.Sprintf("Failed to fetch items: %v", err),
-			Severity: "error",
-		})
-		return result, nil
+		return nil, fmt.Errorf("failed to fetch cart items: %w", err)
 	}
 
-	// No items in cart
 	if len(items) == 0 {
 		result.IsValid = false
 		result.CartStatus = "error"
 		result.Errors = append(result.Errors, model.CartValidationError{
-			Code:     "EMPTY_CART",
-			Message:  "Cart is empty",
-			Severity: "error",
+			Code:    "EMPTY_CART",
+			Message: "Cart is empty",
 		})
 		return result, nil
 	}
 
-	// ===================================
-	// STEP 4: Validate each item
-	// ===================================
+	// Step 5: Validate each item
 	var totalValue decimal.Decimal
+	var snapshotTotal decimal.Decimal
 	var hasErrors bool
 	var hasWarnings bool
 
@@ -615,30 +724,27 @@ func (s *CartService) ValidateCart(ctx context.Context, cartID uuid.UUID, userId
 			Warnings:         []string{},
 		}
 
-		// Check stock
+		// Check availability
 		if !itemValidation.IsAvailable {
 			hasErrors = true
 			itemValidation.Warnings = append(itemValidation.Warnings,
-				fmt.Sprintf("Book not available (active: %v, stock: %d)",
-					item.IsActive, item.TotalStock))
+				fmt.Sprintf("Book not available (active: %v, stock: %d)", item.IsActive, item.TotalStock))
 		}
 
+		// Check stock
 		if !itemValidation.StockSufficient {
 			hasErrors = true
 			itemValidation.Warnings = append(itemValidation.Warnings,
-				fmt.Sprintf("Insufficient stock: requested %d, available %d",
-					item.Quantity, item.TotalStock))
+				fmt.Sprintf("Insufficient stock: requested %d, available %d", item.Quantity, item.TotalStock))
 		}
 
-		// Check price
+		// Check price change
 		if !itemValidation.PriceMatch {
 			hasWarnings = true
 			priceDiff := item.CurrentPrice.Sub(item.Price)
 			itemValidation.Warnings = append(itemValidation.Warnings,
-				fmt.Sprintf("Price changed: %s → %s (+%s)",
-					item.Price, item.CurrentPrice, priceDiff))
+				fmt.Sprintf("Price changed: %s → %s (%s)", item.Price, item.CurrentPrice, priceDiff))
 
-			// Add warning to results
 			result.Warnings = append(result.Warnings, model.CartValidationWarning{
 				Code:    "PRICE_CHANGED",
 				Message: fmt.Sprintf("Price for %s changed", item.BookTitle),
@@ -651,68 +757,57 @@ func (s *CartService) ValidateCart(ctx context.Context, cartID uuid.UUID, userId
 			})
 		}
 
-		// Calculate value
-		itemTotal := decimal.NewFromInt(int64(item.Quantity)).Mul(item.Price)
-		totalValue = totalValue.Add(itemTotal)
+		// Calculate totals
+		itemCurrentTotal := decimal.NewFromInt(int64(item.Quantity)).Mul(item.CurrentPrice)
+		itemSnapshotTotal := decimal.NewFromInt(int64(item.Quantity)).Mul(item.Price)
+		totalValue = totalValue.Add(itemCurrentTotal)
+		snapshotTotal = snapshotTotal.Add(itemSnapshotTotal)
 
 		result.ItemValidations = append(result.ItemValidations, itemValidation)
 	}
 
-	// ===================================
-	// STEP 5: Determine overall status
-	// ===================================
+	// Step 6: Determine overall status
 	if hasErrors {
 		result.IsValid = false
 		result.CartStatus = "error"
-		result.Errors = append(result.Errors, model.CartValidationError{
-			Code:     "INVALID_ITEMS",
-			Message:  "One or more items are invalid",
-			Severity: "error",
-		})
 	} else if hasWarnings {
-		result.IsValid = true // Warnings don't prevent checkout
+		result.IsValid = true
 		result.CartStatus = "warning"
 	}
 
-	result.TotalValue = totalValue
-	result.EstimatedTotal = totalValue // TODO: Add tax, shipping
+	result.TotalValue = totalValue       // Current price total
+	result.SnapshotTotal = snapshotTotal // Snapshot price total (for comparison)
+	result.EstimatedTotal = totalValue
 
 	return result, nil
 }
 
 // domains/cart/service_impl.go
 
-// ApplyPromoCode implements ServiceInterface.ApplyPromoCode
-func (s *CartService) ApplyPromoCode(ctx context.Context, cartID uuid.UUID, promoCode string, userId string) (*model.ApplyPromoResponse, error) {
-	uid := utils.ParseStringToUUID(userId)
-	if uid == uuid.Nil {
-		return nil, fmt.Errorf("invalid user id format")
+func (s *CartService) ApplyPromoCode(ctx context.Context, cartID uuid.UUID, promoCode string, userID uuid.UUID) (*model.ApplyPromoResponse, error) {
+	// Step 1: Validate input
+	if userID == uuid.Nil {
+		return nil, fmt.Errorf("user ID required")
+	}
+	if len(promoCode) < 3 || len(promoCode) > 50 {
+		return nil, fmt.Errorf("invalid promo code format")
 	}
 
-	// ===================================
-	// STEP 1: Get and validate cart
-	// ===================================
+	// Step 2: Get and validate cart
 	cart, err := s.repository.GetByID(ctx, cartID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get cart: %w", err)
 	}
 	if cart == nil {
-		return nil, fmt.Errorf("cart not found")
+		return nil, model.ErrCartNotFound
 	}
 	if cart.IsExpired() {
-		return nil, fmt.Errorf("cart has expired")
+		return nil, model.ErrCartExpired
 	}
 
-	// Verify cart belongs to user
-	if cart.UserID == nil || *cart.UserID != uid {
+	// Verify ownership
+	if cart.UserID == nil || *cart.UserID != userID {
 		return nil, fmt.Errorf("cart does not belong to user")
-	}
-
-	// ===================================
-	// STEP 2: Basic promo validation
-	// ===================================
-	if len(promoCode) < 3 || len(promoCode) > 50 {
-		return nil, fmt.Errorf("invalid promo code length")
 	}
 
 	// Check cart has items
@@ -720,56 +815,90 @@ func (s *CartService) ApplyPromoCode(ctx context.Context, cartID uuid.UUID, prom
 		return nil, fmt.Errorf("cannot apply promo to empty cart")
 	}
 
-	// Check cart subtotal meets minimum
-	if cart.Subtotal.LessThan(decimal.NewFromInt(50000)) { // Example: 50k VND minimum
-		return nil, fmt.Errorf("cart total does not meet minimum for promo codes")
+	// Check if cart already has promo
+	if cart.HasPromo() { // ✅ Use helper method
+		// Clear old promo before applying new one
+		if err := s.repository.ClearCartPromo(ctx, cartID); err != nil {
+			return nil, fmt.Errorf("failed to clear old promo: %w", err)
+		}
 	}
 
-	// ===================================
-	// STEP 3: Validate with promo service
-	// ===================================
-	// TODO: Integrate promotion service
-	// For now, mock implementation
-	if promoCode == "INVALID" {
-		return nil, fmt.Errorf("invalid promo code")
+	// Step 3: Validate promo with promotion service (through interface)
+	promoReq := &model.ValidatePromoRequest{ // ✅ Use request struct
+		PromoCode: promoCode,
+		UserID:    userID,
+		CartTotal: cart.Subtotal,
+		CartID:    cartID,
 	}
 
-	// Mock promo validation response
-	discountType := "percent"
-	discountValue := decimal.NewFromInt(10) // 10%
-	// minPurchase := decimal.NewFromInt(50000)
-	maxDiscount := decimal.NewFromInt(100000)
-
-	// Calculate potential discount
-	discountAmount := cart.Subtotal.Mul(discountValue).Div(decimal.NewFromInt(100))
-
-	// Apply maximum discount cap if needed
-	if discountAmount.GreaterThan(maxDiscount) {
-		discountAmount = maxDiscount
+	promo, err := s.ValidatePromoCode(ctx, promoReq) // ✅ Call interface
+	if err != nil {
+		return nil, fmt.Errorf("failed to validate promo: %w", err)
 	}
 
-	// ===================================
-	// STEP 3: Update cart with promo
-	// ===================================
-	err = s.repository.UpdateCartPromo(ctx, cartID, &promoCode, discountAmount)
+	if !promo.IsValid {
+		return nil, fmt.Errorf("invalid promo code: %s", promo.Reason)
+	}
+
+	// Step 4: Calculate discount
+	discountAmount := s.calculatePromoDiscount(cart.Subtotal, promo)
+
+	// Step 5: Build promo metadata
+	promoMetadata := map[string]interface{}{
+		"promotion_id": promo.PromotionID.String(),
+		"code":         promo.Code,
+		"name":         promo.Name,
+		"type":         promo.DiscountType,
+		"value":        promo.DiscountValue.String(),
+		"applied_at":   time.Now().Format(time.RFC3339),
+	}
+
+	// Step 6: Update cart with promo (with optimistic locking)
+	err = s.repository.UpdateCartPromo(ctx, cartID, cart.Version, &promoCode, discountAmount, promoMetadata)
 	if err != nil {
 		return nil, fmt.Errorf("failed to apply promo: %w", err)
 	}
 
-	// ===================================
-	// STEP 4: Return response
-	// ===================================
+	// Step 7: Return response
 	return &model.ApplyPromoResponse{
 		Applied:          true,
-		PromoCode:        promoCode,
-		PromoDescription: "10% discount",
-		DiscountType:     discountType,
-		DiscountValue:    discountValue,
+		PromoCode:        promo.Code,
+		PromoDescription: promo.Description,
+		DiscountType:     promo.DiscountType,
+		DiscountValue:    promo.DiscountValue,
 		DiscountAmount:   discountAmount,
 		OriginalSubtotal: cart.Subtotal,
 		DiscountedTotal:  cart.Subtotal.Sub(discountAmount),
 		AppliedAt:        time.Now(),
 	}, nil
+}
+
+// Helper: Calculate discount based on promo type
+func (s *CartService) calculatePromoDiscount(subtotal decimal.Decimal, promo *model.PromotionValidationResult) decimal.Decimal {
+	var discount decimal.Decimal
+
+	switch promo.DiscountType {
+	case "percentage":
+		// Calculate percentage discount
+		discount = subtotal.Mul(promo.DiscountValue).Div(decimal.NewFromInt(100))
+	case "fixed":
+		// Fixed amount discount
+		discount = promo.DiscountValue
+	default:
+		discount = decimal.Zero
+	}
+
+	// Apply max discount cap
+	if promo.MaxDiscount != nil && discount.GreaterThan(*promo.MaxDiscount) {
+		discount = *promo.MaxDiscount
+	}
+
+	// Ensure discount doesn't exceed subtotal
+	if discount.GreaterThan(subtotal) {
+		discount = subtotal
+	}
+
+	return discount
 }
 
 // RemovePromoCode implements ServiceInterface.RemovePromoCode
@@ -781,18 +910,6 @@ func (s *CartService) RemovePromoCode(ctx context.Context, cartID uuid.UUID) err
 	return nil
 }
 
-// CRITICAL NOTES:
-// 1. Uses database transaction for atomicity
-// 2. Phases must execute in order
-// 3. Any phase failure → rollback all changes
-// 4. Some operations (email, payment) are async (fire-and-forget)
-// CRITICAL NOTES:
-// 1. Uses database transaction for atomicity
-// 2. Phases must execute in order
-// 3. Any phase failure → rollback all changes
-// 4. Automatic warehouse selection based on customer location (FR-INV-002)
-// 5. Stock reservation with 15-minute timeout (FR-INV-003)
-// 6. Complete audit trail via inventory_audit_log
 func (s *CartService) Checkout(ctx context.Context, userID uuid.UUID, cartID uuid.UUID, req model.CheckoutRequest) (*model.CheckoutResponse, error) {
 	initiatedAt := time.Now()
 	response := &model.CheckoutResponse{
@@ -853,7 +970,7 @@ func (s *CartService) Checkout(ctx context.Context, userID uuid.UUID, cartID uui
 	// PHASE 1: CART VALIDATION
 	// ===================================
 	phaseStart := time.Now()
-	validation, err := s.ValidateCart(ctx, cartID, userID.String())
+	validation, err := s.ValidateCart(ctx, cartID, userID)
 	if err != nil || !validation.IsValid {
 		for _, err := range validation.Errors {
 			response.Errors = append(response.Errors, model.CheckoutError{
@@ -1250,9 +1367,9 @@ func (s *CartService) Checkout(ctx context.Context, userID uuid.UUID, cartID uui
 	phaseStart = time.Now()
 
 	// Clear cart (background task)
-	go func() {
-		_ = s.ClearCart(context.Background(), cartID)
-	}()
+	// go func() {
+	// 	_ = s.ClearCart(context.Background(), cartID)
+	// }()
 
 	// Send confirmation email (background task)
 	go func() {
@@ -1332,4 +1449,117 @@ func convertToCheckoutErrors(validationErrors []model.CartValidationError) []mod
 		}
 	}
 	return errors
+}
+func (s *CartService) ValidatePromoCode(ctx context.Context, req *model.ValidatePromoRequest) (*model.PromotionValidationResult, error) {
+	// Step 1: Normalize and validate input
+	promoCode := strings.ToUpper(strings.TrimSpace(req.PromoCode))
+	if promoCode == "" {
+		return &model.PromotionValidationResult{
+			IsValid: false,
+			Reason:  "Promo code cannot be empty",
+		}, nil
+	}
+
+	// Step 2: Get promotion by code
+	promo, err := s.repository.GetPromoByCode(ctx, promoCode)
+	if err != nil {
+		return &model.PromotionValidationResult{
+			IsValid: false,
+			Reason:  "Promo code not found",
+		}, nil
+	}
+	if promo == nil {
+		return &model.PromotionValidationResult{
+			IsValid: false,
+			Reason:  "Promo code not found",
+		}, nil
+	}
+
+	// Step 3: Check if promotion is active
+	if !promo.IsActive {
+		return &model.PromotionValidationResult{
+			IsValid: false,
+			Reason:  "Promo code is not active",
+		}, nil
+	}
+
+	// Step 4: Check validity period
+	now := time.Now()
+	if now.Before(promo.StartsAt) {
+		return &model.PromotionValidationResult{
+			IsValid: false,
+			Reason:  fmt.Sprintf("Promo code not yet active (starts at %s)", promo.StartsAt.Format("2006-01-02")),
+		}, nil
+	}
+	if now.After(promo.ExpiresAt) {
+		return &model.PromotionValidationResult{
+			IsValid: false,
+			Reason:  fmt.Sprintf("Promo code expired on %s", promo.ExpiresAt.Format("2006-01-02")),
+		}, nil
+	}
+
+	// Step 5: Check minimum order amount
+	if req.CartTotal.LessThan(promo.MinOrderAmount) {
+		return &model.PromotionValidationResult{
+			IsValid: false,
+			Reason: fmt.Sprintf("Minimum order amount is %s (current: %s)",
+				promo.MinOrderAmount.String(), req.CartTotal.String()),
+		}, nil
+	}
+
+	// Step 6: Check global usage limit
+	if promo.MaxUses != nil && promo.CurrentUses >= *promo.MaxUses {
+		return &model.PromotionValidationResult{
+			IsValid: false,
+			Reason:  "Promo code usage limit reached",
+		}, nil
+	}
+
+	// Step 7: Check user usage limit
+	userUsageCount, err := s.repository.CountUserUsage(ctx, promo.ID, req.UserID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check user usage: %w", err)
+	}
+
+	if userUsageCount >= promo.MaxUsesPerUser {
+		return &model.PromotionValidationResult{
+			IsValid: false,
+			Reason:  fmt.Sprintf("You have already used this promo code %d time(s)", userUsageCount),
+		}, nil
+	}
+
+	// Step 8: Check first order only constraint
+	if promo.FirstOrderOnly {
+		hasOrders, err := s.repository.UserHasCompletedOrders(ctx, req.UserID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check user orders: %w", err)
+		}
+		if hasOrders {
+			return &model.PromotionValidationResult{
+				IsValid: false,
+				Reason:  "This promo code is only valid for first-time orders",
+			}, nil
+		}
+	}
+
+	// Step 9: All validations passed - return valid result
+	return &model.PromotionValidationResult{
+		IsValid:               true,
+		PromotionID:           promo.ID,
+		Code:                  promo.Code,
+		Name:                  promo.Name,
+		Description:           *promo.Description,
+		DiscountType:          string(promo.DiscountType),
+		DiscountValue:         promo.DiscountValue,
+		MaxDiscount:           promo.MaxDiscountAmount,
+		MinOrderAmount:        promo.MinOrderAmount,
+		ApplicableCategoryIDs: promo.ApplicableCategoryIDs,
+		FirstOrderOnly:        promo.FirstOrderOnly,
+		MaxUses:               promo.MaxUses,
+		MaxUsesPerUser:        promo.MaxUsesPerUser,
+		CurrentUses:           promo.CurrentUses,
+		UserUsageCount:        userUsageCount,
+		StartsAt:              promo.StartsAt,
+		ExpiresAt:             promo.ExpiresAt,
+	}, nil
 }

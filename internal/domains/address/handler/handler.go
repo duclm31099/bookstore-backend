@@ -11,7 +11,6 @@ import (
 	"bookstore-backend/internal/domains/address/model"
 	"bookstore-backend/internal/domains/address/service"
 	"bookstore-backend/internal/shared/response"
-	"bookstore-backend/pkg/logger"
 )
 
 type AddressHandler struct {
@@ -29,10 +28,10 @@ func (h *AddressHandler) CreateAddress(c *gin.Context) {
 	userID, err := getUserContext(c)
 	if err != nil {
 		response.Error(c, http.StatusUnauthorized, err.Error(), nil)
-		return // ← MUST return here
+		return
 	}
-	var req model.AddressCreateRequest
 
+	var req model.AddressCreateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Error(c, http.StatusBadRequest, "Invalid request payload", err.Error())
 		return
@@ -51,15 +50,16 @@ func (h *AddressHandler) CreateAddress(c *gin.Context) {
 // GetAddress handles GET /addresses/:id
 func (h *AddressHandler) GetAddressById(c *gin.Context) {
 	userID, err := getUserContext(c)
-	logger.Info("userID", map[string]interface{}{
-		"userID": userID,
-	})
 	if err != nil {
 		response.Error(c, http.StatusUnauthorized, err.Error(), nil)
-		return // ← MUST return here
+		return
 	}
 
 	addressID, err := getAddressId(c)
+	if err != nil {
+		// Error response đã được gửi trong getAddressId
+		return
+	}
 
 	result, err := h.service.GetAddressByID(c.Request.Context(), userID, addressID)
 	if err != nil {
@@ -74,12 +74,9 @@ func (h *AddressHandler) GetAddressById(c *gin.Context) {
 // ListUserAddresses handles GET /addresses
 func (h *AddressHandler) ListUserAddresses(c *gin.Context) {
 	userID, err := getUserContext(c)
-	logger.Info("userID", map[string]interface{}{
-		"userID": userID,
-	})
 	if err != nil {
 		response.Error(c, http.StatusUnauthorized, err.Error(), nil)
-		return // ← MUST return here
+		return
 	}
 
 	results, err := h.service.ListUserAddresses(c.Request.Context(), userID)
@@ -102,7 +99,7 @@ func (h *AddressHandler) GetDefaultAddress(c *gin.Context) {
 	userID, err := getUserContext(c)
 	if err != nil {
 		response.Error(c, http.StatusUnauthorized, err.Error(), nil)
-		return // ← MUST return here
+		return
 	}
 
 	result, err := h.service.GetDefaultAddress(c.Request.Context(), userID)
@@ -120,13 +117,16 @@ func (h *AddressHandler) UpdateAddress(c *gin.Context) {
 	userID, err := getUserContext(c)
 	if err != nil {
 		response.Error(c, http.StatusUnauthorized, err.Error(), nil)
-		return // ← MUST return here
+		return
 	}
 
 	addressID, err := getAddressId(c)
+	if err != nil {
+		// Error response đã được gửi trong getAddressId
+		return
+	}
 
 	var req model.AddressUpdateRequest
-
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Error(c, http.StatusBadRequest, "Invalid request payload", err.Error())
 		return
@@ -147,10 +147,14 @@ func (h *AddressHandler) DeleteAddress(c *gin.Context) {
 	userID, err := getUserContext(c)
 	if err != nil {
 		response.Error(c, http.StatusUnauthorized, err.Error(), nil)
-		return // ← MUST return here
+		return
 	}
 
 	addressID, err := getAddressId(c)
+	if err != nil {
+		// Error response đã được gửi trong getAddressId
+		return
+	}
 
 	err = h.service.DeleteAddress(c.Request.Context(), userID, addressID)
 	if err != nil {
@@ -167,10 +171,14 @@ func (h *AddressHandler) SetDefaultAddress(c *gin.Context) {
 	userID, err := getUserContext(c)
 	if err != nil {
 		response.Error(c, http.StatusUnauthorized, err.Error(), nil)
-		return // ← MUST return here
+		return
 	}
 
 	addressID, err := getAddressId(c)
+	if err != nil {
+		// Error response đã được gửi trong getAddressId
+		return
+	}
 
 	result, err := h.service.SetDefaultAddress(c.Request.Context(), userID, addressID)
 	if err != nil {
@@ -187,9 +195,15 @@ func (h *AddressHandler) UnsetDefaultAddress(c *gin.Context) {
 	userID, err := getUserContext(c)
 	if err != nil {
 		response.Error(c, http.StatusUnauthorized, err.Error(), nil)
-		return // ← MUST return here
+		return
 	}
+
 	addressID, err := getAddressId(c)
+	if err != nil {
+		// Error response đã được gửi trong getAddressId
+		return
+	}
+
 	err = h.service.UnsetDefaultAddress(c.Request.Context(), userID, addressID)
 	if err != nil {
 		statusCode, message, code := model.GetErrorResponse(err)
@@ -253,6 +267,8 @@ func (h *AddressHandler) ListAllAddresses(c *gin.Context) {
 
 	response.Success(c, http.StatusOK, "Addresses retrieved successfully", responseData)
 }
+
+// Helper: Get user ID from context
 func getUserContext(c *gin.Context) (uuid.UUID, error) {
 	userID, exists := c.Get("user_id")
 	if !exists {
@@ -271,6 +287,7 @@ func getUserContext(c *gin.Context) (uuid.UUID, error) {
 	return uid, nil
 }
 
+// Helper: Get address ID from URL param
 func getAddressId(c *gin.Context) (uuid.UUID, error) {
 	idStr := c.Param("id")
 	id, err := uuid.Parse(idStr)

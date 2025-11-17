@@ -4,6 +4,7 @@ import (
 	"bookstore-backend/internal/domains/address/model"
 	"context"
 	"errors"
+	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -20,19 +21,20 @@ func NewPostgresRepository(pool *pgxpool.Pool) RepositoryInterface {
 	}
 }
 
-// Create inserts a new address record
+// Create inserts a new address record (bao gồm latitude/longitude)
 func (r *postgresRepository) Create(ctx context.Context, addr *model.Address) (*model.Address, error) {
 	query := `
-    INSERT INTO addresses 
-    (user_id, recipient_name, phone, province, district, ward, street, address_type, is_default, notes, created_at, updated_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
-    RETURNING id, user_id, recipient_name, phone, province, district, ward, street, address_type, is_default, notes, created_at, updated_at
-  `
+        INSERT INTO addresses 
+        (user_id, recipient_name, phone, province, district, ward, street, address_type, is_default, notes, latitude, longitude, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
+        RETURNING id, user_id, recipient_name, phone, province, district, ward, street, address_type, is_default, notes, latitude, longitude, created_at, updated_at
+    `
 
 	row := r.pool.QueryRow(
 		ctx, query,
 		addr.UserID, addr.RecipientName, addr.Phone, addr.Province, addr.District,
 		addr.Ward, addr.Street, addr.AddressType, addr.IsDefault, addr.Notes,
+		addr.Latitude, addr.Longitude,
 	)
 
 	var address model.Address
@@ -40,6 +42,7 @@ func (r *postgresRepository) Create(ctx context.Context, addr *model.Address) (*
 		&address.ID, &address.UserID, &address.RecipientName, &address.Phone,
 		&address.Province, &address.District, &address.Ward, &address.Street,
 		&address.AddressType, &address.IsDefault, &address.Notes,
+		&address.Latitude, &address.Longitude,
 		&address.CreatedAt, &address.UpdatedAt,
 	)
 
@@ -50,13 +53,13 @@ func (r *postgresRepository) Create(ctx context.Context, addr *model.Address) (*
 	return &address, nil
 }
 
-// GetByID retrieves an address by ID
+// GetByID retrieves an address by ID (bao gồm latitude/longitude)
 func (r *postgresRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.Address, error) {
 	query := `
-    SELECT id, user_id, recipient_name, phone, province, district, ward, street, address_type, is_default, notes, created_at, updated_at
-    FROM addresses
-    WHERE id = $1
-  `
+        SELECT id, user_id, recipient_name, phone, province, district, ward, street, address_type, is_default, notes, latitude, longitude, created_at, updated_at
+        FROM addresses
+        WHERE id = $1
+    `
 
 	row := r.pool.QueryRow(ctx, query, id)
 
@@ -65,6 +68,7 @@ func (r *postgresRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.
 		&addr.ID, &addr.UserID, &addr.RecipientName, &addr.Phone,
 		&addr.Province, &addr.District, &addr.Ward, &addr.Street,
 		&addr.AddressType, &addr.IsDefault, &addr.Notes,
+		&addr.Latitude, &addr.Longitude,
 		&addr.CreatedAt, &addr.UpdatedAt,
 	)
 
@@ -78,14 +82,14 @@ func (r *postgresRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.
 	return &addr, nil
 }
 
-// GetByUserID retrieves all addresses for a user
+// GetByUserID retrieves all addresses for a user (bao gồm latitude/longitude)
 func (r *postgresRepository) GetByUserID(ctx context.Context, userID uuid.UUID) ([]*model.Address, error) {
 	query := `
-    SELECT id, user_id, recipient_name, phone, province, district, ward, street, address_type, is_default, notes, created_at, updated_at
-    FROM addresses
-    WHERE user_id = $1
-    ORDER BY is_default DESC, created_at DESC
-  `
+        SELECT id, user_id, recipient_name, phone, province, district, ward, street, address_type, is_default, notes, latitude, longitude, created_at, updated_at
+        FROM addresses
+        WHERE user_id = $1
+        ORDER BY is_default DESC, created_at DESC
+    `
 
 	rows, err := r.pool.Query(ctx, query, userID)
 	if err != nil {
@@ -101,6 +105,7 @@ func (r *postgresRepository) GetByUserID(ctx context.Context, userID uuid.UUID) 
 			&addr.ID, &addr.UserID, &addr.RecipientName, &addr.Phone,
 			&addr.Province, &addr.District, &addr.Ward, &addr.Street,
 			&addr.AddressType, &addr.IsDefault, &addr.Notes,
+			&addr.Latitude, &addr.Longitude,
 			&addr.CreatedAt, &addr.UpdatedAt,
 		)
 		if err != nil {
@@ -116,13 +121,13 @@ func (r *postgresRepository) GetByUserID(ctx context.Context, userID uuid.UUID) 
 	return addresses, nil
 }
 
-// GetDefaultByUserID retrieves default address for a user
+// GetDefaultByUserID retrieves default address for a user (bao gồm latitude/longitude)
 func (r *postgresRepository) GetDefaultByUserID(ctx context.Context, userID uuid.UUID) (*model.Address, error) {
 	query := `
-    SELECT id, user_id, recipient_name, phone, province, district, ward, street, address_type, is_default, notes, created_at, updated_at
-    FROM addresses
-    WHERE user_id = $1 AND is_default = true
-  `
+        SELECT id, user_id, recipient_name, phone, province, district, ward, street, address_type, is_default, notes, latitude, longitude, created_at, updated_at
+        FROM addresses
+        WHERE user_id = $1 AND is_default = true
+    `
 
 	row := r.pool.QueryRow(ctx, query, userID)
 
@@ -131,6 +136,7 @@ func (r *postgresRepository) GetDefaultByUserID(ctx context.Context, userID uuid
 		&addr.ID, &addr.UserID, &addr.RecipientName, &addr.Phone,
 		&addr.Province, &addr.District, &addr.Ward, &addr.Street,
 		&addr.AddressType, &addr.IsDefault, &addr.Notes,
+		&addr.Latitude, &addr.Longitude,
 		&addr.CreatedAt, &addr.UpdatedAt,
 	)
 
@@ -144,14 +150,14 @@ func (r *postgresRepository) GetDefaultByUserID(ctx context.Context, userID uuid
 	return &addr, nil
 }
 
-// List retrieves all addresses (for admin use)
+// List retrieves all addresses (for admin use) (bao gồm latitude/longitude)
 func (r *postgresRepository) List(ctx context.Context, offset, limit int) ([]*model.Address, error) {
 	query := `
-    SELECT id, user_id, recipient_name, phone, province, district, ward, street, address_type, is_default, notes, created_at, updated_at
-    FROM addresses
-    ORDER BY created_at DESC
-    LIMIT $1 OFFSET $2
-  `
+        SELECT id, user_id, recipient_name, phone, province, district, ward, street, address_type, is_default, notes, latitude, longitude, created_at, updated_at
+        FROM addresses
+        ORDER BY created_at DESC
+        LIMIT $1 OFFSET $2
+    `
 
 	rows, err := r.pool.Query(ctx, query, limit, offset)
 	if err != nil {
@@ -167,6 +173,7 @@ func (r *postgresRepository) List(ctx context.Context, offset, limit int) ([]*mo
 			&addr.ID, &addr.UserID, &addr.RecipientName, &addr.Phone,
 			&addr.Province, &addr.District, &addr.Ward, &addr.Street,
 			&addr.AddressType, &addr.IsDefault, &addr.Notes,
+			&addr.Latitude, &addr.Longitude,
 			&addr.CreatedAt, &addr.UpdatedAt,
 		)
 		if err != nil {
@@ -212,20 +219,20 @@ func (r *postgresRepository) CountByUserID(ctx context.Context, userID uuid.UUID
 	return count, nil
 }
 
-// Update updates address information
+// Update updates address information (bao gồm latitude/longitude)
 func (r *postgresRepository) Update(ctx context.Context, id uuid.UUID, addr *model.Address) (*model.Address, error) {
 	query := `
-    UPDATE addresses
-    SET recipient_name = $1, phone = $2, province = $3, district = $4, ward = $5, 
-        street = $6, address_type = $7, notes = $8, updated_at = NOW()
-    WHERE id = $9
-    RETURNING id, user_id, recipient_name, phone, province, district, ward, street, address_type, is_default, notes, created_at, updated_at
-  `
+        UPDATE addresses
+        SET recipient_name = $1, phone = $2, province = $3, district = $4, ward = $5, 
+            street = $6, address_type = $7, notes = $8, latitude = $9, longitude = $10, updated_at = NOW()
+        WHERE id = $11
+        RETURNING id, user_id, recipient_name, phone, province, district, ward, street, address_type, is_default, notes, latitude, longitude, created_at, updated_at
+    `
 
 	row := r.pool.QueryRow(
 		ctx, query,
 		addr.RecipientName, addr.Phone, addr.Province, addr.District, addr.Ward,
-		addr.Street, addr.AddressType, addr.Notes, id,
+		addr.Street, addr.AddressType, addr.Notes, addr.Latitude, addr.Longitude, id,
 	)
 
 	var updatedAddr model.Address
@@ -233,6 +240,7 @@ func (r *postgresRepository) Update(ctx context.Context, id uuid.UUID, addr *mod
 		&updatedAddr.ID, &updatedAddr.UserID, &updatedAddr.RecipientName, &updatedAddr.Phone,
 		&updatedAddr.Province, &updatedAddr.District, &updatedAddr.Ward, &updatedAddr.Street,
 		&updatedAddr.AddressType, &updatedAddr.IsDefault, &updatedAddr.Notes,
+		&updatedAddr.Latitude, &updatedAddr.Longitude,
 		&updatedAddr.CreatedAt, &updatedAddr.UpdatedAt,
 	)
 
@@ -309,25 +317,26 @@ func (r *postgresRepository) UnsetDefault(ctx context.Context, id uuid.UUID) err
 	return nil
 }
 
-// GetAddressWithUser retrieves address with user information
+// GetAddressWithUser retrieves address with user information (bao gồm latitude/longitude)
 func (r *postgresRepository) GetAddressWithUser(ctx context.Context, id uuid.UUID) (*model.AddressWithUserResponse, error) {
 	query := `
-    SELECT 
-      a.id, a.user_id, u.full_name, u.email, 
-      a.recipient_name, a.phone, a.province, a.district, a.ward, a.street, 
-      a.address_type, a.is_default, a.notes, a.created_at, a.updated_at
-    FROM addresses a
-    LEFT JOIN users u ON a.user_id = u.id
-    WHERE a.id = $1
-  `
+        SELECT 
+            a.id, a.user_id, u.full_name, u.email, 
+            a.recipient_name, a.phone, a.province, a.district, a.ward, a.street, 
+            a.address_type, a.is_default, a.notes, a.latitude, a.longitude, a.created_at, a.updated_at
+        FROM addresses a
+        LEFT JOIN users u ON a.user_id = u.id
+        WHERE a.id = $1
+    `
 
 	row := r.pool.QueryRow(ctx, query, id)
 
 	var resp model.AddressWithUserResponse
+	var lat, lon *float64
 	err := row.Scan(
 		&resp.ID, &resp.UserID, &resp.UserName, &resp.UserEmail,
 		&resp.RecipientName, &resp.Phone, &resp.Province, &resp.District, &resp.Ward, &resp.Street,
-		&resp.AddressType, &resp.IsDefault, &resp.Notes, &resp.CreatedAt, &resp.UpdatedAt,
+		&resp.AddressType, &resp.IsDefault, &resp.Notes, &lat, &lon, &resp.CreatedAt, &resp.UpdatedAt,
 	)
 
 	if err != nil {
@@ -337,21 +346,31 @@ func (r *postgresRepository) GetAddressWithUser(ctx context.Context, id uuid.UUI
 		return nil, model.NewCreateAddressError(err)
 	}
 
+	// Convert float64 to *string for response
+	if lat != nil {
+		latStr := strconv.FormatFloat(*lat, 'f', 6, 64)
+		resp.Latitude = &latStr
+	}
+	if lon != nil {
+		lonStr := strconv.FormatFloat(*lon, 'f', 6, 64)
+		resp.Longitude = &lonStr
+	}
+
 	return &resp, nil
 }
 
-// ListAddressesWithUser retrieves addresses with user info (for admin)
+// ListAddressesWithUser retrieves addresses with user info (for admin) (bao gồm latitude/longitude)
 func (r *postgresRepository) ListAddressesWithUser(ctx context.Context, offset, limit int) ([]*model.AddressWithUserResponse, error) {
 	query := `
-    SELECT 
-      a.id, a.user_id, u.full_name, u.email, 
-      a.recipient_name, a.phone, a.province, a.district, a.ward, a.street, 
-      a.address_type, a.is_default, a.notes, a.created_at, a.updated_at
-    FROM addresses a
-    LEFT JOIN users u ON a.user_id = u.id
-    ORDER BY a.created_at DESC
-    LIMIT $1 OFFSET $2
-  `
+        SELECT 
+            a.id, a.user_id, u.full_name, u.email, 
+            a.recipient_name, a.phone, a.province, a.district, a.ward, a.street, 
+            a.address_type, a.is_default, a.notes, a.latitude, a.longitude, a.created_at, a.updated_at
+        FROM addresses a
+        LEFT JOIN users u ON a.user_id = u.id
+        ORDER BY a.created_at DESC
+        LIMIT $1 OFFSET $2
+    `
 
 	rows, err := r.pool.Query(ctx, query, limit, offset)
 	if err != nil {
@@ -363,14 +382,26 @@ func (r *postgresRepository) ListAddressesWithUser(ctx context.Context, offset, 
 
 	for rows.Next() {
 		var resp model.AddressWithUserResponse
+		var lat, lon *float64
 		err := rows.Scan(
 			&resp.ID, &resp.UserID, &resp.UserName, &resp.UserEmail,
 			&resp.RecipientName, &resp.Phone, &resp.Province, &resp.District, &resp.Ward, &resp.Street,
-			&resp.AddressType, &resp.IsDefault, &resp.Notes, &resp.CreatedAt, &resp.UpdatedAt,
+			&resp.AddressType, &resp.IsDefault, &resp.Notes, &lat, &lon, &resp.CreatedAt, &resp.UpdatedAt,
 		)
 		if err != nil {
 			return nil, model.NewCreateAddressError(err)
 		}
+
+		// Convert float64 to *string for response
+		if lat != nil {
+			latStr := strconv.FormatFloat(*lat, 'f', 6, 64)
+			resp.Latitude = &latStr
+		}
+		if lon != nil {
+			lonStr := strconv.FormatFloat(*lon, 'f', 6, 64)
+			resp.Longitude = &lonStr
+		}
+
 		addresses = append(addresses, &resp)
 	}
 

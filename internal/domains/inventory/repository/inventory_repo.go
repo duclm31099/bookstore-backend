@@ -1292,3 +1292,46 @@ func (r *postgresRepository) GetAvailableQuantity(
 
 	return availableQty, nil
 }
+
+// GetBookTotalStock implements RepositoryInterface.
+// Đọc tổng tồn cho 1 book từ view books_total_stock.
+// Nếu không có row (book hiện không có inventory ở bất kỳ kho nào), trả về (nil, nil).
+func (r *postgresRepository) GetBookTotalStock(ctx context.Context, bookID string) (*model.BookTotalStock, error) {
+	query := `
+        SELECT 
+            book_id,
+            total_quantity,
+            total_reserved,
+            available,
+            warehouse_count,
+            warehouses_with_stock
+        FROM books_total_stock
+        WHERE book_id = $1
+    `
+
+	row := r.pool.QueryRow(ctx, query, bookID)
+
+	var result model.BookTotalStock
+	var warehouses []string
+
+	// warehouses_with_stock là mảng UUID → scan vào []string
+	err := row.Scan(
+		&result.BookID,
+		&result.TotalQuantity,
+		&result.TotalReserved,
+		&result.Available,
+		&result.WarehouseCount,
+		&warehouses,
+	)
+
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			// Không có stock record nào cho book này → để handler hiểu là stock = 0
+			return nil, nil
+		}
+		return nil, fmt.Errorf("GetBookTotalStock query error: %w", err)
+	}
+
+	result.WarehousesWithStock = warehouses
+	return &result, nil
+}

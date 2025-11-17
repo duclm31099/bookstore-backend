@@ -4,11 +4,15 @@ package service
 import (
 	"bookstore-backend/internal/domains/inventory/model"
 	"bookstore-backend/internal/domains/inventory/repository"
+	"bookstore-backend/internal/shared"
+	"bookstore-backend/pkg/logger"
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -18,12 +22,14 @@ const (
 )
 
 type InventoryService struct {
-	repo repository.RepositoryInterface
+	repo  repository.RepositoryInterface
+	asynq *asynq.Client // DI từ container, queue riêng inventory
 }
 
-func NewService(repo repository.RepositoryInterface) ServiceInterface {
+func NewService(repo repository.RepositoryInterface, asynq *asynq.Client) ServiceInterface {
 	return &InventoryService{
-		repo: repo,
+		repo:  repo,
+		asynq: asynq,
 	}
 }
 
@@ -182,6 +188,23 @@ func (s *InventoryService) UpdateInventory(ctx context.Context, warehouseID, boo
 
 	warehouse, _ := s.repo.GetWarehouseByID(ctx, warehouseID)
 	response := s.inventoryToResponse(*updated, warehouse.Name)
+
+	// 2. Enqueue InventorySyncJob
+	payload := shared.InventorySyncPayload{
+		BookID: bookID.String(),
+		Source: "ADMIN_ADJUST",
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		logger.Error("InventoryService.UpdateStock: payload marshal error", err)
+		// Không cần fail request vì stock đã được cập nhật
+	} else {
+		task := asynq.NewTask(shared.TypeInventorySyncBookStock, b)
+		if _, err := s.asynq.Enqueue(task, asynq.Queue("inventory")); err != nil {
+			logger.Error("InventoryService.UpdateStock: failed to enqueue InventorySyncJob", err)
+			// Không cần fail request, log alert là đủ
+		}
+	}
 	return &response, nil
 }
 
@@ -263,6 +286,15 @@ func (s *InventoryService) ReserveStock(ctx context.Context, req model.ReserveSt
 	if err != nil {
 		return nil, err
 	}
+	// Thêm cuối hàm ReserveStock:
+	payload := shared.InventorySyncPayload{
+		BookID: req.BookID.String(), Source: "RESERVE",
+	}
+	b, err := json.Marshal(payload)
+	if err == nil {
+		task := asynq.NewTask(shared.TypeInventorySyncBookStock, b)
+		s.asynq.Enqueue(task, asynq.Queue("inventory"))
+	}
 
 	expiresAt := time.Now().Add(ReservationTimeoutMinutes * time.Minute)
 
@@ -283,7 +315,15 @@ func (s *InventoryService) ReleaseStock(ctx context.Context, req model.ReleaseSt
 	if err != nil {
 		return nil, err
 	}
-
+	// Thêm cuối hàm ReserveStock:
+	payload := shared.InventorySyncPayload{
+		BookID: req.BookID.String(), Source: "RELEASE",
+	}
+	b, err := json.Marshal(payload)
+	if err == nil {
+		task := asynq.NewTask(shared.TypeInventorySyncBookStock, b)
+		s.asynq.Enqueue(task, asynq.Queue("inventory"))
+	}
 	return &model.ReleaseStockResponse{
 		Success:           true,
 		WarehouseID:       req.WarehouseID,

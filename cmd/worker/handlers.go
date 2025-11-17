@@ -4,6 +4,7 @@ import (
 	"github.com/hibiken/asynq"
 
 	bookJob "bookstore-backend/internal/domains/book/job"
+	inventoryJob "bookstore-backend/internal/domains/inventory/job"
 	"bookstore-backend/internal/domains/user/job"
 	"bookstore-backend/internal/infrastructure/email"
 	emailjob "bookstore-backend/internal/infrastructure/email/job"
@@ -26,6 +27,8 @@ type HandlerRegistry struct {
 
 	processBookImage *bookJob.ProcessImageHandler
 	deleteBookImages *bookJob.DeleteImagesHandler
+
+	inventorySync *inventoryJob.InventorySyncHandler
 }
 
 // initializeHandlers creates all job handlers with their dependencies
@@ -47,6 +50,10 @@ func initializeHandlers(c *container.Container, cfg *Config) *HandlerRegistry {
 		cleanup:          job.NewCleanupExpiredTokenHandler(c.UserRepo),
 		processBookImage: bookJob.NewProcessImageHandler(c.ImageBookService),
 		deleteBookImages: bookJob.NewDeleteImagesHandler(c.ImageBookService),
+		inventorySync: inventoryJob.NewInventorySyncHandler(
+			c.InventoryRepo,
+			c.Cache,
+		),
 	}
 }
 
@@ -64,4 +71,6 @@ func (h *HandlerRegistry) RegisterHandlers(mux *asynq.ServeMux) {
 	mux.HandleFunc(shared.TypeCleanupExpiredToken, h.cleanup.ProcessTask)
 	mux.HandleFunc(shared.TypeProcessBookImage, h.processBookImage.ProcessTask)
 	mux.HandleFunc(shared.TypeDeleteBookImages, h.deleteBookImages.ProcessTask)
+	// Inventory
+	mux.HandleFunc(shared.TypeInventorySyncBookStock, h.inventorySync.ProcessTask)
 }

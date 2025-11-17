@@ -79,6 +79,10 @@ import (
 	reviewRepo "bookstore-backend/internal/domains/review/repository"
 	reviewService "bookstore-backend/internal/domains/review/service"
 
+	warehouseHandler "bookstore-backend/internal/domains/warehouse/handler"
+	warehouseRepo "bookstore-backend/internal/domains/warehouse/repository"
+	warehouseService "bookstore-backend/internal/domains/warehouse/service"
+
 	"github.com/hibiken/asynq"
 )
 
@@ -112,6 +116,7 @@ type Container struct {
 	ReviewRepo     reviewRepo.ReviewRepository
 	ImageBookRepo  bookRepo.BookImageRepository
 	BulkImportRepo bookRepo.BulkImportRepoI
+	WarehouseRepo  warehouseRepo.Repository
 	// ========================================
 	// SERVICE LAYER (BUSINESS LOGIC)
 	// ========================================
@@ -131,6 +136,7 @@ type Container struct {
 	ReviewService     reviewService.ServiceInterface
 	ImageBookService  bookService.BookImageService
 	BulkImportService bookService.BulkImportServiceInterface
+	WarehouseService  warehouseService.Service
 	// ========================================
 	// HANDLER LAYER (HTTP)
 	// ========================================
@@ -147,7 +153,8 @@ type Container struct {
 	OrderHandler      *orderHandler.OrderHandler
 	PaymentHandler    *paymentHandler.PaymentHandler
 	ReviewHandler     *reviewHandler.ReviewHandler
-	BulkImportHandler bookHandler.BulkImportHandler
+	BulkImportHandler *bookHandler.BulkImportHandler
+	WarehouseHandler  *warehouseHandler.Handler
 }
 
 // ========================================
@@ -279,6 +286,7 @@ func (c *Container) initRepositories() error {
 	c.ReviewRepo = reviewRepo.NewPostgresReviewRepository(pool)
 	c.ImageBookRepo = bookRepo.NewBookImageRepository(pool)
 	c.BulkImportRepo = bookRepo.NewBulkImportRepository(pool)
+	c.WarehouseRepo = warehouseRepo.NewRepository(pool)
 	return nil
 }
 
@@ -295,6 +303,7 @@ func (c *Container) initServices() error {
 		c.CategoryRepo, c.PublisherRepo, c.ImageBookRepo, c.DB.Pool, c.MinIOStorage,
 		c.ImageProcessor, c.AsynqClient,
 	)
+	c.WarehouseService = warehouseService.NewService(c.WarehouseRepo)
 	c.CategoryService = categoryService.NewCategoryService(c.CategoryRepo)
 	c.AuthorService = authorService.NewAuthorService(c.AuthorRepo)
 	c.PublisherService = publisherService.NewPublisherService(c.PublisherRepo)
@@ -302,13 +311,21 @@ func (c *Container) initServices() error {
 	c.BookService = bookService.NewService(
 		c.BookRepo, c.Cache, c.ImageProcessor, c.MinIOStorage, c.ImageBookRepo, c.AsynqClient,
 	)
-	c.InventoryService = inventoryService.NewService(c.InventoryRepo)
+	c.InventoryService = inventoryService.NewService(c.InventoryRepo, c.AsynqClient)
 	c.CartService = cartService.NewCartService(
 		c.CartRepo, c.InventoryService,
 		c.AddressService, c.InventoryRepo, c.BookService,
 	)
 	c.PromotionService = promotionService.NewPromotionService(c.PromotionRepo, c.DB.Pool, c.CartService)
-	c.OrderSerivce = orderService.NewOrderService(c.OrderRepo, nil, c.InventoryRepo, c.AddressRepo, c.CartRepo, c.PromotionRepo, c.InventoryService)
+	c.OrderSerivce = orderService.NewOrderService(
+		c.OrderRepo, c.WarehouseService,
+		c.InventoryRepo,
+		c.AddressRepo,
+		c.CartRepo,
+		c.PromotionRepo,
+		c.InventoryService,
+		c.AsynqClient,
+	)
 	c.PaymentService = paymentService.NewPaymentService(
 		c.PaymentRepo, c.WebHookRepo, c.RefundRepo, c.TxManager,
 		c.VNPayGateway, c.MomoGateway, c.OrderSerivce,
@@ -333,7 +350,8 @@ func (c *Container) initHandlers() error {
 	c.InventoryHandler = inventoryHandler.NewHandler(c.InventoryService)
 	c.ReviewHandler = reviewHandler.NewReviewHandler(c.ReviewService)
 	c.CartHandler = cartHandler.NewHandler(c.CartService)
-	c.BulkImportHandler = *bookHandler.NewBulkImportHandler(c.BulkImportService)
+	c.WarehouseHandler = warehouseHandler.NewHandler(c.WarehouseService)
+	c.BulkImportHandler = bookHandler.NewBulkImportHandler(c.BulkImportService)
 	c.AdminProHandler = promotionHandler.NewAdminHandler(c.PromotionService)
 	c.PublicProHandler = promotionHandler.NewPublicHandler(c.PromotionService, c.CartService)
 	c.PaymentHandler = paymentHandler.NewPaymentHandler(c.PaymentService, c.RefundService)

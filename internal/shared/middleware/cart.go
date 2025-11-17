@@ -190,7 +190,10 @@ func GetCartID(c *gin.Context) (uuid.UUID, error) {
 	if !ok {
 		return uuid.Nil, ErrInvalidCartID
 	}
-
+	// Optional: Validate not nil UUID
+	if cartID == uuid.Nil {
+		return uuid.Nil, ErrInvalidCartID
+	}
 	return cartID, nil
 }
 

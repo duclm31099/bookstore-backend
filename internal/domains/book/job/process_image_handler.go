@@ -33,10 +33,6 @@ func (h *ProcessImageHandler) ProcessTask(ctx context.Context, task *asynq.Task)
 		return fmt.Errorf("unmarshal payload: %w", err)
 	}
 
-	log.Info().
-		Str("image_id", payload.ImageID).
-		Msg("Processing book image variants")
-
 	// Gọi service xử lý ảnh
 	err := h.bookImageService.ProcessImage(ctx, payload.ImageID)
 	if err != nil {
@@ -46,10 +42,6 @@ func (h *ProcessImageHandler) ProcessTask(ctx context.Context, task *asynq.Task)
 			Msg("Failed to process image")
 		return fmt.Errorf("process image: %w", err)
 	}
-
-	log.Info().
-		Str("image_id", payload.ImageID).
-		Msg("Book image processed successfully")
 
 	return nil
 }

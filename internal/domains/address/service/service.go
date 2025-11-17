@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -21,11 +22,22 @@ func NewAddressService(repo repo.RepositoryInterface) ServiceInterface {
 	}
 }
 
-// CreateAddress creates a new address for user
+// CreateAddress creates a new address for user (bao gồm latitude/longitude)
 func (s *addressService) CreateAddress(ctx context.Context, userID uuid.UUID, req *model.AddressCreateRequest) (*model.AddressResponse, error) {
 	// Validate request
 	if err := model.ValidateAddressCreate(req); err != nil {
 		return nil, err
+	}
+
+	// Parse latitude/longitude từ string sang float64
+	lat, err := strconv.ParseFloat(strings.TrimSpace(req.Latitude), 64)
+	if err != nil {
+		return nil, errors.New("invalid latitude format")
+	}
+
+	lon, err := strconv.ParseFloat(strings.TrimSpace(req.Longitude), 64)
+	if err != nil {
+		return nil, errors.New("invalid longitude format")
 	}
 
 	// Create address model
@@ -40,6 +52,8 @@ func (s *addressService) CreateAddress(ctx context.Context, userID uuid.UUID, re
 		AddressType:   model.AddressType(strings.ToLower(strings.TrimSpace(req.AddressType))),
 		IsDefault:     false,
 		Notes:         strings.TrimSpace(req.Notes),
+		Latitude:      lat,
+		Longitude:     lon,
 	}
 
 	// Create in repository
@@ -53,7 +67,6 @@ func (s *addressService) CreateAddress(ctx context.Context, userID uuid.UUID, re
 
 // GetAddress retrieves an address by ID (with authorization check)
 func (s *addressService) GetAddressByID(ctx context.Context, userID, addressID uuid.UUID) (*model.AddressResponse, error) {
-
 	addr, err := s.repo.GetByID(ctx, addressID)
 	if err != nil {
 		return nil, err
@@ -73,7 +86,6 @@ func (s *addressService) GetAddressByID(ctx context.Context, userID, addressID u
 
 // ListUserAddresses retrieves all addresses for a user
 func (s *addressService) ListUserAddresses(ctx context.Context, userID uuid.UUID) ([]*model.AddressResponse, error) {
-
 	addrs, err := s.repo.GetByUserID(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -93,7 +105,6 @@ func (s *addressService) ListUserAddresses(ctx context.Context, userID uuid.UUID
 
 // GetDefaultAddress retrieves default address for a user
 func (s *addressService) GetDefaultAddress(ctx context.Context, userID uuid.UUID) (*model.AddressResponse, error) {
-
 	addr, err := s.repo.GetDefaultByUserID(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -106,19 +117,33 @@ func (s *addressService) GetDefaultAddress(ctx context.Context, userID uuid.UUID
 	return s.modelToResponse(addr), nil
 }
 
-// UpdateAddress - Optimized version
+// UpdateAddress - Optimized version (bao gồm latitude/longitude)
 func (s *addressService) UpdateAddress(ctx context.Context, userID, addressID uuid.UUID, req *model.AddressUpdateRequest) (*model.AddressResponse, error) {
 	// Validate request (includes nil check)
 	if err := model.ValidateAddressUpdate(req); err != nil {
 		return nil, err
 	}
+
 	// Get existing address with ownership check
 	existing, err := s.getAddressWithOwnershipCheck(ctx, userID, addressID)
 	if err != nil {
 		return nil, err
 	}
+
+	// Parse latitude/longitude từ request
+	lat, err := strconv.ParseFloat(strings.TrimSpace(req.Latitude), 64)
+	if err != nil {
+		return nil, errors.New("invalid latitude format")
+	}
+
+	lon, err := strconv.ParseFloat(strings.TrimSpace(req.Longitude), 64)
+	if err != nil {
+		return nil, errors.New("invalid longitude format")
+	}
+
 	// Merge request with existing values
-	updateAddr := s.mergeAddressUpdate(req, existing)
+	updateAddr := s.mergeAddressUpdate(req, existing, lat, lon)
+
 	// Update in repository
 	updatedAddr, err := s.repo.Update(ctx, addressID, updateAddr)
 	if err != nil {
@@ -143,8 +168,8 @@ func (s *addressService) getAddressWithOwnershipCheck(ctx context.Context, userI
 	return existing, nil
 }
 
-// Helper: Merge update request with existing values
-func (s *addressService) mergeAddressUpdate(req *model.AddressUpdateRequest, existing *model.Address) *model.Address {
+// Helper: Merge update request with existing values (bao gồm latitude/longitude)
+func (s *addressService) mergeAddressUpdate(req *model.AddressUpdateRequest, existing *model.Address, lat, lon float64) *model.Address {
 	return &model.Address{
 		RecipientName: s.getOrDefault(req.RecipientName, existing.RecipientName),
 		Phone:         s.getOrDefault(req.Phone, existing.Phone),
@@ -154,6 +179,8 @@ func (s *addressService) mergeAddressUpdate(req *model.AddressUpdateRequest, exi
 		Street:        s.getOrDefault(req.Street, existing.Street),
 		AddressType:   s.getOrDefaultType(req.AddressType, existing.AddressType),
 		Notes:         s.getOrDefault(req.Notes, existing.Notes),
+		Latitude:      lat,
+		Longitude:     lon,
 	}
 }
 
@@ -177,7 +204,6 @@ func (s *addressService) getOrDefaultType(newVal string, existingVal model.Addre
 
 // DeleteAddress removes an address (with authorization check)
 func (s *addressService) DeleteAddress(ctx context.Context, userID, addressID uuid.UUID) error {
-
 	_, err := s.getAddressWithOwnershipCheck(ctx, userID, addressID)
 	if err != nil {
 		return err
@@ -188,7 +214,7 @@ func (s *addressService) DeleteAddress(ctx context.Context, userID, addressID uu
 		return err
 	}
 	if count == 1 {
-		return errors.New("Can not delete the last address")
+		return errors.New("cannot delete the last address")
 	}
 
 	// Delete address
@@ -239,6 +265,9 @@ func (s *addressService) UnsetDefaultAddress(ctx context.Context, userID, addres
 
 	// Verify address exists and belongs to user
 	_, err := s.getAddressWithOwnershipCheck(ctx, userID, addressID)
+	if err != nil {
+		return err
+	}
 
 	// Check if this is the only address for user
 	count, err := s.repo.CountByUserID(ctx, userID)
@@ -306,8 +335,19 @@ func (s *addressService) ListAllAddresses(ctx context.Context, page, pageSize in
 	return responses, total, nil
 }
 
-// Helper: Convert Address model to AddressResponse DTO
+// Helper: Convert Address model to AddressResponse DTO (bao gồm latitude/longitude)
 func (s *addressService) modelToResponse(addr *model.Address) *model.AddressResponse {
+	// Convert float64 latitude/longitude sang *string cho response
+	var latStr, lonStr *string
+	if addr.Latitude != 0 {
+		lat := strconv.FormatFloat(addr.Latitude, 'f', 6, 64)
+		latStr = &lat
+	}
+	if addr.Longitude != 0 {
+		lon := strconv.FormatFloat(addr.Longitude, 'f', 6, 64)
+		lonStr = &lon
+	}
+
 	return &model.AddressResponse{
 		ID:            addr.ID,
 		UserID:        addr.UserID,
@@ -320,6 +360,8 @@ func (s *addressService) modelToResponse(addr *model.Address) *model.AddressResp
 		AddressType:   string(addr.AddressType),
 		IsDefault:     addr.IsDefault,
 		Notes:         addr.Notes,
+		Latitude:      latStr,
+		Longitude:     lonStr,
 		CreatedAt:     addr.CreatedAt,
 		UpdatedAt:     addr.UpdatedAt,
 	}

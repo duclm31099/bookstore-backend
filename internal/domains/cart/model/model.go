@@ -1,6 +1,7 @@
 package model
 
 import (
+	address "bookstore-backend/internal/domains/address/model"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,6 +19,19 @@ type Cart struct {
 	CreatedAt  time.Time       `json:"created_at" db:"created_at"`
 	UpdatedAt  time.Time       `json:"updated_at" db:"updated_at"`
 	ExpiresAt  time.Time       `json:"expires_at" db:"expires_at"`
+
+	// Promotion fields
+	PromoCode     *string                `json:"promo_code" db:"promo_code"`
+	Discount      decimal.Decimal        `json:"discount" db:"discount"` // ✅ Not pointer
+	Total         decimal.Decimal        `json:"total" db:"total"`
+	PromoMetadata map[string]interface{} `json:"promo_metadata" db:"promo_metadata"` // ✅ JSONB
+}
+
+// IsExpired checks if cart has expired
+
+// HasPromo checks if cart has an active promo code
+func (c *Cart) HasPromo() bool {
+	return c.PromoCode != nil && *c.PromoCode != ""
 }
 
 // CartItem represents items in shopping cart
@@ -29,4 +43,24 @@ type CartItem struct {
 	Price     decimal.Decimal `json:"price" db:"price"` // Snapshot price at time of adding
 	CreatedAt time.Time       `json:"created_at" db:"created_at"`
 	UpdatedAt time.Time       `json:"updated_at" db:"updated_at"`
+}
+
+// ReservedItem tracks inventory reservation for rollback
+type ReservedItem struct {
+	WarehouseID   uuid.UUID
+	BookID        uuid.UUID
+	BookTitle     string
+	Quantity      int
+	ReservationID uuid.UUID
+	ExpiresAt     time.Time
+}
+
+// CheckoutValidationResult holds all validation results
+type CheckoutValidationResult struct {
+	Cart         *Cart
+	Items        []CartItemWithBook
+	Validation   *CartValidationResult
+	ShippingAddr *address.AddressResponse
+	BillingAddr  *address.AddressResponse
+	WarehouseID  *uuid.UUID
 }

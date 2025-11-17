@@ -10,6 +10,7 @@ import (
 	"bookstore-backend/internal/shared/middleware"
 	cartMiddleware "bookstore-backend/internal/shared/middleware"
 	"bookstore-backend/internal/shared/response"
+	"bookstore-backend/internal/shared/utils"
 	"bookstore-backend/pkg/logger"
 
 	"github.com/gin-gonic/gin"
@@ -251,36 +252,53 @@ func (h *Handler) ClearCart(c *gin.Context) {
 	}
 
 	// Clear cart
-	err = h.service.ClearCart(c.Request.Context(), cartID)
+	deletedCount, err := h.service.ClearCart(c.Request.Context(), cartID)
 	if err != nil {
-		response.Error(c, http.StatusInternalServerError, "Failed to clear cart", err.Error())
+		// Map custom errors to HTTP status
+		switch {
+		case errors.Is(err, model.ErrCartNotFound):
+			response.Error(c, http.StatusNotFound, "Cart not found", nil)
+		case errors.Is(err, model.ErrCartExpired):
+			response.Error(c, http.StatusGone, "Cart has expired", nil)
+		default:
+			response.Error(c, http.StatusInternalServerError, "Failed to clear cart", err.Error())
+		}
 		return
 	}
 
-	// Return success
-	response.Success(c, http.StatusOK, "Cart cleared successfully", nil)
+	// Return success with deleted count
+	resp := map[string]interface{}{
+		"deleted_count": deletedCount,
+		"message":       fmt.Sprintf("Cleared %d items from cart", deletedCount),
+	}
+	response.Success(c, http.StatusOK, "Success", resp)
 }
 
 // ValidateCart handles POST /me/cart/validate
 // @Summary Validate cart before checkout
 // @Description Checks if cart is valid, items in stock, prices current
 func (h *Handler) ValidateCart(c *gin.Context) {
-
-	userId, exist := c.Get("user_id")
-
-	if !exist {
-		response.Error(c, http.StatusUnauthorized, "Unauthorized user", nil)
-		return
-	}
-	// Get cart_id from middleware
+	// Get cartID from middleware
 	cartID, err := middleware.GetCartID(c)
 	if err != nil {
 		response.Error(c, http.StatusBadRequest, "Invalid cart", err.Error())
 		return
 	}
 
-	// Validate
-	result, err := h.service.ValidateCart(c.Request.Context(), cartID, userId.(string))
+	// Get userID (optional for anonymous)
+	var userID uuid.UUID
+	userIDValue, exists := c.Get("user_id")
+	if exists {
+		var ok bool
+		userID, ok = userIDValue.(uuid.UUID)
+		if !ok {
+			response.Error(c, http.StatusUnauthorized, "Invalid user ID", nil)
+			return
+		}
+	}
+
+	// Validate cart
+	result, err := h.service.ValidateCart(c.Request.Context(), cartID, userID)
 	if err != nil {
 		response.Error(c, http.StatusInternalServerError, "Validation failed", err.Error())
 		return
@@ -306,6 +324,7 @@ func (h *Handler) ApplyPromoCode(c *gin.Context) {
 		"userId": userId,
 		"exist":  exist,
 	})
+	uid := utils.ParseStringToUUID(userId.(string))
 	if !exist || userId == nil {
 		response.Error(c, http.StatusUnauthorized, "Invalid user id - must login to use promotion", nil)
 		return
@@ -323,7 +342,7 @@ func (h *Handler) ApplyPromoCode(c *gin.Context) {
 		return
 	}
 
-	result, err := h.service.ApplyPromoCode(c.Request.Context(), cartID, req.PromoCode, userId.(string))
+	result, err := h.service.ApplyPromoCode(c.Request.Context(), cartID, req.PromoCode, uid)
 	if err != nil {
 		response.Error(c, http.StatusBadRequest, "Invalid promo code", err.Error())
 		return

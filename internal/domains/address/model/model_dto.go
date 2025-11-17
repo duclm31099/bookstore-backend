@@ -27,6 +27,8 @@ type Address struct {
 	Province      string      `db:"province"`
 	District      string      `db:"district"`
 	Ward          string      `db:"ward"`
+	Longitude     float64     `db:"longitude"`
+	Latitude      float64     `db:"latitude"`
 	Street        string      `db:"street"`
 	AddressType   AddressType `db:"address_type"`
 	IsDefault     bool        `db:"is_default"`
@@ -37,26 +39,30 @@ type Address struct {
 
 // AddressCreateRequest DTO for creating a new address
 type AddressCreateRequest struct {
-	RecipientName string `json:"recipient_name" binding:"required,min=2,max=255"`
-	Phone         string `json:"phone" binding:"required"`
-	Province      string `json:"province" binding:"required,min=1,max=100"`
-	District      string `json:"district" binding:"required,min=1,max=100"`
-	Ward          string `json:"ward" binding:"required,min=1,max=100"`
-	Street        string `json:"street" binding:"required,min=1,max=500"`
-	AddressType   string `json:"address_type" binding:"required,oneof=home office other"`
-	Notes         string `json:"notes" binding:"omitempty,max=500"`
+	RecipientName string  `json:"recipient_name" binding:"required,min=2,max=255"`
+	Phone         string  `json:"phone" binding:"required"`
+	Province      string  `json:"province" binding:"required,min=1,max=100"`
+	District      string  `json:"district" binding:"required,min=1,max=100"`
+	Ward          string  `json:"ward" binding:"required,min=1,max=100"`
+	Street        string  `json:"street" binding:"required,min=1,max=500"`
+	AddressType   string  `json:"address_type" binding:"required,oneof=home office other"`
+	Notes         string  `json:"notes" binding:"omitempty,max=500"`
+	Longitude     float64 `json:"longitude" binding:"required"`
+	Latitude      float64 `json:"latitude" binding:"required"`
 }
 
 // AddressUpdateRequest DTO for updating an address
 type AddressUpdateRequest struct {
-	RecipientName string `json:"recipient_name" binding:"omitempty,min=2,max=255"`
-	Phone         string `json:"phone" binding:"omitempty"`
-	Province      string `json:"province" binding:"omitempty,min=1,max=100"`
-	District      string `json:"district" binding:"omitempty,min=1,max=100"`
-	Ward          string `json:"ward" binding:"omitempty,min=1,max=100"`
-	Street        string `json:"street" binding:"omitempty,min=1,max=500"`
-	AddressType   string `json:"address_type" binding:"omitempty,oneof=home office other"`
-	Notes         string `json:"notes" binding:"omitempty,max=500"`
+	RecipientName string  `json:"recipient_name" binding:"omitempty,min=2,max=255"`
+	Phone         string  `json:"phone" binding:"omitempty"`
+	Province      string  `json:"province" binding:"omitempty,min=1,max=100"`
+	District      string  `json:"district" binding:"omitempty,min=1,max=100"`
+	Ward          string  `json:"ward" binding:"omitempty,min=1,max=100"`
+	Street        string  `json:"street" binding:"omitempty,min=1,max=500"`
+	AddressType   string  `json:"address_type" binding:"omitempty,oneof=home office other"`
+	Notes         string  `json:"notes" binding:"omitempty,max=500"`
+	Longitude     float64 `json:"longitude" binding:"required"`
+	Latitude      float64 `json:"latitude" binding:"required"`
 }
 
 // AddressResponse DTO for API response
@@ -95,6 +101,8 @@ type AddressWithUserResponse struct {
 	Notes         string    `json:"notes"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
+	Longitude     *string   `json:"longitude"`
+	Latitude      *string   `json:"latitude"`
 }
 
 func ValidateAddressCreate(req *AddressCreateRequest) error {
