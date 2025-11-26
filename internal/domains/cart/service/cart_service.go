@@ -9,7 +9,7 @@ import (
 	inveRepo "bookstore-backend/internal/domains/inventory/repository"
 	inveService "bookstore-backend/internal/domains/inventory/service"
 	orderModel "bookstore-backend/internal/domains/order/model"
-	orderRepo "bookstore-backend/internal/domains/order/repository"
+	orderS "bookstore-backend/internal/domains/order/service"
 	"bookstore-backend/internal/shared"
 	"bookstore-backend/internal/shared/utils"
 	"bookstore-backend/pkg/logger"
@@ -20,7 +20,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
-	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 )
 
@@ -30,7 +29,7 @@ type CartService struct {
 	inventoryRepo    inveRepo.RepositoryInterface
 	address          addressService.ServiceInterface
 	bookService      bookS.ServiceInterface
-	orderRepo        orderRepo.OrderRepository
+	orderService     orderS.OrderService
 	asynqClient      *asynq.Client
 }
 
@@ -40,17 +39,23 @@ func NewCartService(
 	addressSvc addressService.ServiceInterface,
 	inventoryRepo inveRepo.RepositoryInterface,
 	book bookS.ServiceInterface,
-	orderRepo orderRepo.OrderRepository,
+	orderService orderS.OrderService,
 	asynqClient *asynq.Client,
 
 ) ServiceInterface {
+	if orderService == nil {
+		logger.Info("orderService", map[string]interface{}{
+			"orderService": orderService,
+		})
+		panic("orderService is required")
+	}
 	return &CartService{
 		repository:       r,
 		inventoryService: inventoryS,
 		address:          addressSvc,
 		inventoryRepo:    inventoryRepo,
 		bookService:      book,
-		orderRepo:        orderRepo,
+		orderService:     orderService,
 		asynqClient:      asynqClient,
 	}
 }
@@ -168,7 +173,6 @@ func (s *CartService) ValidatePromoCode(ctx context.Context, req *model.Validate
 	}, nil
 }
 
-// GetOrCreateCart implements ServiceInterface.GetOrCreateCart
 func (s *CartService) GetOrCreateCart(ctx context.Context, userID *uuid.UUID, sessionID *string) (*model.CartResponse, error) {
 	var cart *model.Cart
 	var err error
@@ -187,13 +191,15 @@ func (s *CartService) GetOrCreateCart(ctx context.Context, userID *uuid.UUID, se
 	if err != nil {
 		return nil, fmt.Errorf("failed to get cart: %w", err)
 	}
-
+	logger.Info("cart", map[string]interface{}{
+		"cart": cart,
+	})
 	// Step 3: Check if cart expired
-	if cart != nil && cart.ExpiresAt.Before(time.Now()) {
-		// Cart expired → clear items and reset
-		_ = s.repository.DeleteCart(ctx, cart.ID) // Best effort
-		cart = nil                                // Force create new cart
-	}
+	// if cart != nil && cart.ExpiresAt.Before(time.Now()) {
+	// 	// Cart expired → clear items and reset
+	// 	_ = s.repository.DeleteCart(ctx, cart.ID) // Best effort
+	// 	cart = nil                                // Force create new cart
+	// }
 
 	// Step 4: Create new cart if not exists
 	var createdCart *model.Cart
@@ -215,15 +221,28 @@ func (s *CartService) GetOrCreateCart(ctx context.Context, userID *uuid.UUID, se
 			return nil, fmt.Errorf("failed to create cart: %w", err)
 		}
 	} else {
+		logger.Info("Using existing cart", map[string]interface{}{
+			"cart_id": cart.ID,
+		})
 		// Step 5: Update expiration (keep-alive)
-		if err := s.repository.UpdateExpiration(ctx, createdCart.ID); err != nil {
+		if err := s.repository.UpdateExpiration(ctx, cart.ID); err != nil {
 			// Log warning but don't fail request
 			logger.Error("Failed to update cart expiration", err)
 		}
 	}
 
+	var cartID uuid.UUID
+	if cart.ID != uuid.Nil {
+		cartID = cart.ID
+	} else if createdCart != nil {
+		cartID = createdCart.ID
+	}
+
 	// Step 6: Fetch all items with book details (no hardcode limit)
-	items, _, err := s.repository.GetItemsWithBooks(ctx, createdCart.ID, 0, 0) // 0,0 = fetch all
+	items, _, err := s.repository.GetItemsWithBooks(ctx, cartID, 0, 0) // 0,0 = fetch all
+	logger.Info("Fetched cart items", map[string]interface{}{
+		"items": items,
+	})
 	if err != nil {
 		// Log but continue - return cart without items
 		logger.Error("Failed to get cart items", err)
@@ -772,7 +791,9 @@ func (s *CartService) ValidateCart(ctx context.Context, cartID uuid.UUID, userID
 		Warnings:        []model.CartValidationWarning{},
 		ItemValidations: []model.ItemValidation{},
 	}
-
+	logger.Info("Validate cart method:", map[string]interface{}{
+		"cartID": cartID,
+	})
 	// Step 1: Get cart by ID (not userID)
 	cart, err := s.repository.GetByID(ctx, cartID)
 	if err != nil {
@@ -1050,7 +1071,6 @@ func (s *CartService) Checkout(ctx context.Context, userID uuid.UUID, cartID uui
 		NextActions: []string{},
 		Phases:      []model.CheckoutPhaseResult{},
 	}
-
 	// ==================== PHASE 0: Validate User ====================
 	if userID == uuid.Nil {
 		return s.failCheckout(response, "UNAUTHENTICATED", "User not authenticated", "")
@@ -1067,7 +1087,7 @@ func (s *CartService) Checkout(ctx context.Context, userID uuid.UUID, cartID uui
 	}
 
 	// Get all items (no pagination)
-	cartItems, _, err := s.repository.GetItemsWithBooks(ctx, cartID, 1, 1000) // ✅ Use high limit instead of 0,0
+	cartItems, _, err := s.repository.GetItemsWithBooks(ctx, cart.ID, 1, 1000) // ✅ Use high limit instead of 0,0
 	if err != nil || len(cartItems) == 0 {
 		return s.failCheckout(response, "EMPTY_CART", "Cart is empty", "")
 	}
@@ -1084,6 +1104,9 @@ func (s *CartService) Checkout(ctx context.Context, userID uuid.UUID, cartID uui
 
 	// Validate cart
 	validation, err := s.ValidateCart(ctx, cartID, userID)
+	logger.Info("validation", map[string]interface{}{
+		"validation": validation,
+	})
 	if err != nil || !validation.IsValid {
 		for _, valErr := range validation.Errors {
 			response.Errors = append(response.Errors, model.CheckoutError{
@@ -1112,6 +1135,9 @@ func (s *CartService) Checkout(ctx context.Context, userID uuid.UUID, cartID uui
 
 	// ==================== PHASE 2: Validate Address ====================
 	phaseStart = time.Now()
+	logger.Info("ShippingAddressID", map[string]interface{}{
+		"ShippingAddressID": req.ShippingAddressID,
+	})
 	shippingAddr, err := s.address.GetAddressByID(ctx, userID, req.ShippingAddressID)
 	if err != nil {
 		response.Phases = append(response.Phases, model.CheckoutPhaseResult{
@@ -1128,7 +1154,9 @@ func (s *CartService) Checkout(ctx context.Context, userID uuid.UUID, cartID uui
 		response.Status = "failed"
 		return response, nil
 	}
-
+	logger.Info("shippingAddr info", map[string]interface{}{
+		"shippingAddr": shippingAddr,
+	})
 	if shippingAddr.Latitude == nil || shippingAddr.Longitude == nil {
 		response.Warnings = append(response.Warnings, model.CheckoutWarning{
 			Code:    "MISSING_COORDINATES",
@@ -1145,8 +1173,12 @@ func (s *CartService) Checkout(ctx context.Context, userID uuid.UUID, cartID uui
 	})
 
 	// ==================== PHASE 3: Promo Validation ====================
-	phaseStart = time.Now()
-	promoDiscount, appliedPromo, promoMetadata := s.validateAndApplyPromo(ctx, req, cart, cartID, userID, response, phaseStart)
+	var promoDiscount decimal.Decimal
+	var appliedPromo *string
+	if req.PromoCode != nil {
+		phaseStart = time.Now()
+		promoDiscount, appliedPromo, _ = s.validateAndApplyPromo(ctx, req, cart, cartID, userID, response, phaseStart)
+	}
 
 	// ==================== PHASE 4: Pricing Calculation ====================
 	phaseStart = time.Now()
@@ -1188,6 +1220,9 @@ func (s *CartService) Checkout(ctx context.Context, userID uuid.UUID, cartID uui
 		Message:   "Pricing calculated",
 		Timestamp: phaseStart,
 	})
+	logger.Info("response", map[string]interface{}{
+		"response": response,
+	})
 
 	// ==================== PHASE 5: Warehouse Selection (1 LẦN DUY NHẤT) ====================
 	phaseStart = time.Now()
@@ -1215,7 +1250,9 @@ func (s *CartService) Checkout(ctx context.Context, userID uuid.UUID, cartID uui
 	if err != nil {
 		return s.failCheckout(response, "AVAILABILITY_CHECK_FAILED", "Cannot check stock: "+err.Error(), "WAREHOUSE_SELECTION")
 	}
-
+	logger.Info("availability result", map[string]interface{}{
+		"availability": availability,
+	})
 	if !availability.Overall {
 		response.Errors = append(response.Errors, model.CheckoutError{
 			Code:     "INSUFFICIENT_STOCK",
@@ -1253,7 +1290,9 @@ func (s *CartService) Checkout(ctx context.Context, userID uuid.UUID, cartID uui
 			EstimatedDelivery: availability.RecommendedWarehouse.EstimatedDelivery,
 		}
 	}
-
+	logger.Info("response.WarehouseInfo ", map[string]interface{}{
+		"response.WarehouseInfo ": response.WarehouseInfo,
+	})
 	response.Phases = append(response.Phases, model.CheckoutPhaseResult{
 		Phase:     "WAREHOUSE_SELECTION",
 		Status:    "success",
@@ -1261,239 +1300,74 @@ func (s *CartService) Checkout(ctx context.Context, userID uuid.UUID, cartID uui
 		Timestamp: phaseStart,
 	})
 
-	// ==================== PHASE 6: Reserve Inventory (Transaction) ====================
+	// ==================== PHASE 6: CREATE ORDER QUA ORDER SERVICE ====================
 	phaseStart = time.Now()
 
-	tx, err := s.orderRepo.BeginTx(ctx)
-	if err != nil {
-		return s.failCheckout(response, "TRANSACTION_FAILED", "Cannot begin transaction: "+err.Error(), "")
+	// Build CreateOrderRequest cho order service
+	createReq := orderModel.CreateOrderRequest{
+		AddressID:     req.ShippingAddressID,                   // nếu nil, order service sẽ lấy default
+		PaymentMethod: mapCartPaymentMethod(req.PaymentMethod), // e.g. "cash_on_delivery" -> "cod"
+		PromoCode:     cart.PromoCode,                          // promo gắn với cart
+		CustomerNote:  req.CustomerNotes,
+		Items:         nil,
+		// Items sẽ được override bên trong orderService từ cart_items
 	}
-	defer s.orderRepo.RollbackTx(ctx, tx)
-
-	successfulReservations := []ReservationInfo{}
-
-	for i, item := range cartItems {
-		itemResult := model.ItemCheckoutResult{
-			ItemID:            item.ID,
-			BookID:            item.BookID,
-			BookTitle:         item.BookTitle,
-			QuantityRequested: item.Quantity,
-			PriceAtCheckout:   item.Price,
-			CurrentPrice:      item.CurrentPrice,
-			PriceChanged:      !item.Price.Equal(item.CurrentPrice),
-			ItemTotal:         decimal.NewFromInt(int64(item.Quantity)).Mul(item.Price),
-			Status:            "pending",
-		}
-
-		// Find warehouse
-		itemAvailability := availability.Items[i]
-		var selectedWarehouseID uuid.UUID
-		var selectedWarehouseName string
-
-		for _, whDetail := range itemAvailability.WarehouseDetails {
-			if whDetail.CanFulfill {
-				selectedWarehouseID = whDetail.WarehouseID
-				selectedWarehouseName = whDetail.WarehouseName
-				break
-			}
-		}
-
-		if selectedWarehouseID == uuid.Nil {
-			s.rollbackReservations(ctx, successfulReservations, cartID)
-			return s.failCheckout(response, "NO_WAREHOUSE_AVAILABLE", "No warehouse for: "+item.BookTitle, "INVENTORY_RESERVATION")
-		}
-
-		// Reserve stock
-		reserveReq := inventoryModel.ReserveStockRequest{
-			BookID:      item.BookID,
-			WarehouseID: &selectedWarehouseID,
-			Quantity:    item.Quantity,
-			ReferenceID: cartID,
-			UserID:      &userID,
-		}
-
-		reserveResp, err := s.inventoryService.ReserveStock(ctx, reserveReq)
-		if err != nil {
-			s.rollbackReservations(ctx, successfulReservations, cartID)
-			return s.failCheckout(response, "RESERVATION_FAILED", "Failed to reserve: "+item.BookTitle+" - "+err.Error(), "INVENTORY_RESERVATION")
-		}
-
-		reservedQty := item.Quantity
-		if reserveResp.ReservedQuantity > 0 {
-			reservedQty = reserveResp.ReservedQuantity
-		}
-
-		if reservedQty < item.Quantity {
-			response.Warnings = append(response.Warnings, model.CheckoutWarning{
-				Code:    "PARTIAL_RESERVATION",
-				Message: fmt.Sprintf("%s: only %d available", item.BookTitle, reservedQty),
-			})
-		}
-
-		itemResult.Status = "reserved"
-		itemResult.QuantityReserved = reservedQty
-		itemResult.WarehouseID = &selectedWarehouseID
-		itemResult.WarehouseName = selectedWarehouseName
-
-		successfulReservations = append(successfulReservations, ReservationInfo{
-			WarehouseID: selectedWarehouseID,
-			BookID:      item.BookID,
-			Quantity:    reservedQty,
-		})
-
-		response.ItemsProcessed = append(response.ItemsProcessed, itemResult)
-	}
-
-	response.Phases = append(response.Phases, model.CheckoutPhaseResult{
-		Phase:     "INVENTORY_RESERVATION",
-		Status:    "success",
-		Message:   fmt.Sprintf("Reserved %d items", len(successfulReservations)),
-		Timestamp: phaseStart,
+	logger.Info("createReq", map[string]interface{}{
+		"createReq": createReq,
+		"ctx":       ctx,
+		"userID":    userID,
 	})
-
-	// ==================== PHASE 7: Create Order ====================
-	phaseStart = time.Now()
-
-	orderID := uuid.New()
-	now := time.Now()
-	estimatedDelivery := now.Add(5 * 24 * time.Hour)
-
-	order := &orderModel.Order{
-		ID:                  orderID,
-		UserID:              userID,
-		AddressID:           req.ShippingAddressID,
-		PromotionID:         s.extractPromotionID(appliedPromo, promoMetadata),
-		WarehouseID:         s.extractWarehouseID(successfulReservations),
-		Subtotal:            subtotal,
-		ShippingFee:         shipping,
-		CODFee:              codFee,
-		DiscountAmount:      discount,
-		TaxAmount:           tax,
-		Total:               total,
-		PaymentMethod:       req.PaymentMethod,
-		PaymentStatus:       orderModel.PaymentStatusPending,
-		Status:              orderModel.OrderStatusPending,
-		EstimatedDeliveryAt: &estimatedDelivery,
-		CustomerNote:        req.CustomerNotes,
-		Version:             1,
-	}
-
-	if err = s.orderRepo.CreateOrderWithTx(ctx, tx, order); err != nil {
-		s.rollbackReservations(ctx, successfulReservations, cartID)
+	// Gọi order service (use case duy nhất)
+	orderResp, err := s.orderService.CreateOrder(ctx, userID, createReq)
+	if err != nil {
 		return s.failCheckout(response, "ORDER_CREATION_FAILED", "Failed to create order: "+err.Error(), "ORDER_CREATION")
 	}
 
-	// Create order items
-	orderItems := s.buildOrderItems(orderID, cartItems, successfulReservations, now)
-	if err = s.orderRepo.CreateOrderItemsWithTx(ctx, tx, orderItems); err != nil {
-		s.rollbackReservations(ctx, successfulReservations, cartID)
-		return s.failCheckout(response, "ORDER_ITEMS_CREATION_FAILED", "Failed to create order items: "+err.Error(), "ORDER_CREATION")
-	}
-
-	// Record promo usage
-	if order.PromotionID != nil {
-		if err = s.recordPromoUsageWithTx(ctx, tx, *order.PromotionID, userID, orderID, discount); err != nil {
-			logger.Info("Failed to record promo usage", map[string]interface{}{
-				"order_id": orderID,
-				"error":    err.Error(),
-			})
-		}
-	}
-
-	// Create status history
-	statusHistory := &orderModel.OrderStatusHistory{
-		OrderID:    orderID,
-		FromStatus: nil,
-		ToStatus:   orderModel.OrderStatusPending,
-		ChangedBy:  &userID,
-		Notes:      stringPtr("Order created via checkout"),
-	}
-	if err = s.orderRepo.CreateOrderStatusHistoryWithTx(ctx, tx, statusHistory); err != nil {
-		logger.Info("Failed to create status history", map[string]interface{}{
-			"order_id": orderID,
-			"error":    err.Error(),
-		})
-	}
-
-	// COMMIT
-	if err = s.orderRepo.CommitTx(ctx, tx); err != nil {
-		s.rollbackReservations(ctx, successfulReservations, cartID)
-		return s.failCheckout(response, "TRANSACTION_COMMIT_FAILED", "Failed to commit: "+err.Error(), "ORDER_CREATION")
-	}
-
+	// Ghi phase kết quả
 	response.Phases = append(response.Phases, model.CheckoutPhaseResult{
 		Phase:     "ORDER_CREATION",
 		Status:    "success",
-		Message:   "Order created: " + order.OrderNumber, // ✅ Use DB-generated order number
+		Message:   "Order created: " + orderResp.OrderNumber,
 		Timestamp: phaseStart,
 	})
-	go s.enqueuePostCheckoutTasks(context.Background(), orderID, order.OrderNumber, userID, cartID, req, total, len(cartItems), promoDiscount, appliedPromo)
-	// ==================== Build Success Response ====================
-	return s.buildSuccessResponse(response, order, cartItems, total, codFee, now, req.PaymentMethod), nil
-}
-func (s *CartService) rollbackReservations(ctx context.Context, reservations []ReservationInfo, referenceID uuid.UUID) {
-	bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
 
-	for _, res := range reservations {
-		reason := "checkout_failed"
-		releaseReq := inventoryModel.ReleaseStockRequest{
-			WarehouseID: res.WarehouseID,
-			BookID:      res.BookID,
-			Quantity:    res.Quantity,
-			ReferenceID: referenceID, // cartID
-			UserID:      nil,
-			Reason:      &reason,
-		}
-
-		var lastErr error
-		for attempt := 1; attempt <= 3; attempt++ {
-			_, err := s.inventoryService.ReleaseStock(bgCtx, releaseReq)
-			if err == nil {
-				logger.Info("Rollback reservation success", map[string]interface{}{
-					"warehouse_id": res.WarehouseID,
-					"book_id":      res.BookID,
-					"quantity":     res.Quantity,
-				})
-				break
-			}
-			lastErr = err
-			logger.Info(fmt.Sprintf("Rollback failed (attempt %d/3)", attempt), map[string]interface{}{
-				"warehouse_id": res.WarehouseID,
-				"book_id":      res.BookID,
-				"error":        err.Error(),
-			})
-			if attempt < 3 {
-				time.Sleep(time.Second * time.Duration(attempt))
-			}
-		}
-
-		if lastErr != nil {
-			logger.Info("Critical: Rollback failed after 3 attempts", map[string]interface{}{
-				"warehouse_id": res.WarehouseID,
-				"book_id":      res.BookID,
-				"quantity":     res.Quantity,
-				"error":        lastErr.Error(),
-			})
-			// TODO: Enqueue background job retry
-		}
-	}
-}
-func (s *CartService) recordPromoUsageWithTx(ctx context.Context, tx pgx.Tx, promotionID, userID, orderID uuid.UUID, discountAmount decimal.Decimal) error {
-	query := `
-        INSERT INTO promotion_usage (
-            id, promotion_id, user_id, order_id, 
-            discount_amount, used_at
-        ) VALUES ($1, $2, $3, $4, $5, NOW())
-    `
-
-	_, err := tx.Exec(ctx, query,
-		uuid.New(), promotionID, userID, orderID, discountAmount,
+	// Build success response từ orderResp + dữ liệu đã có
+	now := time.Now()
+	response = s.buildSuccessResponse(
+		response,
+		&orderModel.Order{
+			ID:          orderResp.OrderID,
+			OrderNumber: orderResp.OrderNumber,
+			Total:       orderResp.Total,
+			Status:      orderResp.Status,
+			// nếu cần thêm field khác thì query GetOrderByID ở đây
+		},
+		cartItems,
+		total,
+		codFee,
+		now,
+		req.PaymentMethod,
 	)
-	if err != nil {
-		return fmt.Errorf("failed to record promo usage: %w", err)
+	go s.enqueuePostCheckoutTasks(context.Background(), orderResp.OrderID, orderResp.OrderNumber, userID, cartID, req, total, len(cartItems), promoDiscount, appliedPromo)
+	// ==================== Build Success Response ====================
+	return response, nil
+}
+func mapCartPaymentMethod(method string) string {
+	logger.Info("method payment", map[string]interface{}{
+		"method": method,
+	})
+	switch method {
+	case "cash_on_delivery":
+		return orderModel.PaymentMethodCOD
+	case "e_wallet":
+		return orderModel.PaymentMethodMomo // hoặc mapping khác tùy design
+	case "bank_transfer":
+		return orderModel.PaymentMethodBankTransfer
+	case "credit_card":
+		return orderModel.PaymentMethodVNPay // giả sử dùng VNPay cho credit
+	default:
+		return orderModel.PaymentMethodCOD
 	}
-	return nil
 }
 
 func stringPtr(s string) *string {
@@ -1560,29 +1434,7 @@ func (s *CartService) extractWarehouseID(reservations []ReservationInfo) *uuid.U
 	return nil
 }
 
-func (s *CartService) buildOrderItems(orderID uuid.UUID, cartItems []model.CartItemWithBook, reservations []ReservationInfo, now time.Time) []orderModel.OrderItem {
-	items := make([]orderModel.OrderItem, 0, len(cartItems))
-	for i, item := range cartItems {
-		warehouseID := reservations[i].WarehouseID
-		items = append(items, orderModel.OrderItem{
-			ID:           uuid.New(),
-			OrderID:      orderID,
-			BookID:       item.BookID,
-			WarehouseID:  &warehouseID,
-			BookTitle:    item.BookTitle,
-			BookSlug:     item.BookSlug,
-			BookCoverURL: item.BookCoverURL,
-			AuthorName:   &item.BookAuthor,
-			Quantity:     item.Quantity,
-			Price:        item.Price,
-			Subtotal:     decimal.NewFromInt(int64(item.Quantity)).Mul(item.Price),
-			CreatedAt:    now,
-		})
-	}
-	return items
-}
-
-func (s *CartService) buildSuccessResponse(response *model.CheckoutResponse, order *orderModel.Order, cartItems []model.CartItemWithBook, total, codFee decimal.Decimal, now time.Time, paymentMethod string) *model.CheckoutResponse {
+func (s *CartService) buildSuccessResponse(response *model.CheckoutResponse, order *orderModel.Order, cartItems []*model.CartItemWithBook, total, codFee decimal.Decimal, now time.Time, paymentMethod string) *model.CheckoutResponse {
 	completedAt := now
 	response.Success = true
 	response.Status = "completed"
@@ -1642,7 +1494,7 @@ func (s *CartService) enqueuePostCheckoutTasks(
 	}
 
 	// Task 1: Clear cart (low priority, delay 30s)
-	s.enqueueClearCart(cartID, userID)
+	// s.enqueueClearCart(cartID, userID)
 
 	// Task 2: Send order confirmation email (default priority, immediate)
 	if userEmail != "" {
@@ -1659,38 +1511,38 @@ func (s *CartService) enqueuePostCheckoutTasks(
 }
 
 // enqueueClearCart enqueues task to clear cart
-func (s *CartService) enqueueClearCart(cartID, userID uuid.UUID) {
-	payload := model.ClearCartPayload{
-		CartID: cartID,
-		UserID: userID,
-	}
+// func (s *CartService) enqueueClearCart(cartID, userID uuid.UUID) {
+// 	payload := model.ClearCartPayload{
+// 		CartID: cartID,
+// 		UserID: userID,
+// 	}
 
-	task, err := utils.MarshalTask(shared.TypeClearCart, payload)
-	if err != nil {
-		logger.Info("Failed to marshal clear cart task", map[string]interface{}{
-			"cart_id": cartID,
-			"error":   err.Error(),
-		})
-		return
-	}
+// 	task, err := utils.MarshalTask(shared.TypeClearCart, payload)
+// 	if err != nil {
+// 		logger.Info("Failed to marshal clear cart task", map[string]interface{}{
+// 			"cart_id": cartID,
+// 			"error":   err.Error(),
+// 		})
+// 		return
+// 	}
 
-	_, err = s.asynqClient.Enqueue(task,
-		asynq.Queue("low"),
-		asynq.MaxRetry(2),
-		asynq.ProcessIn(30*time.Second), // Delay 30s
-	)
+// 	_, err = s.asynqClient.Enqueue(task,
+// 		asynq.Queue("low"),
+// 		asynq.MaxRetry(2),
+// 		asynq.ProcessIn(30*time.Second), // Delay 30s
+// 	)
 
-	if err != nil {
-		logger.Info("Failed to enqueue clear cart task", map[string]interface{}{
-			"cart_id": cartID,
-			"error":   err.Error(),
-		})
-	} else {
-		logger.Info("Enqueued clear cart task", map[string]interface{}{
-			"cart_id": cartID,
-		})
-	}
-}
+// 	if err != nil {
+// 		logger.Info("Failed to enqueue clear cart task", map[string]interface{}{
+// 			"cart_id": cartID,
+// 			"error":   err.Error(),
+// 		})
+// 	} else {
+// 		logger.Info("Enqueued clear cart task", map[string]interface{}{
+// 			"cart_id": cartID,
+// 		})
+// 	}
+// }
 
 // enqueueSendOrderConfirmation enqueues order confirmation email
 func (s *CartService) enqueueSendOrderConfirmation(

@@ -37,15 +37,9 @@ func NewPaymentHandler(
 // POST /api/v1/payments/:payment_id/refund-request
 func (h *PaymentHandler) RequestRefund(c *gin.Context) {
 	// Step 1: Get user ID
-	userIDStr, err := getUserID(c)
+	userID, err := GetUserIDFromContext(c)
 	if err != nil {
 		res.Error(c, http.StatusUnauthorized, "AUTH_ERROR", "Unauthorized")
-		return
-	}
-
-	userID, err := uuid.Parse(userIDStr)
-	if err != nil {
-		res.Error(c, http.StatusBadRequest, "INVALID_USER_ID", "Invalid user ID")
 		return
 	}
 
@@ -86,15 +80,9 @@ func (h *PaymentHandler) RequestRefund(c *gin.Context) {
 // GET /api/v1/payments/:payment_id/refund-request
 func (h *PaymentHandler) GetRefundStatus(c *gin.Context) {
 	// Step 1: Get user ID
-	userIDStr, err := getUserID(c)
+	userID, err := GetUserIDFromContext(c)
 	if err != nil {
 		res.Error(c, http.StatusUnauthorized, "AUTH_ERROR", "Unauthorized")
-		return
-	}
-
-	userID, err := uuid.Parse(userIDStr)
-	if err != nil {
-		res.Error(c, http.StatusBadRequest, "INVALID_USER_ID", "Invalid user ID")
 		return
 	}
 
@@ -118,6 +106,30 @@ func (h *PaymentHandler) GetRefundStatus(c *gin.Context) {
 	res.Success(c, http.StatusOK, "Success", response)
 }
 
+// helper.go
+func GetUserIDFromContext(c *gin.Context) (uuid.UUID, error) {
+	userIDInterface, exists := c.Get("user_id")
+	if !exists {
+		return uuid.Nil, fmt.Errorf("user_id not found in context")
+	}
+
+	// ✅ Thử type assertion với uuid.UUID trước
+	if userID, ok := userIDInterface.(uuid.UUID); ok {
+		return userID, nil
+	}
+
+	// ✅ Fallback: thử string rồi parse
+	if userIDStr, ok := userIDInterface.(string); ok {
+		userID, err := uuid.Parse(userIDStr)
+		if err != nil {
+			return uuid.Nil, fmt.Errorf("invalid UUID format: %w", err)
+		}
+		return userID, nil
+	}
+
+	return uuid.Nil, fmt.Errorf("user_id has invalid type: %T", userIDInterface)
+}
+
 // =====================================================
 // USER PAYMENT ENDPOINTS
 // =====================================================
@@ -125,19 +137,11 @@ func (h *PaymentHandler) GetRefundStatus(c *gin.Context) {
 // CreatePayment creates new payment transaction
 // POST /api/v1/payments/create
 func (h *PaymentHandler) CreatePayment(c *gin.Context) {
-	// Step 1: Get user ID from context
-	userIDStr, err := getUserID(c)
+	userID, err := GetUserIDFromContext(c)
 	if err != nil {
 		res.Error(c, http.StatusUnauthorized, "AUTH_ERROR", "Unauthorized")
 		return
 	}
-
-	userID, err := uuid.Parse(userIDStr)
-	if err != nil {
-		res.Error(c, http.StatusBadRequest, "INVALID_USER_ID", "Invalid user ID")
-		return
-	}
-
 	// Step 2: Bind request body
 	var req model.CreatePaymentRequest
 	if err := bindJSON(c, &req); err != nil {
@@ -168,15 +172,9 @@ func (h *PaymentHandler) CreatePayment(c *gin.Context) {
 // GET /api/v1/payments/:payment_id
 func (h *PaymentHandler) GetPaymentStatus(c *gin.Context) {
 	// Step 1: Get user ID
-	userIDStr, err := getUserID(c)
+	userID, err := GetUserIDFromContext(c)
 	if err != nil {
 		response.Error(c, http.StatusUnauthorized, "AUTH_ERROR", "Unauthorized")
-		return
-	}
-
-	userID, err := uuid.Parse(userIDStr)
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, "INVALID_USER_ID", "Invalid user ID")
 		return
 	}
 
@@ -204,15 +202,9 @@ func (h *PaymentHandler) GetPaymentStatus(c *gin.Context) {
 // GET /api/v1/payments
 func (h *PaymentHandler) ListUserPayments(c *gin.Context) {
 	// Step 1: Get user ID
-	userIDStr, err := getUserID(c)
+	userID, err := GetUserIDFromContext(c)
 	if err != nil {
 		res.Error(c, http.StatusUnauthorized, "AUTH_ERROR", "Unauthorized")
-		return
-	}
-
-	userID, err := uuid.Parse(userIDStr)
-	if err != nil {
-		res.Error(c, http.StatusBadRequest, "INVALID_USER_ID", "Invalid user ID")
 		return
 	}
 
@@ -286,27 +278,12 @@ func mapPaymentError(err error) (statusCode int, errorCode string) {
 // HELPER FUNCTIONS
 // =====================================================
 
-// getUserID extracts user ID from JWT claims in context
-func getUserID(c *gin.Context) (string, error) {
-	userID, exists := c.Get("user_id")
-	if !exists {
-		return "", fmt.Errorf("user_id not found in context")
-	}
-
-	userIDStr, ok := userID.(string)
-	if !ok {
-		return "", fmt.Errorf("invalid user_id type")
-	}
-
-	return userIDStr, nil
-}
-
 // getAdminID extracts admin ID from JWT claims
-func getAdminID(c *gin.Context) (string, error) {
-	// Same as getUserID for now
-	// In future, you might have separate admin claims
-	return getUserID(c)
-}
+// func getAdminID(c *gin.Context) (string, error) {
+// 	// Same as getUserID for now
+// 	// In future, you might have separate admin claims
+// 	return getUserID(c)
+// }
 
 // bindJSON binds JSON request body and validates
 func bindJSON(c *gin.Context, obj interface{}) error {
@@ -440,15 +417,9 @@ func (h *PaymentHandler) AdminGetPaymentDetail(c *gin.Context) {
 // POST /api/v1/admin/payments/:payment_id/reconcile
 func (h *PaymentHandler) AdminReconcilePayment(c *gin.Context) {
 	// Step 1: Get admin ID
-	adminIDStr, err := getAdminID(c)
+	adminID, err := GetUserIDFromContext(c)
 	if err != nil {
 		res.Error(c, http.StatusUnauthorized, "AUTH_ERROR", "Unauthorized")
-		return
-	}
-
-	adminID, err := uuid.Parse(adminIDStr)
-	if err != nil {
-		res.Error(c, http.StatusBadRequest, "INVALID_ADMIN_ID", "Invalid admin ID")
 		return
 	}
 
@@ -559,15 +530,9 @@ func (h *PaymentHandler) AdminGetRefundDetail(c *gin.Context) {
 // POST /api/v1/admin/payments/refunds/:refund_id/approve
 func (h *PaymentHandler) AdminApproveRefund(c *gin.Context) {
 	// Step 1: Get admin ID
-	adminIDStr, err := getAdminID(c)
+	adminID, err := GetUserIDFromContext(c)
 	if err != nil {
 		res.Error(c, http.StatusUnauthorized, "AUTH_ERROR", "Unauthorized")
-		return
-	}
-
-	adminID, err := uuid.Parse(adminIDStr)
-	if err != nil {
-		res.Error(c, http.StatusBadRequest, "INVALID_ADMIN_ID", "Invalid admin ID")
 		return
 	}
 
@@ -602,15 +567,9 @@ func (h *PaymentHandler) AdminApproveRefund(c *gin.Context) {
 // POST /api/v1/admin/payments/refunds/:refund_id/reject
 func (h *PaymentHandler) AdminRejectRefund(c *gin.Context) {
 	// Step 1: Get admin ID
-	adminIDStr, err := getAdminID(c)
+	adminID, err := GetUserIDFromContext(c)
 	if err != nil {
 		res.Error(c, http.StatusUnauthorized, "AUTH_ERROR", "Unauthorized")
-		return
-	}
-
-	adminID, err := uuid.Parse(adminIDStr)
-	if err != nil {
-		res.Error(c, http.StatusBadRequest, "INVALID_ADMIN_ID", "Invalid admin ID")
 		return
 	}
 

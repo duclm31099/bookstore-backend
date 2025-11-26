@@ -4,6 +4,7 @@ import (
 	"bookstore-backend/internal/domains/cart/model"
 	inventoryModel "bookstore-backend/internal/domains/inventory/model"
 	inventoryService "bookstore-backend/internal/domains/inventory/service"
+	orderModel "bookstore-backend/internal/domains/order/model"
 	orderRepo "bookstore-backend/internal/domains/order/repository"
 	"bookstore-backend/internal/shared/utils"
 	"bookstore-backend/pkg/logger"
@@ -39,7 +40,7 @@ func (h *AutoReleaseReservationHandler) ProcessTask(ctx context.Context, t *asyn
 		"order_number": payload.OrderNumber,
 	})
 
-	// Get order
+	// 1. Get order
 	order, err := h.orderRepo.GetOrderByID(ctx, payload.OrderID)
 	if err != nil {
 		logger.Info("Failed to get order", map[string]interface{}{
@@ -49,15 +50,34 @@ func (h *AutoReleaseReservationHandler) ProcessTask(ctx context.Context, t *asyn
 		return fmt.Errorf("get order: %w", err)
 	}
 
-	// Check if payment already completed
+	// 2. Skip nếu đã paid
 	if order.PaymentStatus == "paid" {
 		logger.Info("Order already paid, skip auto-release", map[string]interface{}{
 			"order_id": payload.OrderID,
+			"status":   order.Status,
 		})
-		return nil // Skip
+		return nil
 	}
 
-	// Get order items to release reservations
+	// 3. Skip nếu order đã bị huỷ / trả hàng bởi flow khác
+	if order.Status == orderModel.OrderStatusCancelled || order.Status == orderModel.OrderStatusReturned {
+		logger.Info("Order already cancelled/returned, skip auto-release", map[string]interface{}{
+			"order_id": payload.OrderID,
+			"status":   order.Status,
+		})
+		return nil
+	}
+
+	// Optional (an toàn hơn): chỉ auto-cancel những trạng thái cho phép
+	if !(order.Status == orderModel.OrderStatusPending || order.Status == orderModel.OrderStatusConfirmed) {
+		logger.Info("Order status not eligible for auto-cancel", map[string]interface{}{
+			"order_id": payload.OrderID,
+			"status":   order.Status,
+		})
+		return nil
+	}
+
+	// 4. Get order items để release reservations
 	orderItems, err := h.orderRepo.GetOrderItemsByOrderID(ctx, payload.OrderID)
 	if err != nil {
 		logger.Info("Failed to get order items", map[string]interface{}{
@@ -67,7 +87,7 @@ func (h *AutoReleaseReservationHandler) ProcessTask(ctx context.Context, t *asyn
 		return fmt.Errorf("get order items: %w", err)
 	}
 
-	// Release each item's reservation
+	// 5. Release từng item (reservation)
 	for _, item := range orderItems {
 		if item.WarehouseID == nil {
 			continue
@@ -89,16 +109,17 @@ func (h *AutoReleaseReservationHandler) ProcessTask(ctx context.Context, t *asyn
 				"warehouse_id": item.WarehouseID,
 				"error":        err.Error(),
 			})
-			// Continue to release other items
-		} else {
-			logger.Info("Released stock", map[string]interface{}{
-				"order_id": payload.OrderID,
-				"book_id":  item.BookID,
-			})
+			// Tiếp tục với item khác, không return error
+			continue
 		}
+
+		logger.Info("Released stock", map[string]interface{}{
+			"order_id": payload.OrderID,
+			"book_id":  item.BookID,
+		})
 	}
 
-	// Update order status to cancelled
+	// 6. Update order status to cancelled (auto-cancel)
 	err = h.orderRepo.CancelOrder(ctx, payload.OrderID, "Payment timeout - auto-cancelled", order.Version)
 	if err != nil {
 		logger.Info("Failed to cancel order", map[string]interface{}{

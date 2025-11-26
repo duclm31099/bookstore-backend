@@ -17,7 +17,7 @@ type CreateOrderRequest struct {
 	PaymentMethod string            `json:"payment_method" binding:"required"`
 	PromoCode     *string           `json:"promo_code,omitempty"`
 	CustomerNote  *string           `json:"customer_note,omitempty"`
-	Items         []CreateOrderItem `json:"items" binding:"required,min=1"`
+	Items         []CreateOrderItem `json:"items" binding:"omitempty,min=1"`
 }
 
 type CreateOrderItem struct {
@@ -35,7 +35,7 @@ func (req CreateOrderRequest) Validate() error {
 			PaymentMethodMomo,
 			PaymentMethodBankTransfer,
 		)),
-		validation.Field(&req.Items, validation.Required, validation.Length(1, 100)),
+		// validation.Field(&req.Items, validation.Required, validation.Length(1, 100)),
 	)
 }
 

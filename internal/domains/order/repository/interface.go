@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -17,7 +18,7 @@ type OrderRepository interface {
 	BeginTx(ctx context.Context) (pgx.Tx, error)
 	CommitTx(ctx context.Context, tx pgx.Tx) error
 	RollbackTx(ctx context.Context, tx pgx.Tx) error
-
+	CountOrderItemsByOrderIDs(ctx context.Context, orderIDs []uuid.UUID) (map[uuid.UUID]int, error)
 	// Order operations
 	CreateOrder(ctx context.Context, order *model.Order) error
 	CreateOrderWithTx(ctx context.Context, tx pgx.Tx, order *model.Order) error
@@ -25,10 +26,19 @@ type OrderRepository interface {
 	GetOrderByIDAndUserID(ctx context.Context, orderID, userID uuid.UUID) (*model.Order, error)
 	GetOrderByNumber(ctx context.Context, orderNumber string) (*model.Order, error)
 	UpdateOrderStatus(ctx context.Context, orderID uuid.UUID, status string, version int) error
-	UpdateOrderStatusWithTx(ctx context.Context, tx pgx.Tx, orderID uuid.UUID, status string, version int) error
 	CancelOrder(ctx context.Context, orderID uuid.UUID, reason string, version int) error
 	UpdateOrderTracking(ctx context.Context, orderID uuid.UUID, trackingNumber string, version int) error
 	UpdateOrderAdminNote(ctx context.Context, orderID uuid.UUID, adminNote string, version int) error
+	UpdateOrderStatusWithTx(
+		ctx context.Context,
+		tx pgx.Tx,
+		orderID uuid.UUID,
+		newStatus string,
+		version int,
+		trackingNumber *string,
+		adminNote *string,
+		deliveredAt *time.Time,
+	) error
 
 	// Order items operations
 	CreateOrderItems(ctx context.Context, items []model.OrderItem) error

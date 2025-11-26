@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"bookstore-backend/internal/domains/order/model"
+	"bookstore-backend/pkg/logger"
 )
 
 // =====================================================
@@ -19,7 +22,6 @@ type postgresOrderRepository struct {
 	pool *pgxpool.Pool
 }
 
-// NewPostgresOrderRepository creates a new postgres order repository
 func NewPostgresOrderRepository(pool *pgxpool.Pool) OrderRepository {
 	return &postgresOrderRepository{
 		pool: pool,
@@ -49,13 +51,13 @@ func (r *postgresOrderRepository) RollbackTx(ctx context.Context, tx pgx.Tx) err
 func (r *postgresOrderRepository) CreateOrder(ctx context.Context, order *model.Order) error {
 	query := `
 		INSERT INTO orders (
-			id, user_id, address_id, promotion_id, warehouse_id,
-			subtotal, shipping_fee, cod_fee, discount_amount, tax_amount, total,
+			id, user_id, address_id, promotion_id,
+			subtotal, shipping_fee, discount_amount, total,
 			payment_method, payment_status, status, customer_note, version
 		) VALUES (
-			$1, $2, $3, $4, $5,
-			$6, $7, $8, $9, $10, $11,
-			$12, $13, $14, $15, $16
+			$1, $2, $3, $4,
+			$5, $6, $7, $8,
+			$9, $10, $11, $12, $13
 		)
 		RETURNING order_number, created_at, updated_at
 	`
@@ -65,12 +67,9 @@ func (r *postgresOrderRepository) CreateOrder(ctx context.Context, order *model.
 		order.UserID,
 		order.AddressID,
 		order.PromotionID,
-		order.WarehouseID,
 		order.Subtotal,
 		order.ShippingFee,
-		order.CODFee,
 		order.DiscountAmount,
-		order.TaxAmount,
 		order.Total,
 		order.PaymentMethod,
 		order.PaymentStatus,
@@ -89,13 +88,13 @@ func (r *postgresOrderRepository) CreateOrder(ctx context.Context, order *model.
 func (r *postgresOrderRepository) CreateOrderWithTx(ctx context.Context, tx pgx.Tx, order *model.Order) error {
 	query := `
 		INSERT INTO orders (
-			id, user_id, address_id, promotion_id, warehouse_id,
-			subtotal, shipping_fee, cod_fee, discount_amount, tax_amount, total,
+			id, user_id, address_id, promotion_id,
+			subtotal, shipping_fee, discount_amount, total,
 			payment_method, payment_status, status, customer_note, version
 		) VALUES (
-			$1, $2, $3, $4, $5,
-			$6, $7, $8, $9, $10, $11,
-			$12, $13, $14, $15, $16
+			$1, $2, $3, $4,
+			$5, $6, $7, $8,
+			$9, $10, $11, $12, $13
 		)
 		RETURNING order_number, created_at, updated_at
 	`
@@ -105,12 +104,9 @@ func (r *postgresOrderRepository) CreateOrderWithTx(ctx context.Context, tx pgx.
 		order.UserID,
 		order.AddressID,
 		order.PromotionID,
-		order.WarehouseID,
 		order.Subtotal,
 		order.ShippingFee,
-		order.CODFee,
 		order.DiscountAmount,
-		order.TaxAmount,
 		order.Total,
 		order.PaymentMethod,
 		order.PaymentStatus,
@@ -133,8 +129,8 @@ func (r *postgresOrderRepository) CreateOrderWithTx(ctx context.Context, tx pgx.
 func (r *postgresOrderRepository) GetOrderByID(ctx context.Context, orderID uuid.UUID) (*model.Order, error) {
 	query := `
 		SELECT 
-			id, order_number, user_id, address_id, promotion_id, warehouse_id,
-			subtotal, shipping_fee, cod_fee, discount_amount, tax_amount, total,
+			id, order_number, user_id, address_id, promotion_id,
+			subtotal, shipping_fee, discount_amount, total,
 			payment_method, payment_status, payment_details, paid_at,
 			status, tracking_number, estimated_delivery_at, delivered_at,
 			customer_note, admin_note, cancellation_reason,
@@ -150,12 +146,9 @@ func (r *postgresOrderRepository) GetOrderByID(ctx context.Context, orderID uuid
 		&order.UserID,
 		&order.AddressID,
 		&order.PromotionID,
-		&order.WarehouseID,
 		&order.Subtotal,
 		&order.ShippingFee,
-		&order.CODFee,
 		&order.DiscountAmount,
-		&order.TaxAmount,
 		&order.Total,
 		&order.PaymentMethod,
 		&order.PaymentStatus,
@@ -187,8 +180,8 @@ func (r *postgresOrderRepository) GetOrderByID(ctx context.Context, orderID uuid
 func (r *postgresOrderRepository) GetOrderByIDAndUserID(ctx context.Context, orderID, userID uuid.UUID) (*model.Order, error) {
 	query := `
 		SELECT 
-			id, order_number, user_id, address_id, promotion_id, warehouse_id,
-			subtotal, shipping_fee, cod_fee, discount_amount, tax_amount, total,
+			id, order_number, user_id, address_id, promotion_id,
+			subtotal, shipping_fee, discount_amount, total,
 			payment_method, payment_status, payment_details, paid_at,
 			status, tracking_number, estimated_delivery_at, delivered_at,
 			customer_note, admin_note, cancellation_reason,
@@ -204,12 +197,9 @@ func (r *postgresOrderRepository) GetOrderByIDAndUserID(ctx context.Context, ord
 		&order.UserID,
 		&order.AddressID,
 		&order.PromotionID,
-		&order.WarehouseID,
 		&order.Subtotal,
 		&order.ShippingFee,
-		&order.CODFee,
 		&order.DiscountAmount,
-		&order.TaxAmount,
 		&order.Total,
 		&order.PaymentMethod,
 		&order.PaymentStatus,
@@ -241,8 +231,8 @@ func (r *postgresOrderRepository) GetOrderByIDAndUserID(ctx context.Context, ord
 func (r *postgresOrderRepository) GetOrderByNumber(ctx context.Context, orderNumber string) (*model.Order, error) {
 	query := `
 		SELECT 
-			id, order_number, user_id, address_id, promotion_id, warehouse_id,
-			subtotal, shipping_fee, cod_fee, discount_amount, tax_amount, total,
+			id, order_number, user_id, address_id, promotion_id,
+			subtotal, shipping_fee, discount_amount, total,
 			payment_method, payment_status, payment_details, paid_at,
 			status, tracking_number, estimated_delivery_at, delivered_at,
 			customer_note, admin_note, cancellation_reason,
@@ -258,12 +248,9 @@ func (r *postgresOrderRepository) GetOrderByNumber(ctx context.Context, orderNum
 		&order.UserID,
 		&order.AddressID,
 		&order.PromotionID,
-		&order.WarehouseID,
 		&order.Subtotal,
 		&order.ShippingFee,
-		&order.CODFee,
 		&order.DiscountAmount,
-		&order.TaxAmount,
 		&order.Total,
 		&order.PaymentMethod,
 		&order.PaymentStatus,
@@ -308,7 +295,6 @@ func (r *postgresOrderRepository) UpdateOrderStatus(ctx context.Context, orderID
 		return fmt.Errorf("failed to update order status: %w", err)
 	}
 
-	// Check if row was actually updated (version mismatch = concurrent modification)
 	if result.RowsAffected() == 0 {
 		return model.ErrVersionMismatch
 	}
@@ -316,14 +302,51 @@ func (r *postgresOrderRepository) UpdateOrderStatus(ctx context.Context, orderID
 	return nil
 }
 
-func (r *postgresOrderRepository) UpdateOrderStatusWithTx(ctx context.Context, tx pgx.Tx, orderID uuid.UUID, status string, version int) error {
-	query := `
-		UPDATE orders
-		SET status = $1, version = version + 1, updated_at = NOW()
-		WHERE id = $2 AND version = $3
-	`
+func (r *postgresOrderRepository) UpdateOrderStatusWithTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	orderID uuid.UUID,
+	newStatus string,
+	version int,
+	trackingNumber *string,
+	adminNote *string,
+	deliveredAt *time.Time,
+) error {
+	setClauses := []string{
+		"status = $1",
+		"version = version + 1",
+		"updated_at = NOW()",
+	}
+	args := []interface{}{newStatus, orderID, version}
+	argIdx := 4
 
-	result, err := tx.Exec(ctx, query, status, orderID, version)
+	if trackingNumber != nil {
+		setClauses = append(setClauses, fmt.Sprintf("tracking_number = $%d", argIdx))
+		args = append(args, *trackingNumber)
+		argIdx++
+	}
+
+	if adminNote != nil {
+		setClauses = append(setClauses, fmt.Sprintf("admin_note = $%d", argIdx))
+		args = append(args, *adminNote)
+		argIdx++
+	}
+
+	if deliveredAt != nil {
+		setClauses = append(setClauses, fmt.Sprintf("delivered_at = $%d", argIdx))
+		args = append(args, *deliveredAt)
+		argIdx++
+	}
+
+	setSQL := strings.Join(setClauses, ", ")
+
+	query := fmt.Sprintf(`
+        UPDATE orders
+        SET %s
+        WHERE id = $2 AND version = $3
+    `, setSQL)
+
+	result, err := tx.Exec(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("failed to update order status with tx: %w", err)
 	}
@@ -405,7 +428,6 @@ func (r *postgresOrderRepository) UpdateOrderAdminNote(ctx context.Context, orde
 // =====================================================
 
 func (r *postgresOrderRepository) CreateOrderItems(ctx context.Context, items []model.OrderItem) error {
-	// Batch insert using pgx CopyFrom for better performance
 	copyCount, err := r.pool.CopyFrom(
 		ctx,
 		pgx.Identifier{"order_items"},
@@ -438,7 +460,6 @@ func (r *postgresOrderRepository) CreateOrderItems(ctx context.Context, items []
 }
 
 func (r *postgresOrderRepository) CreateOrderItemsWithTx(ctx context.Context, tx pgx.Tx, items []model.OrderItem) error {
-	// For transaction, use batch insert instead of CopyFrom
 	batch := &pgx.Batch{}
 	query := `
 		INSERT INTO order_items (
@@ -465,7 +486,6 @@ func (r *postgresOrderRepository) CreateOrderItemsWithTx(ctx context.Context, tx
 	results := tx.SendBatch(ctx, batch)
 	defer results.Close()
 
-	// Check all inserts succeeded
 	for i := 0; i < len(items); i++ {
 		_, err := results.Exec()
 		if err != nil {
@@ -533,6 +553,41 @@ func (r *postgresOrderRepository) CountOrderItemsByOrderID(ctx context.Context, 
 	return count, nil
 }
 
+func (r *postgresOrderRepository) CountOrderItemsByOrderIDs(ctx context.Context, orderIDs []uuid.UUID) (map[uuid.UUID]int, error) {
+	result := make(map[uuid.UUID]int)
+	if len(orderIDs) == 0 {
+		return result, nil
+	}
+
+	query := `
+        SELECT order_id, COUNT(*) 
+        FROM order_items 
+        WHERE order_id = ANY($1)
+        GROUP BY order_id
+    `
+
+	rows, err := r.pool.Query(ctx, query, orderIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count order items by order ids: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var oid uuid.UUID
+		var count int
+		if err := rows.Scan(&oid, &count); err != nil {
+			return nil, fmt.Errorf("failed to scan order items count: %w", err)
+		}
+		result[oid] = count
+	}
+
+	if rows.Err() != nil {
+		return nil, fmt.Errorf("error iterating order items count: %w", rows.Err())
+	}
+
+	return result, nil
+}
+
 // =====================================================
 // LIST ORDERS
 // =====================================================
@@ -540,11 +595,10 @@ func (r *postgresOrderRepository) CountOrderItemsByOrderID(ctx context.Context, 
 func (r *postgresOrderRepository) ListOrdersByUserID(ctx context.Context, userID uuid.UUID, status string, page, limit int) ([]model.Order, int, error) {
 	offset := (page - 1) * limit
 
-	// Build query with optional status filter
 	queryBuilder := `
 		SELECT 
-			id, order_number, user_id, address_id, promotion_id, warehouse_id,
-			subtotal, shipping_fee, cod_fee, discount_amount, tax_amount, total,
+			id, order_number, user_id, address_id, promotion_id,
+			subtotal, shipping_fee, discount_amount, total,
 			payment_method, payment_status, paid_at,
 			status, tracking_number, estimated_delivery_at, delivered_at,
 			customer_note, cancellation_reason,
@@ -557,7 +611,6 @@ func (r *postgresOrderRepository) ListOrdersByUserID(ctx context.Context, userID
 	args := []interface{}{userID}
 	countArgs := []interface{}{userID}
 
-	// Add status filter if provided
 	if status != "" {
 		queryBuilder += ` AND status = $2`
 		countQuery += ` AND status = $2`
@@ -568,14 +621,18 @@ func (r *postgresOrderRepository) ListOrdersByUserID(ctx context.Context, userID
 	queryBuilder += ` ORDER BY created_at DESC LIMIT $` + fmt.Sprintf("%d", len(args)+1) + ` OFFSET $` + fmt.Sprintf("%d", len(args)+2)
 	args = append(args, limit, offset)
 
-	// Get total count
 	var total int
 	err := r.pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to count orders: %w", err)
 	}
-
-	// Get orders
+	logger.Info("List order by user check", map[string]interface{}{
+		"offset":       offset,
+		"limit":        limit,
+		"userID":       userID,
+		"total":        total,
+		"queryBuilder": queryBuilder,
+	})
 	rows, err := r.pool.Query(ctx, queryBuilder, args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to list orders: %w", err)
@@ -591,12 +648,9 @@ func (r *postgresOrderRepository) ListOrdersByUserID(ctx context.Context, userID
 			&order.UserID,
 			&order.AddressID,
 			&order.PromotionID,
-			&order.WarehouseID,
 			&order.Subtotal,
 			&order.ShippingFee,
-			&order.CODFee,
 			&order.DiscountAmount,
-			&order.TaxAmount,
 			&order.Total,
 			&order.PaymentMethod,
 			&order.PaymentStatus,
@@ -630,8 +684,8 @@ func (r *postgresOrderRepository) ListAllOrders(ctx context.Context, status stri
 
 	queryBuilder := `
 		SELECT 
-			id, order_number, user_id, address_id, promotion_id, warehouse_id,
-			subtotal, shipping_fee, cod_fee, discount_amount, tax_amount, total,
+			id, order_number, user_id, address_id, promotion_id,
+			subtotal, shipping_fee, discount_amount, total,
 			payment_method, payment_status, paid_at,
 			status, tracking_number, estimated_delivery_at, delivered_at,
 			customer_note, admin_note, cancellation_reason,
@@ -644,7 +698,6 @@ func (r *postgresOrderRepository) ListAllOrders(ctx context.Context, status stri
 	args := []interface{}{}
 	countArgs := []interface{}{}
 
-	// Add status filter if provided
 	if status != "" {
 		queryBuilder += ` AND status = $1`
 		countQuery += ` AND status = $1`
@@ -655,14 +708,12 @@ func (r *postgresOrderRepository) ListAllOrders(ctx context.Context, status stri
 	queryBuilder += ` ORDER BY created_at DESC LIMIT $` + fmt.Sprintf("%d", len(args)+1) + ` OFFSET $` + fmt.Sprintf("%d", len(args)+2)
 	args = append(args, limit, offset)
 
-	// Get total count
 	var total int
 	err := r.pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to count all orders: %w", err)
 	}
 
-	// Get orders
 	rows, err := r.pool.Query(ctx, queryBuilder, args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to list all orders: %w", err)
@@ -678,12 +729,9 @@ func (r *postgresOrderRepository) ListAllOrders(ctx context.Context, status stri
 			&order.UserID,
 			&order.AddressID,
 			&order.PromotionID,
-			&order.WarehouseID,
 			&order.Subtotal,
 			&order.ShippingFee,
-			&order.CODFee,
 			&order.DiscountAmount,
-			&order.TaxAmount,
 			&order.Total,
 			&order.PaymentMethod,
 			&order.PaymentStatus,
@@ -744,7 +792,7 @@ func (r *postgresOrderRepository) CreateOrderStatusHistory(ctx context.Context, 
 func (r *postgresOrderRepository) CreateOrderStatusHistoryWithTx(ctx context.Context, tx pgx.Tx, history *model.OrderStatusHistory) error {
 	query := `
 		INSERT INTO order_status_history (
-		 order_id, from_status, to_status, changed_by, notes
+			order_id, from_status, to_status, changed_by, notes
 		) VALUES ($1, $2, $3, $4, $5)
 		RETURNING changed_at
 	`

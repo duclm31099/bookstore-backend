@@ -3,6 +3,8 @@ package model
 import (
 	"time"
 
+	validation "github.com/go-ozzo/ozzo-validation/v4"
+	"github.com/go-ozzo/ozzo-validation/v4/is"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
@@ -162,3 +164,26 @@ var ProvinceWarehouseMap = map[string]string{
 
 // DefaultWarehouseCode returns HN-01 as default warehouse
 const DefaultWarehouseCode = "WH-HN-01"
+
+// CreateOrderFromItemsRequest - use case: Reorder, Buy Now (không dùng cart)
+type CreateOrderFromItemsRequest struct {
+	AddressID     uuid.UUID         `json:"address_id"`
+	PaymentMethod string            `json:"payment_method"`
+	PromoCode     *string           `json:"promo_code,omitempty"`    // optional, thường nil cho Reorder
+	CustomerNote  *string           `json:"customer_note,omitempty"` // optional
+	Items         []CreateOrderItem `json:"items"`                   // BẮT BUỘC có sẵn
+}
+
+// Validate đảm bảo address, payment method, items hợp lệ
+func (req CreateOrderFromItemsRequest) Validate() error {
+	return validation.ValidateStruct(&req,
+		validation.Field(&req.AddressID, validation.Required, is.UUIDv4),
+		validation.Field(&req.PaymentMethod, validation.Required, validation.In(
+			PaymentMethodCOD,
+			PaymentMethodVNPay,
+			PaymentMethodMomo,
+			PaymentMethodBankTransfer,
+		)),
+		validation.Field(&req.Items, validation.Required, validation.Length(1, 100)),
+	)
+}

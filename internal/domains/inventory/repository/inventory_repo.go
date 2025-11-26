@@ -1223,7 +1223,7 @@ func (r *postgresRepository) ReserveStockWithTx(
 	query := `SELECT reserve_stock($1, $2, $3, $4)`
 
 	var success bool
-	err := r.pool.QueryRow(ctx, query, warehouseID, bookID, quantity, userID).Scan(&success)
+	err := tx.QueryRow(ctx, query, warehouseID, bookID, quantity, userID).Scan(&success)
 
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -1260,12 +1260,14 @@ func (r *postgresRepository) ReleaseStockWithTx(
 	query := `SELECT release_stock($1, $2, $3, $4)`
 
 	var success bool
-	err := r.pool.QueryRow(ctx, query, warehouseID, bookID, quantity, userID).Scan(&success)
+	err := tx.QueryRow(ctx, query, warehouseID, bookID, quantity, userID).Scan(&success)
 
 	if err != nil {
 		return fmt.Errorf("failed to release stock: %w", err)
 	}
-
+	if !success {
+		return fmt.Errorf("release_stock returned false for warehouse=%s, book=%s", warehouseID, bookID)
+	}
 	return nil
 }
 

@@ -1,6 +1,9 @@
 package model
 
 import (
+	addressModel "bookstore-backend/internal/domains/address/model"
+	"fmt"
+
 	"github.com/shopspring/decimal"
 )
 
@@ -63,4 +66,61 @@ func GetWarehouseCodeByProvince(province string) string {
 		return code
 	}
 	return DefaultWarehouseCode
+}
+func BuildOrderDetailResponse(
+	order *Order,
+	items []OrderItem,
+	address addressModel.Address,
+) *OrderDetailResponse {
+	itemsResponse := make([]OrderItemResponse, len(items))
+	for i, item := range items {
+		itemsResponse[i] = OrderItemResponse{
+			ID:           item.ID,
+			BookID:       item.BookID,
+			BookTitle:    item.BookTitle,
+			BookSlug:     item.BookSlug,
+			BookCoverURL: item.BookCoverURL,
+			AuthorName:   item.AuthorName,
+			Quantity:     item.Quantity,
+			Price:        item.Price,
+			Subtotal:     item.Subtotal,
+		}
+	}
+	var addressResponse *OrderAddressResponse
+	addressResponse = &OrderAddressResponse{
+		ID:           address.ID,
+		ReceiverName: address.RecipientName,
+		Phone:        address.Phone,
+		Province:     address.Province,
+		District:     address.District,
+		Ward:         address.Ward,
+		FullAddress:  fmt.Sprintf("%s - %s - %s", address.Ward, address.District, address.Province),
+	}
+
+	return &OrderDetailResponse{
+		ID:                  order.ID,
+		OrderNumber:         order.OrderNumber,
+		Status:              order.Status,
+		PaymentMethod:       order.PaymentMethod,
+		PaymentStatus:       order.PaymentStatus,
+		Subtotal:            order.Subtotal,
+		ShippingFee:         order.ShippingFee,
+		CODFee:              order.CODFee,
+		DiscountAmount:      order.DiscountAmount,
+		TaxAmount:           order.TaxAmount,
+		Total:               order.Total,
+		Items:               itemsResponse,
+		Address:             addressResponse,
+		TrackingNumber:      order.TrackingNumber,
+		EstimatedDeliveryAt: order.EstimatedDeliveryAt,
+		DeliveredAt:         order.DeliveredAt,
+		CustomerNote:        order.CustomerNote,
+		AdminNote:           order.AdminNote,
+		CancellationReason:  order.CancellationReason,
+		PaidAt:              order.PaidAt,
+		CreatedAt:           order.CreatedAt,
+		UpdatedAt:           order.UpdatedAt,
+		CancelledAt:         order.CancelledAt,
+		Version:             order.Version,
+	}
 }

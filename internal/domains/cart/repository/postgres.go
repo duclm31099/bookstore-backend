@@ -4,6 +4,7 @@ import (
 	"bookstore-backend/internal/domains/cart/model"
 	promo "bookstore-backend/internal/domains/promotion/model"
 	"bookstore-backend/pkg/cache"
+	"bookstore-backend/pkg/logger"
 	"context"
 	"errors"
 	"fmt"
@@ -130,15 +131,28 @@ func (r *postgresRepository) Create(ctx context.Context, cart *model.Cart) error
 
 // UpdateExpiration implements RepositoryInterface.UpdateExpiration
 func (r *postgresRepository) UpdateExpiration(ctx context.Context, cartID uuid.UUID) error {
-	query := `
-		UPDATE carts
-		SET expires_at = NOW() + INTERVAL '30 days', updated_at = NOW()
-		WHERE id = $1
-	`
 
-	_, err := r.pool.Exec(ctx, query, cartID)
+	query := `
+    UPDATE carts
+    SET expires_at = NOW() + INTERVAL '90 days', updated_at = NOW()
+    WHERE id = $1
+  `
+
+	result, err := r.pool.Exec(ctx, query, cartID)
+
+	// ✅ Kiểm tra lỗi TRƯỚC khi dùng result
 	if err != nil {
+		logger.Info("UpdateExpiration failed", map[string]interface{}{
+			"cart_id": cartID,
+			"error":   err.Error(),
+		})
 		return fmt.Errorf("failed to update expiration: %w", err)
+	}
+
+	// ✅ Log sau khi chắc chắn result hợp lệ
+	rowsAffected := result.RowsAffected()
+	if rowsAffected == 0 {
+		return fmt.Errorf("cart not found")
 	}
 
 	return nil
@@ -146,32 +160,33 @@ func (r *postgresRepository) UpdateExpiration(ctx context.Context, cartID uuid.U
 
 // CreateOrGet với DO UPDATE (recommended)
 func (r *postgresRepository) CreateOrGet(ctx context.Context, cart *model.Cart) (*model.Cart, error) {
-	var conflictColumn string
+	var conflictClause string
 	if cart.UserID != nil {
-		conflictColumn = "user_id"
+		// Phải có CẢ 2 điều kiện giống index
+		conflictClause = "ON CONFLICT (user_id) WHERE user_id IS NOT NULL AND session_id IS NULL"
 	} else if cart.SessionID != nil {
-		conflictColumn = "session_id"
+		// Phải có CẢ 2 điều kiện giống index
+		conflictClause = "ON CONFLICT (session_id) WHERE session_id IS NOT NULL AND user_id IS NULL"
 	} else {
 		return nil, fmt.Errorf("either user_id or session_id must be provided")
 	}
 
 	query := `
-        INSERT INTO carts (
-            user_id, session_id, items_count, subtotal, version, 
-            created_at, updated_at, expires_at,
-            promo_code, discount, total, promo_metadata
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-        ON CONFLICT (` + conflictColumn + `) 
-        WHERE ` + conflictColumn + ` IS NOT NULL
-        DO UPDATE SET
-            expires_at = EXCLUDED.expires_at,
-            updated_at = EXCLUDED.updated_at
-        RETURNING 
-            id, user_id, session_id, items_count, subtotal, version, 
-            created_at, updated_at, expires_at,
-            promo_code, discount, total, promo_metadata
-    `
+    INSERT INTO carts (
+      user_id, session_id, items_count, subtotal, version, 
+      created_at, updated_at, expires_at,
+      promo_code, discount, total, promo_metadata
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+    ` + conflictClause + `
+    DO UPDATE SET
+      expires_at = EXCLUDED.expires_at,
+      updated_at = EXCLUDED.updated_at
+    RETURNING 
+      id, user_id, session_id, items_count, subtotal, version, 
+      created_at, updated_at, expires_at,
+      promo_code, discount, total, promo_metadata
+  `
 
 	var result model.Cart
 	err := r.pool.QueryRow(ctx, query,
@@ -202,6 +217,9 @@ func (r *postgresRepository) CreateOrGet(ctx context.Context, cart *model.Cart) 
 		&result.Total,         // ✅ Add
 		&result.PromoMetadata, // ✅ Add
 	)
+	logger.Info("CreateOrGet cart", map[string]interface{}{
+		"result": result,
+	})
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to create or get cart: %w", err)
@@ -248,7 +266,7 @@ func (r *postgresRepository) AddItem(ctx context.Context, item *model.CartItem) 
 	return &result, nil
 }
 
-func (r *postgresRepository) GetItemsWithBooks(ctx context.Context, cartID uuid.UUID, page int, limit int) ([]model.CartItemWithBook, int, error) {
+func (r *postgresRepository) GetItemsWithBooks(ctx context.Context, cartID uuid.UUID, page int, limit int) ([]*model.CartItemWithBook, int, error) {
 	// Handle fetch all case
 	var limitClause string
 
@@ -290,7 +308,7 @@ func (r *postgresRepository) GetItemsWithBooks(ctx context.Context, cartID uuid.
 	}
 	defer rows.Close()
 
-	var items []model.CartItemWithBook
+	var items []*model.CartItemWithBook
 	var totalCount int
 
 	for rows.Next() {
@@ -315,13 +333,15 @@ func (r *postgresRepository) GetItemsWithBooks(ctx context.Context, cartID uuid.
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to scan item: %w", err)
 		}
-		items = append(items, item)
+		items = append(items, &item)
 	}
 
 	if err := rows.Err(); err != nil {
 		return nil, 0, fmt.Errorf("error iterating items: %w", err)
 	}
-
+	logger.Info("GetItemsWithBooks", map[string]interface{}{
+		"items": items,
+	})
 	return items, totalCount, nil
 }
 
@@ -704,6 +724,47 @@ func (r *postgresRepository) GetItemsByCartIDWithTx(ctx context.Context, tx pgx.
     `
 
 	rows, err := tx.Query(ctx, query, cartID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query cart items: %w", err)
+	}
+	defer rows.Close()
+
+	var items []model.CartItem
+	for rows.Next() {
+		var item model.CartItem
+		err := rows.Scan(
+			&item.ID,
+			&item.CartID,
+			&item.BookID,
+			&item.Quantity,
+			&item.Price,
+			&item.CreatedAt,
+			&item.UpdatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan cart item: %w", err)
+		}
+		items = append(items, item)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating cart items: %w", err)
+	}
+
+	return items, nil
+}
+
+// GetItemsByCartIDWithTx retrieves all items in a cart within transaction
+func (r *postgresRepository) GetItemsByCartID(ctx context.Context, cartID uuid.UUID) ([]model.CartItem, error) {
+	query := `
+        SELECT 
+            id, cart_id, book_id, quantity, price, created_at, updated_at
+        FROM cart_items
+        WHERE cart_id = $1
+        FOR UPDATE -- Lock rows for transaction
+    `
+
+	rows, err := r.pool.Query(ctx, query, cartID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query cart items: %w", err)
 	}

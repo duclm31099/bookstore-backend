@@ -14,7 +14,6 @@ import (
 	"bookstore-backend/pkg/logger"
 
 	"github.com/gin-gonic/gin"
-	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 )
 
@@ -38,28 +37,33 @@ func NewHandler(service service.ServiceInterface) *Handler {
 // @Router /me/cart [get]
 func (h *Handler) GetCart(c *gin.Context) {
 	// Get cart_id from middleware context
-	_, err := cartMiddleware.GetCartID(c)
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, "Invalid cart", err.Error())
-		return
-	}
-
+	// cartid, err := cartMiddleware.GetCartID(c)
+	// if err != nil {
+	// 	response.Error(c, http.StatusBadRequest, "Invalid cart", err.Error())
+	// 	return
+	// }
+	// logger.Info("Get cart id", map[string]interface{}{
+	// 	"cartid": cartid,
+	// })
 	// Check if authenticated or anonymous
-	isAnonymous := cartMiddleware.IsAnonymousCart(c)
+	// isAnonymous := cartMiddleware.IsAnonymousCart(c)
 	userID, _ := c.Get(cartMiddleware.ContextKeyUserID)
 	sessionID := cartMiddleware.GetSessionID(c)
 
 	var uid *uuid.UUID
 	var sid *string
 
-	if !isAnonymous && userID != nil {
+	if userID != nil {
 		if id, ok := userID.(uuid.UUID); ok {
 			uid = &id
 		}
-	} else if isAnonymous && sessionID != "" {
+	} else if sessionID != "" {
 		sid = &sessionID
 	}
-
+	logger.Info("Get cart", map[string]interface{}{
+		"userID":    uid,
+		"sessionID": sid,
+	})
 	// Get or create cart
 	cart, err := h.service.GetOrCreateCart(c.Request.Context(), uid, sid)
 	if err != nil {
@@ -428,12 +432,12 @@ func (h *Handler) Checkout(c *gin.Context) {
 	// ===================================
 	// STEP 4: Validate request (struct validation)
 	// ===================================
-	if err := validator.New().Struct(req); err != nil {
-		response.Error(c, http.StatusBadRequest,
-			"Validation failed",
-			err.Error())
-		return
-	}
+	// if err := validator.New().Struct(req); err != nil {
+	// 	response.Error(c, http.StatusBadRequest,
+	// 		"Validation failed",
+	// 		err.Error())
+	// 	return
+	// }
 
 	// ===================================
 	// STEP 5: Call service

@@ -22,6 +22,7 @@ const (
 	ErrCodeUnauthorized           = "ORD014"
 	ErrCodeInvalidStatus          = "ORD015"
 	ErrCodePromoMinAmount         = "ORD016"
+	ErrCodeInvalidOrder           = "ORD017"
 )
 
 // =====================================================

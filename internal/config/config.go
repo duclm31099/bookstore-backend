@@ -99,22 +99,22 @@ func Load() (*Config, error) {
 		},
 		Database: DatabaseConfig{
 			Host:     getEnv("DB_HOST", "localhost"),
-			Port:     getEnvInt("DB_PORT", 5432),
-			User:     getEnv("DB_USER", "postgres"),
-			Password: getEnv("DB_PASSWORD", ""),
-			Database: getEnv("DB_NAME", "bookstore"),
+			Port:     getEnvInt("DB_PORT", 5439),
+			User:     getEnv("DB_USER", "bookstore"),
+			Password: getEnv("DB_PASSWORD", "secret"),
+			Database: getEnv("DB_NAME", "bookstore_dev"),
 			SSLMode:  getEnv("DB_SSLMODE", "disable"),
 			MaxConns: getEnvInt("DB_MAX_CONNS", 25),
 			MinConns: getEnvInt("DB_MIN_CONNS", 5),
 		},
 		Redis: RedisConfig{
 			Host:     getEnv("REDIS_HOST", "localhost:6379"),
-			Password: getEnv("REDIS_PASSWORD", ""),
+			Password: getEnv("REDIS_PASSWORD", "redispassword"),
 			DB:       getEnvInt("REDIS_DB", 0),
 		},
 		JWT: JWTConfig{
-			Secret:             getEnv("JWT_SECRET", "your-secret-key-change-in-production"),
-			AccessTokenExpiry:  getEnvInt("JWT_ACCESS_EXPIRY", 15),  // 15 minutes
+			Secret:             getEnv("JWT_ACCESS_SECRET", "jwt_access_secret"),
+			AccessTokenExpiry:  getEnvInt("JWT_ACCESS_EXPIRY", 95),  // 15 minutes
 			RefreshTokenExpiry: getEnvInt("JWT_REFRESH_EXPIRY", 72), // 3 days
 		},
 		Email: EmailConfig{
@@ -123,11 +123,11 @@ func Load() (*Config, error) {
 			From:     getEnv("EMAIL_FROM", "noreply@bookstore.com"),
 		},
 		VNPay: VNPayConfig{
-			TmnCode:    getEnv("VNPAY_TMN_CODE", ""),
-			HashSecret: getEnv("VNPAY_HASH_SECRET", ""),
-			APIURL:     getEnv("VNPAY_API_URL", "https://sandbox.vnpayment.vn"),
-			ReturnURL:  getEnv("VNPAY_RETURN_URL", "http://localhost:3000/payment/callback"),
-			IPNURL:     getEnv("VNPAY_IPN_URL", "http://localhost:8080/api/v1/webhooks/vnpay"),
+			TmnCode:    getEnv("VNPAY_TMN_CODE", "QIU6VGVK"),
+			HashSecret: getEnv("VNPAY_HASH_SECRET", "9GGINJLAY7SROX68AJRSQ4862SEZ11O2"),
+			APIURL:     getEnv("VNPAY_API_URL", "https://sandbox.vnpayment.vn/paymentv2"),
+			ReturnURL:  getEnv("VNPAY_RETURN_URL", "http://localhost:5173/payment/callback"),
+			IPNURL:     getEnv("VNPAY_IPN_URL", "https://quick-pandas-tease.loca.lt/api/v1/webhooks/vnpay"),
 		},
 
 		// ========================================

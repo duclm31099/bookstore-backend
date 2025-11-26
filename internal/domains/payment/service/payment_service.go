@@ -3,14 +3,17 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
+	orderModel "bookstore-backend/internal/domains/order/model"
 	os "bookstore-backend/internal/domains/order/service"
 	"bookstore-backend/internal/domains/payment/gateway"
 	"bookstore-backend/internal/domains/payment/model"
 	repo "bookstore-backend/internal/domains/payment/repository"
+	"bookstore-backend/pkg/logger"
 )
 
 // =====================================================
@@ -89,7 +92,7 @@ func (s *paymentService) CreatePayment(
 	}
 
 	// Step 3: Validate order status (must be 'pending')
-	if order.Status != "pending" {
+	if order.Status != orderModel.OrderStatusPending {
 		return nil, model.NewOrderNotPendingError(order.Status)
 	}
 
@@ -116,7 +119,7 @@ func (s *paymentService) CreatePayment(
 	payment := &model.PaymentTransaction{
 		ID:          paymentID,
 		OrderID:     req.OrderID,
-		Gateway:     req.Gateway,
+		Gateway:     model.GatewayVNPay,
 		Amount:      order.Total,
 		Currency:    model.DefaultCurrency,
 		Status:      model.PaymentStatusPending,
@@ -138,61 +141,86 @@ func (s *paymentService) CreatePayment(
 		ExpiresAt:            time.Now().Add(time.Duration(model.PaymentTimeoutMinutes) * time.Minute),
 	}
 
-	switch req.Gateway {
-	case model.GatewayVNPay:
-		// Generate VNPay payment URL
-		paymentURL, err := s.vnpayGateway.CreatePaymentURL(ctx, gateway.VNPayPaymentRequest{
-			TransactionRef: paymentID.String(),
-			Amount:         order.Total,
-			OrderInfo:      fmt.Sprintf("Payment for order %s", order.OrderNumber),
-			ReturnURL:      s.vnpayGateway.GetReturnURL(),
-		})
+	// switch req.Gateway {
+	// case model.GatewayVNPay:
 
-		if err != nil {
-			// Mark payment as failed
-			s.paymentRepo.MarkAsFailed(ctx, paymentID, model.ErrCodeGatewayUnavailable, err.Error())
-			return nil, fmt.Errorf("failed to generate VNPay URL: %w", err)
-		}
+	// case model.GatewayMomo:
+	// 	// Generate Momo payment URL
+	// 	paymentURL, err := s.momoGateway.CreatePaymentURL(ctx, gateway.MomoPaymentRequest{
+	// 		OrderID:   paymentID.String(),
+	// 		Amount:    order.Total,
+	// 		OrderInfo: fmt.Sprintf("Payment for order %s", order.OrderNumber),
+	// 	})
 
-		// Update payment to processing
-		s.paymentRepo.UpdateStatus(ctx, paymentID, model.PaymentStatusProcessing)
+	// 	if err != nil {
+	// 		s.paymentRepo.MarkAsFailed(ctx, paymentID, model.ErrCodeGatewayUnavailable, err.Error())
+	// 		return nil, fmt.Errorf("failed to generate Momo URL: %w", err)
+	// 	}
 
-		response.PaymentURL = &paymentURL
+	// 	// Update payment to processing
+	// 	s.paymentRepo.UpdateStatus(ctx, paymentID, model.PaymentStatusProcessing)
 
-	case model.GatewayMomo:
-		// Generate Momo payment URL
-		paymentURL, err := s.momoGateway.CreatePaymentURL(ctx, gateway.MomoPaymentRequest{
-			OrderID:   paymentID.String(),
-			Amount:    order.Total,
-			OrderInfo: fmt.Sprintf("Payment for order %s", order.OrderNumber),
-		})
+	// 	response.PaymentURL = &paymentURL
 
-		if err != nil {
-			s.paymentRepo.MarkAsFailed(ctx, paymentID, model.ErrCodeGatewayUnavailable, err.Error())
-			return nil, fmt.Errorf("failed to generate Momo URL: %w", err)
-		}
+	// case model.GatewayCOD:
+	// 	// COD: No payment URL needed, just confirmation
+	// 	message := "COD order confirmed. Pay on delivery."
+	// 	response.Message = &message
+	// 	// COD payment stays in 'pending' until delivery
 
-		// Update payment to processing
-		s.paymentRepo.UpdateStatus(ctx, paymentID, model.PaymentStatusProcessing)
+	// case model.GatewayBankTransfer:
+	// 	// Bank Transfer: Generate QR code or bank details
+	// 	// TODO: Implement bank transfer logic
+	// 	bankAccount := "1234567890 - VietcomBank"
+	// 	response.BankAccount = &bankAccount
 
-		response.PaymentURL = &paymentURL
+	// default:
+	// 	return nil, model.NewInvalidGatewayError(req.Gateway)
+	// }
+	// Generate VNPay payment URL
+	paymentURL, err := s.vnpayGateway.CreatePaymentURL(ctx, gateway.VNPayPaymentRequest{
+		TransactionRef: paymentID.String(),
+		Amount:         order.Total,
+		OrderInfo:      strings.ReplaceAll(order.OrderNumber, "-", ""),
+		ReturnURL:      s.vnpayGateway.GetReturnURL(),
+	})
 
-	case model.GatewayCOD:
-		// COD: No payment URL needed, just confirmation
-		message := "COD order confirmed. Pay on delivery."
-		response.Message = &message
-		// COD payment stays in 'pending' until delivery
-
-	case model.GatewayBankTransfer:
-		// Bank Transfer: Generate QR code or bank details
-		// TODO: Implement bank transfer logic
-		bankAccount := "1234567890 - VietcomBank"
-		response.BankAccount = &bankAccount
-
-	default:
-		return nil, model.NewInvalidGatewayError(req.Gateway)
+	if err != nil {
+		// Mark payment as failed
+		s.paymentRepo.MarkAsFailed(ctx, paymentID, model.ErrCodeGatewayUnavailable, err.Error())
+		return nil, fmt.Errorf("failed to generate VNPay URL: %w", err)
 	}
 
+	// Update payment to processing
+	// This is critical - if this fails, we must rollback to prevent orphaned payments
+	if err := s.paymentRepo.UpdateStatus(ctx, paymentID, model.PaymentStatusProcessing); err != nil {
+		logger.Error("Failed to update payment status to processing", err)
+
+		// ✅ ROLLBACK: Mark payment as failed to prevent limbo state
+		// This ensures the payment record reflects the actual state
+		rollbackErr := s.paymentRepo.MarkAsFailed(
+			ctx,
+			paymentID,
+			model.ErrCodeGatewayUnavailable,
+			fmt.Sprintf("Failed to update status: %v", err),
+		)
+		if rollbackErr != nil {
+			logger.Error("Failed to rollback payment after status update error", rollbackErr)
+			// Log both errors for debugging
+		}
+
+		// Return error to client - do NOT provide payment URL
+		// User can retry the payment (new record will be created)
+		return nil, fmt.Errorf("failed to prepare payment transaction: %w", err)
+	}
+	response = &model.CreatePaymentResponse{
+		PaymentTransactionID: paymentID,
+		Gateway:              req.Gateway,
+		Amount:               order.Total,
+		Currency:             model.DefaultCurrency,
+		ExpiresAt:            time.Now().Add(time.Duration(model.PaymentTimeoutMinutes) * time.Minute),
+		PaymentURL:           &paymentURL,
+	}
 	return response, nil
 }
 

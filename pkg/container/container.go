@@ -8,13 +8,13 @@ import (
 	"bookstore-backend/internal/shared/utils"
 	"bookstore-backend/pkg/cache"
 	"bookstore-backend/pkg/jwt"
+	"bookstore-backend/pkg/logger"
 	"context"
 	"fmt"
 	"log"
 	"time"
 
-	// User domain imports
-
+	// Domain imports
 	"bookstore-backend/internal/domains/category"
 	"bookstore-backend/internal/domains/user"
 
@@ -22,59 +22,48 @@ import (
 	userRepo "bookstore-backend/internal/domains/user/repository"
 	userService "bookstore-backend/internal/domains/user/service"
 
-	// AUTHOR
 	authorHandler "bookstore-backend/internal/domains/author/handler"
 	authorRepository "bookstore-backend/internal/domains/author/repository"
 	authorService "bookstore-backend/internal/domains/author/service"
-
-	// CATEGORY
 
 	categoryHandler "bookstore-backend/internal/domains/category/handler"
 	categoryRepo "bookstore-backend/internal/domains/category/repository"
 	categoryService "bookstore-backend/internal/domains/category/service"
 
-	// PUBLISHER
 	publisherHandler "bookstore-backend/internal/domains/publisher/handler"
 	publisherRepo "bookstore-backend/internal/domains/publisher/repository"
 	publisherService "bookstore-backend/internal/domains/publisher/service"
 
-	// ADDRESS
 	addressHandler "bookstore-backend/internal/domains/address/handler"
 	addressRepo "bookstore-backend/internal/domains/address/repository"
 	addressService "bookstore-backend/internal/domains/address/service"
 
-	// BOOK
 	bookHandler "bookstore-backend/internal/domains/book/handler"
 	bookRepo "bookstore-backend/internal/domains/book/repository"
 	bookService "bookstore-backend/internal/domains/book/service"
 
-	// INVENTORY
 	inventoryHandler "bookstore-backend/internal/domains/inventory/handler"
 	inventoryRepo "bookstore-backend/internal/domains/inventory/repository"
 	inventoryService "bookstore-backend/internal/domains/inventory/service"
 
-	// CART
 	cartHandler "bookstore-backend/internal/domains/cart/handler"
 	cartRepo "bookstore-backend/internal/domains/cart/repository"
 	cartService "bookstore-backend/internal/domains/cart/service"
 
-	// PROMOTION
 	promotionHandler "bookstore-backend/internal/domains/promotion/handler"
 	promotionRepo "bookstore-backend/internal/domains/promotion/repository"
 	promotionService "bookstore-backend/internal/domains/promotion/service"
 
-	// ORDER
 	orderHandler "bookstore-backend/internal/domains/order/handler"
 	orderRepo "bookstore-backend/internal/domains/order/repository"
 	orderService "bookstore-backend/internal/domains/order/service"
 
-	// PAYMENT
 	"bookstore-backend/internal/domains/payment/gateway"
+	"bookstore-backend/internal/domains/payment/gateway/vnpay"
 	paymentHandler "bookstore-backend/internal/domains/payment/handler"
 	paymentRepo "bookstore-backend/internal/domains/payment/repository"
 	paymentService "bookstore-backend/internal/domains/payment/service"
 
-	// REVIEW
 	reviewHandler "bookstore-backend/internal/domains/review/handler"
 	reviewRepo "bookstore-backend/internal/domains/review/repository"
 	reviewService "bookstore-backend/internal/domains/review/service"
@@ -96,9 +85,8 @@ type Container struct {
 	AsynqClient    *asynq.Client
 	MinIOStorage   *storage.MinIOStorage
 	ImageProcessor *storage.ImageProcessor
-	// ========================================
-	// REPOSITORY LAYER (DATA ACCESS)
-	// ========================================
+
+	// Repositories
 	UserRepo       user.Repository
 	CategoryRepo   category.CategoryRepository
 	AuthorRepo     authorRepository.RepositoryInterface
@@ -117,10 +105,8 @@ type Container struct {
 	ImageBookRepo  bookRepo.BookImageRepository
 	BulkImportRepo bookRepo.BulkImportRepoI
 	WarehouseRepo  warehouseRepo.Repository
-	// ========================================
-	// SERVICE LAYER (BUSINESS LOGIC)
-	// ========================================
 
+	// Services
 	UserService       user.Service
 	CategoryService   category.CategoryService
 	AuthorService     authorService.ServiceInterface
@@ -130,16 +116,15 @@ type Container struct {
 	InventoryService  inventoryService.ServiceInterface
 	CartService       cartService.ServiceInterface
 	PromotionService  promotionService.ServiceInterface
-	OrderSerivce      orderService.OrderService
+	OrderService      orderService.OrderService
 	PaymentService    paymentService.PaymentService
 	RefundService     paymentService.RefundInterface
 	ReviewService     reviewService.ServiceInterface
 	ImageBookService  bookService.BookImageService
 	BulkImportService bookService.BulkImportServiceInterface
 	WarehouseService  warehouseService.Service
-	// ========================================
-	// HANDLER LAYER (HTTP)
-	// ========================================
+
+	// Handlers
 	UserHandler       *userHandler.UserHandler
 	CategoryHandler   *categoryHandler.CategoryHandler
 	AuthorHandler     *authorHandler.AuthorHandler
@@ -158,55 +143,74 @@ type Container struct {
 }
 
 // ========================================
-// CONSTRUCTOR: BUILD CONTAINER
+// CONSTRUCTOR
 // ========================================
-// NewContainer tạo và initialize toàn bộ dependency graph
-// Đây là entry point của DI container
-// QUAN TRỌNG: Thứ tự initialization:
-// 1. Config (không phụ thuộc gì)
-// 2. Infrastructure (DB, Cache) - phụ thuộc Config
-// 3. Repositories - phụ thuộc Infrastructure
-// 4. Services - phụ thuộc Repositories
-// 5. Handlers - phụ thuộc Services
-//
-// Nếu thứ tự sai → panic (nil pointer dereference)
 func NewContainer() (*Container, error) {
-	redisOpt := asynq.RedisClientOpt{
-		Addr:     "localhost:6379", // có thể đọc từ config/env
-		Password: "redispassword",  // nếu có password redis
-		DB:       0,                // db index
-	}
 	c := &Container{}
-	c.AsynqClient = asynq.NewClient(redisOpt)
 
+	// Step 1: Infrastructure
+	if err := c.initInfrastructure(); err != nil {
+		return nil, fmt.Errorf("failed to init infrastructure: %w", err)
+	}
+
+	// Step 2: Gateways
+	if err := c.initGateways(); err != nil {
+		return nil, fmt.Errorf("failed to init gateways: %w", err)
+	}
+
+	// Step 3: Repositories
+	if err := c.initRepositories(); err != nil {
+		return nil, fmt.Errorf("failed to init repositories: %w", err)
+	}
+
+	// Step 4: Services (3 phases)
+	if err := c.initServices(); err != nil {
+		return nil, fmt.Errorf("failed to init services: %w", err)
+	}
+
+	// Step 5: Handlers
+	if err := c.initHandlers(); err != nil {
+		return nil, fmt.Errorf("failed to init handlers: %w", err)
+	}
+
+	log.Println("✅ Container initialized successfully")
+	return c, nil
+}
+
+// ========================================
+// STEP 1: INFRASTRUCTURE
+// ========================================
+func (c *Container) initInfrastructure() error {
+	// Config
 	cfg, err := config.Load()
 	if err != nil {
-		return nil, fmt.Errorf("failed to load config: %w", err)
+		return fmt.Errorf("failed to load config: %w", err)
 	}
 	c.Config = cfg
+	log.Println("✅ Config loaded")
 
+	// Database
 	dbConfig, err := config.LoadDatabaseConfig()
 	if err != nil {
-		return nil, fmt.Errorf("failed to load database config: %w", err)
+		return fmt.Errorf("failed to load database config: %w", err)
 	}
 
 	db := database.NewPostgresDB(dbConfig)
-
-	// Connect với timeout 30s
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	if err := db.Connect(ctx); err != nil {
-		return nil, fmt.Errorf("failed to connect to database: %w", err)
+		return fmt.Errorf("failed to connect to database: %w", err)
 	}
 
-	// Health check
 	if err := db.HealthCheck(context.Background()); err != nil {
-		return nil, fmt.Errorf("database health check failed: %w", err)
+		return fmt.Errorf("database health check failed: %w", err)
 	}
 
 	c.DB = db
+	log.Println("✅ Database connected")
 
+	// Redis Cache
 	redisCache := infraCache.NewRedisCache(
 		cfg.Redis.Host,
 		cfg.Redis.Password,
@@ -215,19 +219,27 @@ func NewContainer() (*Container, error) {
 
 	if rc, ok := redisCache.(*infraCache.RedisCache); ok {
 		if err := rc.Connect(context.Background()); err != nil {
-			// Redis failure không critical - log warning và continue
 			log.Printf("⚠️  Redis connection failed (non-critical): %v", err)
 		} else {
 			log.Println("✅ Redis connected")
 		}
 	}
-
 	c.Cache = redisCache
 
-	jwtSecret := cfg.JWT.Secret // Use from config
-	c.JWTManager = jwt.NewManager(jwtSecret)
+	// JWT Manager
+	c.JWTManager = jwt.NewManager(cfg.JWT.Secret)
+	log.Println("✅ JWT Manager initialized")
 
-	// MinIO Configuration
+	// Asynq Client
+	redisOpt := asynq.RedisClientOpt{
+		Addr:     cfg.Redis.Host,
+		Password: cfg.Redis.Password,
+		DB:       cfg.Redis.DB,
+	}
+	c.AsynqClient = asynq.NewClient(redisOpt)
+	log.Println("✅ Asynq Client initialized")
+
+	// MinIO Storage
 	minioConfig := config.MinIOConfig{
 		Endpoint:  utils.GetEnvVariable("MINIO_ENDPOINT", "localhost:9000"),
 		AccessKey: utils.GetEnvVariable("MINIO_ACCESS_KEY", "minioadmin"),
@@ -238,7 +250,7 @@ func NewContainer() (*Container, error) {
 
 	minioStorage, err := storage.NewMinIOStorage(minioConfig)
 	if err != nil {
-		return nil, fmt.Errorf("failed to init MinIO storage: %w", err)
+		return fmt.Errorf("failed to init MinIO storage: %w", err)
 	}
 	c.MinIOStorage = minioStorage
 	log.Println("✅ MinIO storage initialized")
@@ -247,27 +259,41 @@ func NewContainer() (*Container, error) {
 	c.ImageProcessor = storage.NewImageProcessor()
 	log.Println("✅ Image processor initialized")
 
-	if err := c.initRepositories(); err != nil {
-		return nil, fmt.Errorf("failed to init repositories: %w", err)
-	}
-
-	if err := c.initServices(); err != nil {
-		return nil, fmt.Errorf("failed to init services: %w", err)
-	}
-
-	if err := c.initHandlers(); err != nil {
-		return nil, fmt.Errorf("failed to init handlers: %w", err)
-	}
-
-	return c, nil
+	return nil
 }
 
 // ========================================
-// PRIVATE INITIALIZATION METHODS
+// STEP 2: GATEWAYS
+// ========================================
+func (c *Container) initGateways() error {
+	// VNPay Gateway
+	vnpCfg := vnpay.NewConfig(
+		c.Config.VNPay.TmnCode,
+		c.Config.VNPay.HashSecret,
+		c.Config.VNPay.APIURL,
+		c.Config.VNPay.ReturnURL,
+		c.Config.VNPay.IPNURL,
+	)
+
+	vnpClient, err := vnpay.NewClient(vnpCfg)
+	if err != nil {
+		return fmt.Errorf("failed to init VNPay client: %w", err)
+	}
+	c.VNPayGateway = vnpClient
+	log.Println("✅ VNPay Gateway initialized")
+	logger.Info("Init gateway:", map[string]interface{}{
+		"vnpCfg": vnpCfg,
+	})
+	// TODO: Momo Gateway (phase 2)
+	// c.MomoGateway = momo.NewClient(momoConfig)
+
+	return nil
+}
+
+// ========================================
+// STEP 3: REPOSITORIES
 // ========================================
 func (c *Container) initRepositories() error {
-	// Chuẩn bị sql.DB từ pgxpool
-	// userRepo.NewPostgresRepository cần *sql.DB, không phải *pgxpool.Pool
 	pool := c.DB.Pool
 
 	c.UserRepo = userRepo.NewPostgresRepository(pool, c.Cache)
@@ -287,39 +313,121 @@ func (c *Container) initRepositories() error {
 	c.ImageBookRepo = bookRepo.NewBookImageRepository(pool)
 	c.BulkImportRepo = bookRepo.NewBulkImportRepository(pool)
 	c.WarehouseRepo = warehouseRepo.NewRepository(pool)
+
+	log.Println("✅ All repositories initialized")
 	return nil
 }
 
-// initServices khởi tạo tất cả services
+// ========================================
+// STEP 4: SERVICES (3 PHASES)
+// ========================================
 func (c *Container) initServices() error {
+	// PHASE 1: Independent Services (no cross-dependencies)
+	if err := c.initIndependentServices(); err != nil {
+		return fmt.Errorf("phase 1 failed: %w", err)
+	}
+
+	// PHASE 2: Dependent Services (depend on Phase 1)
+	if err := c.initDependentServices(); err != nil {
+		return fmt.Errorf("phase 2 failed: %w", err)
+	}
+
+	// PHASE 3: Cross-dependent Services (circular dependencies)
+	if err := c.initCrossDependentServices(); err != nil {
+		return fmt.Errorf("phase 3 failed: %w", err)
+	}
+
+	// PHASE 4: Validate all services
+	if err := c.validateServices(); err != nil {
+		return fmt.Errorf("validation failed: %w", err)
+	}
+
+	log.Println("✅ All services initialized and validated")
+	return nil
+}
+
+// ========================================
+// PHASE 1: INDEPENDENT SERVICES
+// ========================================
+func (c *Container) initIndependentServices() error {
+	// Services with no service dependencies (only repos, cache, etc.)
+
 	c.UserService = userService.NewUserService(
-		c.UserRepo,   // Inject repository
-		c.JWTManager, // Inject JWT secret từ config
+		c.UserRepo,
+		c.JWTManager,
 		c.AsynqClient,
 		c.Cache,
 	)
-	c.BulkImportService = bookService.NewBulkImportService(
-		c.BookRepo, c.ImageBookRepo, c.AuthorRepo,
-		c.CategoryRepo, c.PublisherRepo, c.ImageBookRepo, c.DB.Pool, c.MinIOStorage,
-		c.ImageProcessor, c.AsynqClient,
-	)
-	c.WarehouseService = warehouseService.NewService(c.WarehouseRepo)
+	log.Println("  ✓ UserService")
+
 	c.CategoryService = categoryService.NewCategoryService(c.CategoryRepo)
+	log.Println("  ✓ CategoryService")
+
 	c.AuthorService = authorService.NewAuthorService(c.AuthorRepo)
+	log.Println("  ✓ AuthorService")
+
 	c.PublisherService = publisherService.NewPublisherService(c.PublisherRepo)
+	log.Println("  ✓ PublisherService")
+
 	c.AddressService = addressService.NewAddressService(c.AddressRepo)
+	log.Println("  ✓ AddressService")
+
+	c.WarehouseService = warehouseService.NewService(c.WarehouseRepo)
+	log.Println("  ✓ WarehouseService")
+
+	c.ReviewService = reviewService.NewReviewService(c.ReviewRepo)
+	log.Println("  ✓ ReviewService")
+
+	c.ImageBookService = bookService.NewBookImageService(
+		c.ImageBookRepo,
+		c.MinIOStorage,
+		c.ImageProcessor,
+	)
+	log.Println("  ✓ ImageBookService")
+
+	c.InventoryService = inventoryService.NewService(
+		c.InventoryRepo,
+		c.AsynqClient,
+	)
+	log.Println("  ✓ InventoryService")
+
+	return nil
+}
+
+// ========================================
+// PHASE 2: DEPENDENT SERVICES
+// ========================================
+func (c *Container) initDependentServices() error {
+	// Services that depend on Phase 1 services
+
 	c.BookService = bookService.NewService(
-		c.BookRepo, c.Cache, c.ImageProcessor, c.MinIOStorage, c.ImageBookRepo, c.AsynqClient,
+		c.BookRepo,
+		c.Cache,
+		c.ImageProcessor,
+		c.MinIOStorage,
+		c.ImageBookRepo,
+		c.AsynqClient,
 	)
-	c.InventoryService = inventoryService.NewService(c.InventoryRepo, c.AsynqClient)
-	c.CartService = cartService.NewCartService(
-		c.CartRepo, c.InventoryService,
-		c.AddressService, c.InventoryRepo,
-		c.BookService, c.OrderRepo, c.AsynqClient,
+	log.Println("  ✓ BookService")
+
+	c.BulkImportService = bookService.NewBulkImportService(
+		c.BookRepo,
+		c.ImageBookRepo,
+		c.AuthorRepo,
+		c.CategoryRepo,
+		c.PublisherRepo,
+		c.ImageBookRepo,
+		c.DB.Pool,
+		c.MinIOStorage,
+		c.ImageProcessor,
+		c.AsynqClient,
 	)
-	c.PromotionService = promotionService.NewPromotionService(c.PromotionRepo, c.DB.Pool, c.CartService)
-	c.OrderSerivce = orderService.NewOrderService(
-		c.OrderRepo, c.WarehouseService,
+	log.Println("  ✓ BulkImportService")
+
+	// OrderService - Initialize WITHOUT CartService (will be wired later)
+	c.OrderService = orderService.NewOrderService(
+		c.OrderRepo,
+		c.WarehouseService,
 		c.InventoryRepo,
 		c.AddressRepo,
 		c.CartRepo,
@@ -327,20 +435,104 @@ func (c *Container) initServices() error {
 		c.InventoryService,
 		c.AsynqClient,
 	)
-	c.PaymentService = paymentService.NewPaymentService(
-		c.PaymentRepo, c.WebHookRepo, c.RefundRepo, c.TxManager,
-		c.VNPayGateway, c.MomoGateway, c.OrderSerivce,
-	)
-	c.RefundService = paymentService.NewRefundService(
-		c.PaymentRepo, c.RefundRepo, c.OrderRepo,
-		c.VNPayGateway, c.MomoGateway, c.OrderSerivce,
-	)
-	c.ReviewService = reviewService.NewReviewService(c.ReviewRepo)
-	c.ImageBookService = bookService.NewBookImageService(c.ImageBookRepo, c.MinIOStorage, c.ImageProcessor)
+	log.Println("  ✓ OrderService (without CartService)")
+
 	return nil
 }
 
-// initHandlers khởi tạo tất cả HTTP handlers
+// ========================================
+// PHASE 3: CROSS-DEPENDENT SERVICES
+// ========================================
+func (c *Container) initCrossDependentServices() error {
+	// Services with circular dependencies
+
+	// CartService needs OrderService (which is already created)
+	c.CartService = cartService.NewCartService(
+		c.CartRepo,
+		c.InventoryService,
+		c.AddressService,
+		c.InventoryRepo,
+		c.BookService,
+		c.OrderService, // ✅ OrderService already exists
+		c.AsynqClient,
+	)
+	log.Println("  ✓ CartService")
+
+	// PromotionService needs CartService
+	c.PromotionService = promotionService.NewPromotionService(
+		c.PromotionRepo,
+		c.DB.Pool,
+		c.CartService, // ✅ CartService now exists
+	)
+	log.Println("  ✓ PromotionService")
+
+	// PaymentService needs OrderService
+	c.PaymentService = paymentService.NewPaymentService(
+		c.PaymentRepo,
+		c.WebHookRepo,
+		c.RefundRepo,
+		c.TxManager,
+		c.VNPayGateway,
+		c.MomoGateway,
+		c.OrderService, // ✅ OrderService exists
+	)
+	log.Println("  ✓ PaymentService")
+
+	// RefundService needs OrderService
+	c.RefundService = paymentService.NewRefundService(
+		c.PaymentRepo,
+		c.RefundRepo,
+		c.OrderRepo,
+		c.VNPayGateway,
+		c.MomoGateway,
+		c.OrderService, // ✅ OrderService exists
+	)
+	log.Println("  ✓ RefundService")
+
+	return nil
+}
+
+// ========================================
+// PHASE 4: VALIDATION
+// ========================================
+func (c *Container) validateServices() error {
+	services := map[string]interface{}{
+		"UserService":       c.UserService,
+		"CategoryService":   c.CategoryService,
+		"AuthorService":     c.AuthorService,
+		"PublisherService":  c.PublisherService,
+		"AddressService":    c.AddressService,
+		"BookService":       c.BookService,
+		"InventoryService":  c.InventoryService,
+		"CartService":       c.CartService,
+		"PromotionService":  c.PromotionService,
+		"OrderService":      c.OrderService,
+		"PaymentService":    c.PaymentService,
+		"RefundService":     c.RefundService,
+		"ReviewService":     c.ReviewService,
+		"ImageBookService":  c.ImageBookService,
+		"BulkImportService": c.BulkImportService,
+		"WarehouseService":  c.WarehouseService,
+	}
+
+	var nilServices []string
+	for name, svc := range services {
+		if svc == nil {
+			nilServices = append(nilServices, name)
+		}
+	}
+
+	if len(nilServices) > 0 {
+		return fmt.Errorf("the following services are nil: %v", nilServices)
+	}
+
+	log.Println("  ✓ All services validated (none are nil)")
+	return nil
+}
+
+// ========================================
+// STEP 5: HANDLERS
+// ========================================
 func (c *Container) initHandlers() error {
 	c.UserHandler = userHandler.NewUserHandler(c.UserService, c.CartService, c.JWTManager)
 	c.CategoryHandler = categoryHandler.NewCategoryHandler(c.CategoryService)
@@ -355,34 +547,38 @@ func (c *Container) initHandlers() error {
 	c.BulkImportHandler = bookHandler.NewBulkImportHandler(c.BulkImportService)
 	c.AdminProHandler = promotionHandler.NewAdminHandler(c.PromotionService)
 	c.PublicProHandler = promotionHandler.NewPublicHandler(c.PromotionService, c.CartService)
+	c.OrderHandler = orderHandler.NewOrderHandler(c.OrderService)
 	c.PaymentHandler = paymentHandler.NewPaymentHandler(c.PaymentService, c.RefundService)
+
+	log.Println("✅ All handlers initialized")
 	return nil
 }
 
-// Cleanup dọn dẹp resources khi shutdown
-// Gọi trong graceful shutdown của server
+// ========================================
+// CLEANUP
+// ========================================
 func (c *Container) Cleanup() {
 	log.Println("🧹 Cleaning up container resources...")
 
-	// Close database connections
 	if c.DB != nil && c.DB.Pool != nil {
 		c.DB.Pool.Close()
-		log.Println("✅ Database connections closed")
+		log.Println("  ✓ Database connections closed")
 	}
+
 	if c.AsynqClient != nil {
 		if err := c.AsynqClient.Close(); err != nil {
-			log.Printf("⚠️  AsynqClient close failed: %v", err)
+			log.Printf("  ⚠️  AsynqClient close failed: %v", err)
 		} else {
-			log.Println("✅ Asynq client closed")
+			log.Println("  ✓ Asynq client closed")
 		}
 	}
-	// Close Redis connections
+
 	if c.Cache != nil {
 		if rc, ok := c.Cache.(*infraCache.RedisCache); ok {
 			if err := rc.Close(); err != nil {
-				log.Printf("⚠️  Failed to close Redis: %v", err)
+				log.Printf("  ⚠️  Failed to close Redis: %v", err)
 			} else {
-				log.Println("✅ Redis connections closed")
+				log.Println("  ✓ Redis connections closed")
 			}
 		}
 	}

@@ -5,6 +5,7 @@ import (
 	"crypto/sha512"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"net/url"
 	"sort"
 	"strings"
@@ -75,34 +76,56 @@ func VerifySignature(params map[string]string, secretKey string) bool {
 	// Compare (case-insensitive for safety)
 	return strings.EqualFold(receivedSignature, expectedSignature)
 }
-
-// BuildPaymentURL builds complete payment URL with signature
-func BuildPaymentURL(baseURL string, params map[string]string, secretKey string) string {
-	// Generate signature
-	signature := GenerateSignature(params, secretKey)
-	params["vnp_SecureHash"] = signature
-
-	// Sort keys for consistent URL
+func BuildPaymentURL(baseURL string, params map[string]string, hashSecret string) string {
+	// Sort keys
 	keys := make([]string, 0, len(params))
-	for key := range params {
-		keys = append(keys, key)
+	for k := range params {
+		if k != "vnp_SecureHash" && k != "vnp_SecureHashType" {
+			keys = append(keys, k)
+		}
 	}
 	sort.Strings(keys)
 
-	// Build query string with URL encoding
-	var queryParts []string
-	for _, key := range keys {
-		value := params[key]
-		if value != "" {
-			// URL encode both key and value
-			encodedKey := url.QueryEscape(key)
-			encodedValue := url.QueryEscape(value)
-			queryParts = append(queryParts, fmt.Sprintf("%s=%s", encodedKey, encodedValue))
+	// Build raw query
+	var parts []string
+	for _, k := range keys {
+		v := params[k]
+		if v != "" {
+			parts = append(parts, fmt.Sprintf("%s=%s", k, v))
 		}
 	}
+	rawQuery := strings.Join(parts, "&")
 
-	queryString := strings.Join(queryParts, "&")
-	return fmt.Sprintf("%s?%s", baseURL, queryString)
+	// ✅ LOG ĐỂ DEBUG
+	log.Println("=== VNPay Hash Debug ===")
+	log.Printf("Params count: %d", len(params))
+	log.Printf("Keys sorted: %v", keys)
+	log.Printf("Raw Query: %s", rawQuery)
+	log.Printf("Secret: %s", hashSecret)
+
+	// Create hash
+	h := hmac.New(sha512.New, []byte(hashSecret))
+	h.Write([]byte(rawQuery))
+	secureHash := strings.ToUpper(hex.EncodeToString(h.Sum(nil)))
+
+	log.Printf("Generated Hash: %s", secureHash)
+	log.Println("========================")
+
+	// Build final URL
+	if !strings.HasSuffix(baseURL, "/vpcpay.html") {
+		baseURL += "/vpcpay.html"
+	}
+
+	finalURL := fmt.Sprintf("%s?%s&vnp_SecureHash=%s", baseURL, rawQuery, secureHash)
+	log.Printf("Final URL: %s", finalURL)
+
+	return finalURL
+}
+
+func createSecureHash(data, secret string) string {
+	h := hmac.New(sha512.New, []byte(secret))
+	h.Write([]byte(data))
+	return strings.ToUpper(hex.EncodeToString(h.Sum(nil)))
 }
 
 // ParseWebhookParams parses and validates webhook parameters

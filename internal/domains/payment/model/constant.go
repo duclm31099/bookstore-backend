@@ -95,6 +95,7 @@ const (
 	ErrCodeUnauthorized   = "PAY021"
 	ErrCodeOrderCancelled = "PAY022"
 	ErrCodeRefundFailed   = "PAY023"
+	ErrCodeInternalError  = "PAY024" // Internal system error
 )
 
 // =====================================================

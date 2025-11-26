@@ -15,618 +15,412 @@ import (
 func SetupRouter(c *container.Container) *gin.Engine {
 	router := gin.New()
 
-	// ... middlewares giữ nguyên ...
+	// Global middlewares
 	router.Use(
 		middleware.Recovery(),
 		middleware.RequestID(),
 		middleware.Logger(),
 		middleware.CORS(),
+		middleware.ClientIPMiddleware(),
 	)
+
 	// Cart middleware configuration
 	cartMiddlewareConfig := middleware.DefaultCartMiddlewareConfig(c.CartService)
-
-	// For development: disable Secure flag
 	if os.Getenv("ENV") == "development" {
 		cartMiddlewareConfig.CookieSecure = false
 	}
-	// ========================================
-	// API V1 ROUTES
-	// ========================================
+
 	v1 := router.Group("/api/v1")
 	{
 		// Health check
 		v1.GET("/health", healthCheckHandler(c))
 		v1.GET("/db-test", databaseTestHandler(c))
 
-		// ========================================
-		// AUTH ROUTES (PUBLIC)
-		// ========================================
-		auth := v1.Group("/auth")
-		auth.Use()
-		{
-			// FR-AUTH-001: User Registration
-			auth.POST("/register", c.UserHandler.Register)
-			auth.POST("/refresh", c.UserHandler.RefreshToken)
-
-			// FR-AUTH-002: User Login
-			auth.POST("/login", c.UserHandler.Login)
-
-			// FR-AUTH-001: Email Verification
-			auth.GET("/verify-email", c.UserHandler.VerifyEmail)
-			auth.POST("/resend-verification", c.UserHandler.ResendVerification)
-
-			// FR-AUTH-003: Password Reset
-			auth.POST("/forgot-password", c.UserHandler.ForgotPassword)
-			auth.POST("/reset-password", c.UserHandler.ResetPassword)
-		}
-
-		// ========================================
-		// USER ROUTES (PROTECTED)
-		// ========================================
-		users := v1.Group("/users")
-		// TODO: Add Auth middleware
-		users.Use(
-			middleware.AuthMiddleware(c.Config.JWT.Secret),
-			middleware.IPExtractorMiddleware(),
-		)
-		{
-			// Profile endpoints
-			users.GET("/me", c.UserHandler.GetProfile)
-			users.PUT("/me", c.UserHandler.UpdateProfile)
-			users.PUT("/change-password", c.UserHandler.ChangePassword)
-		}
-
-		// ========================================
-		// ADMIN ROUTES (PROTECTED + ADMIN ROLE)
-		// ========================================
-		admin := v1.Group("/admin")
-		// TODO: Add Auth + Role middleware
-		// admin.Use(middleware.Auth())
-		// admin.Use(middleware.RequireRole("admin"))
-		{
-			// FR-ADM-003: User Management
-			admin.GET("/users", c.UserHandler.ListUsers)
-			admin.PUT("/users/:id/role", c.UserHandler.UpdateUserRole)
-			admin.PUT("/users/:id/status", c.UserHandler.UpdateUserStatus)
-		}
-
-		// // --------------------------------------- CATEGORIES --------------------------------------
-		category := v1.Group("/categories")
-		{
-			category.POST("", c.CategoryHandler.Create)
-			// Read
-			category.GET("", c.CategoryHandler.GetAll)                       // List
-			category.GET("/tree", c.CategoryHandler.GetTree)                 // Tree
-			category.GET("/:id", c.CategoryHandler.GetByID)                  // Get by ID
-			category.GET("/:id/breadcrumb", c.CategoryHandler.GetBreadcrumb) // Breadcrumb
-			category.GET("/by-slug/:slug", c.CategoryHandler.GetBySlug)      // Get by slug
-
-			// Update
-			category.PUT("/:id", c.CategoryHandler.Update)                 // Update
-			category.PATCH("/:id/parent", c.CategoryHandler.MoveToParent)  // Move to parent
-			category.POST("/:id/activate", c.CategoryHandler.Activate)     // Activate
-			category.POST("/:id/deactivate", c.CategoryHandler.Deactivate) // Deactivate
-
-			// Delete
-			category.DELETE("/:id", c.CategoryHandler.Delete)      // Delete single
-			category.DELETE("/bulk", c.CategoryHandler.BulkDelete) // Bulk delete
-
-			// Bulk operations
-			category.POST("/bulk/activate", c.CategoryHandler.BulkActivate)     // Bulk activate
-			category.POST("/bulk/deactivate", c.CategoryHandler.BulkDeactivate) // Bulk deactivate
-
-			// Book-related
-			category.GET("/:id/books", c.CategoryHandler.GetBooksInCategory)        // Get books
-			category.GET("/:id/book-count", c.CategoryHandler.GetCategoryBookCount) // Book count
-		}
-
-		// --------------------------------------- AUTHORS --------------------------------------
-		author := v1.Group("/authors")
-		{
-			// Create
-			author.POST("", c.AuthorHandler.Create)
-			// Read single
-			author.GET("/:id", c.AuthorHandler.GetByID)
-			author.GET("/slug/:slug", c.AuthorHandler.GetBySlug)
-			// Read multiple
-			author.GET("", c.AuthorHandler.GetAll)
-			author.GET("/search", c.AuthorHandler.Search)
-			// Update
-			author.PUT("/:id", c.AuthorHandler.Update)
-			// Delete
-			author.DELETE("/:id", c.AuthorHandler.Delete)
-			author.DELETE("/bulk", c.AuthorHandler.BulkDelete)
-			// Books
-			author.GET("/:id/books", c.AuthorHandler.GetWithBookCount)
-		}
-
-		//  --------------------------------------- PUBLISHER ------------------------
-		publisherGroup := v1.Group("/publishers")
-		{
-			// Create publisher
-			publisherGroup.POST("", c.PublisherHandler.CreatePublisher)
-
-			// Get all publishers with pagination
-			publisherGroup.GET("", c.PublisherHandler.ListPublishers)
-
-			// Get publisher with books (needs to come BEFORE /:id)
-			publisherGroup.GET("/books", c.PublisherHandler.ListPublishersWithBooks)
-
-			// Get publisher by slug
-			publisherGroup.GET("/slug/:slug", c.PublisherHandler.GetPublisherBySlug)
-
-			// Get publisher by ID
-			publisherGroup.GET("/:id", c.PublisherHandler.GetPublisher)
-
-			// Get publisher with books by ID
-			publisherGroup.GET("/:id/books", c.PublisherHandler.GetPublisherWithBooks)
-
-			// Update publisher
-			publisherGroup.PUT("/:id", c.PublisherHandler.UpdatePublisher)
-
-			// Delete publisher
-			publisherGroup.DELETE("/:id", c.PublisherHandler.DeletePublisher)
-		}
-
-		// ---------------------------------- ADDRESS ----------------------------------
-		addressGroup := v1.Group("/addresses")
-		addressGroup.Use(middleware.AuthMiddleware(c.Config.JWT.Secret)) // User must be authenticated
-		{
-			// Create address
-			addressGroup.POST("", c.AddressHandler.CreateAddress)
-
-			// Get all user addresses
-			addressGroup.GET("", c.AddressHandler.ListUserAddresses)
-
-			// Get default address
-			addressGroup.GET("/default", c.AddressHandler.GetDefaultAddress)
-
-			// Get address by ID
-			addressGroup.GET("/:id", c.AddressHandler.GetAddressById)
-
-			// Update address
-			addressGroup.PUT("/:id", c.AddressHandler.UpdateAddress)
-
-			// Set address as default
-			addressGroup.PUT("/:id/set-default", c.AddressHandler.SetDefaultAddress)
-
-			// Unset default (remove default flag)
-			addressGroup.PUT("/:id/unset-default", c.AddressHandler.UnsetDefaultAddress)
-
-			// Delete address
-			addressGroup.DELETE("/:id", c.AddressHandler.DeleteAddress)
-		}
-
-		// ========== ADMIN ADDRESS ROUTES ==========
-		adminAddressGroup := v1.Group("/admin/addresses")
-		// adminAddressGroup.Use(middleware.AuthMiddleware(c.Config.JWT.Secret))
-		// adminAddressGroup.Use(middleware.AdminMiddleware()) // Only admin
-		{
-			// Get all addresses (paginated)
-			adminAddressGroup.GET("", c.AddressHandler.ListAllAddresses)
-
-			// Get address with user info
-			adminAddressGroup.GET("/:id", c.AddressHandler.GetAddressWithUser)
-		}
-
-		// ------------------------------ BOOK ROUTES ---------------------------------------
-		bookRouter := v1.Group("/books")
-		{
-			bookRouter.GET("", c.BookHandler.ListBooks)
-			bookRouter.GET("/:id", c.BookHandler.GetBookDetail)
-			bookRouter.PUT("/:id", c.BookHandler.UpdateBook)
-			bookRouter.DELETE("/:id", c.BookHandler.DeleteBook)
-			bookRouter.POST("", c.BookHandler.CreateBook)
-			bookRouter.GET("/search", c.BookHandler.SearchBooks)
-			// In admin routes
-			bookRouter.POST("/bulk-import", c.BulkImportHandler.ImportBooks)
-			bookRouter.GET("/export", c.BookHandler.ExportBooks)
-		}
-
-		// ----------------------------------- WAREHOUSE ----------------------------
-		warehouses := v1.Group("/warehouses")
-		{
-			warehouses.POST("", c.WarehouseHandler.CreateWarehouse)          // Tạo kho mới
-			warehouses.PUT(":id", c.WarehouseHandler.UpdateWarehouse)        // Cập nhật thông tin kho
-			warehouses.DELETE(":id", c.WarehouseHandler.SoftDeleteWarehouse) // Xóa (soft)
-			warehouses.GET(":id", c.WarehouseHandler.GetWarehouseByID)       // Lấy chi tiết kho (by id)
-			warehouses.GET("", c.WarehouseHandler.ListWarehouses)            // List warehouse (filter, paging)
-
-			warehouses.GET(":id", c.WarehouseHandler.GetWarehouseByID)                              // Xem chi tiết kho
-			warehouses.GET("/code/:code", c.WarehouseHandler.GetWarehouseByCode)                    // Lấy kho theo code
-			warehouses.GET("", c.WarehouseHandler.ListActiveWarehouses)                             // List các kho đang hoạt động (không phân trang)
-			warehouses.GET("/nearest-with-stock", c.WarehouseHandler.FindNearestWarehouseWithStock) // Tìm kho gần nhất còn stock cho book
-			warehouses.GET("/validate-stock", c.WarehouseHandler.ValidateWarehouseHasStock)         // Validate kho còn hàng theo đầu sách (optional)
-
-		}
-		// ---------------------------------- INVENTORY ROUTES ------------------------------------
-
-		inventoryRouter := v1.Group("/inventories")
-		{
-			// ========================================
-			// INVENTORY CRUD
-			// ========================================
-
-			// Create inventory for warehouse(s)
-			inventoryRouter.POST("", c.InventoryHandler.CreateInventory)
-
-			// Get inventory by composite key (warehouse_id + book_id)
-			inventoryRouter.GET("/:warehouse_id/:book_id", c.InventoryHandler.GetInventoryByWarehouseAndBook)
-
-			// List inventories with filters
-			inventoryRouter.GET("", c.InventoryHandler.ListInventories)
-
-			// Update inventory (composite key)
-			inventoryRouter.PATCH("/:warehouse_id/:book_id", c.InventoryHandler.UpdateInventory)
-
-			// Delete inventory (composite key)
-			inventoryRouter.DELETE("/:warehouse_id/:book_id", c.InventoryHandler.DeleteInventory)
-
-			// ========================================
-			// STOCK OPERATIONS (FR-INV-003)
-			// ========================================
-
-			// Reserve stock for checkout (15min timeout)
-			inventoryRouter.POST("/reserve", c.InventoryHandler.ReserveStock)
-
-			// Release reserved stock (cancel/timeout)
-			inventoryRouter.POST("/release", c.InventoryHandler.ReleaseStock)
-
-			// Complete sale after payment success
-			inventoryRouter.POST("/complete-sale", c.InventoryHandler.CompleteSale)
-
-			// ========================================
-			// WAREHOUSE SELECTION (FR-INV-002)
-			// ========================================
-
-			// Find nearest warehouse with stock
-			inventoryRouter.POST("/find-warehouse", c.InventoryHandler.FindOptimalWarehouse)
-
-			// Check availability for order items
-			inventoryRouter.POST("/check-availability", c.InventoryHandler.CheckAvailability)
-
-			// Get total stock summary for book (all warehouses)
-			inventoryRouter.GET("/summary/:book_id", c.InventoryHandler.GetStockSummary)
-
-			// ========================================
-			// STOCK ADJUSTMENT (FR-INV-005)
-			// ========================================
-
-			// Manual stock adjustment (admin only)
-			inventoryRouter.POST("/adjust", c.InventoryHandler.AdjustStock)
-
-			// Restock from supplier
-			inventoryRouter.POST("/restock", c.InventoryHandler.RestockInventory)
-
-			// Bulk update from CSV (FR-INV-006)
-			inventoryRouter.POST("/bulk-update", c.InventoryHandler.BulkUpdateStock)
-			inventoryRouter.GET("/bulk-update/:job_id", c.InventoryHandler.GetBulkUpdateStatus)
-
-			// ========================================
-			// AUDIT TRAIL (FR-INV-005)
-			// ========================================
-
-			// Get audit log with filters
-			inventoryRouter.GET("/audit", c.InventoryHandler.GetAuditTrail)
-
-			// Get inventory history for specific warehouse+book
-			inventoryRouter.GET("/:warehouse_id/:book_id/history", c.InventoryHandler.GetInventoryHistory)
-
-			// Export audit log to CSV/Excel
-			inventoryRouter.POST("/audit/export", c.InventoryHandler.ExportAuditLog)
-
-			// ========================================
-			// ALERTS (FR-INV-004)
-			// ========================================
-
-			// Get low stock alerts (unresolved)
-			inventoryRouter.GET("/alerts/low-stock", c.InventoryHandler.GetLowStockAlerts)
-
-			// Get out of stock items
-			inventoryRouter.GET("/alerts/out-of-stock", c.InventoryHandler.GetOutOfStockItems)
-
-			// Mark alert as resolved (admin)
-			inventoryRouter.PATCH("/alerts/:alert_id/resolve", c.InventoryHandler.MarkAlertResolved)
-
-			// ========================================
-			// DASHBOARD & ANALYTICS
-			// ========================================
-
-			// Comprehensive dashboard
-			inventoryRouter.GET("/dashboard", c.InventoryHandler.GetDashboardSummary)
-
-			// Movement trends (last N days)
-			// inventoryRouter.GET("/trends", c.InventoryHandler.GetMovementTrends)
-
-			// Reservation analytics
-			inventoryRouter.GET("/analysis/reservations", c.InventoryHandler.GetReservationAnalysis)
-
-			// Inventory value (financial reporting)
-			// inventoryRouter.GET("/value", c.InventoryHandler.GetInventoryValue)
-		}
-
-		// ========================================
-		// WAREHOUSE MANAGEMENT (Separate Group)
-		// ========================================
-
-		warehouseRouter := v1.Group("/warehouses")
-		{
-			// Create warehouse (admin only)
-			warehouseRouter.POST("", c.InventoryHandler.CreateWarehouse)
-
-			// List warehouses with filters
-			warehouseRouter.GET("", c.InventoryHandler.ListWarehouses)
-
-			// Get warehouse by ID
-			warehouseRouter.GET("/:id", c.InventoryHandler.GetWarehouseByID)
-
-			// Update warehouse (admin only)
-			warehouseRouter.PATCH("/:id", c.InventoryHandler.UpdateWarehouse)
-
-			// Deactivate warehouse (admin only)
-			warehouseRouter.DELETE("/:id", c.InventoryHandler.DeactivateWarehouse)
-
-			// Get warehouse performance metrics
-			warehouseRouter.GET("/:id/performance", c.InventoryHandler.GetWarehousePerformance)
-		}
-
-		// ===================== CART =========================
-		cartRoutes := v1.Group("/cart")
-		// 🔑 KEY: Use OptionalAuthMiddleware instead of AuthMiddleware
-		// This allows both authenticated and anonymous users
-		cartRoutes.Use(middleware.OptionalAuthMiddleware(c.Config.JWT.Secret))
-
-		// 🛒 Then apply CartMiddleware
-		// CartMiddleware handles user_id (from OptionalAuth) + session_id
-		cartRoutes.Use(middleware.CartMiddleware(cartMiddlewareConfig))
-		{
-			// Step 1 APIs
-			cartRoutes.GET("", c.CartHandler.GetCart)
-			cartRoutes.POST("/items", c.CartHandler.AddItem)
-			cartRoutes.GET("/items", c.CartHandler.ListItems)
-
-			cartRoutes.PUT("/items/:item_id", c.CartHandler.UpdateItemQuantity) // Update qty
-			cartRoutes.DELETE("/items/:item_id", c.CartHandler.RemoveItem)      // Remove item
-			cartRoutes.DELETE("", c.CartHandler.ClearCart)
-
-			cartRoutes.POST("/validate", c.CartHandler.ValidateCart)
-			cartRoutes.POST("/apply-promotion", c.CartHandler.ApplyPromoCode)
-			cartRoutes.DELETE("/remove-promotion", c.CartHandler.RemovePromoCode)
-			cartRoutes.POST("/checkout", c.CartHandler.Checkout)
-		}
-
-		//  ======================== PROMOTION ========================================
-		promotion := v1.Group("/promotion")
-
-		// Public endpoints
-		promotion.POST("/validate", c.PublicProHandler.ValidatePromotion) // POST /v1/promotions/validate
-		promotion.GET("", c.PublicProHandler.ListActivePromotions)        // GET /v1/promotions
-
-		promotion.POST("/create", c.AdminProHandler.CreatePromotion)            // POST /v1/admin/promotions
-		promotion.GET("/list-promotion", c.AdminProHandler.ListPromotions)      // GET /v1/admin/promotions
-		promotion.GET("/:id", c.AdminProHandler.GetPromotionByID)               // GET /v1/admin/promotions/:id
-		promotion.PUT("/:id", c.AdminProHandler.UpdatePromotion)                // PUT /v1/admin/promotions/:id
-		promotion.PATCH("/:id/status", c.AdminProHandler.UpdatePromotionStatus) // PATCH /v1/admin/promotions/:id/status
-		promotion.DELETE("/:id", c.AdminProHandler.DeletePromotion)             // DELETE /v1/admin/promotions/:id
-		promotion.GET("/:id/usage", c.AdminProHandler.GetUsageHistory)          // GET /v1/admin/promotions/:id/usage
-		promotion.POST("/:id/export", c.AdminProHandler.ExportUsageReport)      // POST /v1/admin/promotions/:id/export
-
-		// ========================================
-		// 📦 ORDER ROUTES (USER - PROTECTED)
-		// ========================================
-		orderRoutes := v1.Group("/orders")
-		orderRoutes.Use(middleware.AuthMiddleware(c.Config.JWT.Secret))
-		{
-			// ========================================
-			// ORDER CREATION & MANAGEMENT
-			// ========================================
-
-			// Create order from cart
-			orderRoutes.POST("", c.OrderHandler.CreateOrder)
-
-			// Get order list for current user (with filters)
-			orderRoutes.GET("", c.OrderHandler.ListOrders)
-
-			// Get order detail by ID
-			orderRoutes.GET("/:id", c.OrderHandler.GetOrderDetail)
-
-			// Cancel order (user-initiated)
-			orderRoutes.POST("/:id/cancel", c.OrderHandler.CancelOrder)
-
-			// ========================================
-			// ORDER TRACKING
-			// ========================================
-
-			// Track order by order number
-			orderRoutes.GET("/track/:order_number", c.OrderHandler.GetOrderByNumber)
-
-			// Get order status history
-			// orderRoutes.GET("/:id/history", c.OrderHandler.GetOrderStatusHistory)
-
-		}
-
-		// ========================================
-		// 🛡️ ADMIN ORDER ROUTES (PROTECTED + ADMIN)
-		// ========================================
-		adminOrderRoutes := v1.Group("/admin/orders")
-		// TODO: Add admin middleware
-		// adminOrderRoutes.Use(middleware.AuthMiddleware(c.Config.JWT.Secret))
-		// adminOrderRoutes.Use(middleware.RequireRole("admin"))
-		{
-			// ========================================
-			// ORDER MANAGEMENT
-			// ========================================
-
-			// List all orders with filters & pagination
-			adminOrderRoutes.GET("", c.OrderHandler.ListAllOrders)
-
-			// Update order status
-			adminOrderRoutes.PATCH("/:id/status", c.OrderHandler.UpdateOrderStatus)
-
-			// ========================================
-			// SHIPPING MANAGEMENT
-			// ========================================
-
-			// // Assign order to warehouse
-			// adminOrderRoutes.PATCH("/:id/warehouse", c.OrderHandler.AssignWarehouse)
-
-			// // Update shipping information
-			// adminOrderRoutes.PATCH("/:id/shipping", c.OrderHandler.UpdateShippingInfo)
-
-			// // Mark as shipped
-			// adminOrderRoutes.POST("/:id/ship", c.OrderHandler.MarkAsShipped)
-
-			// // Mark as delivered
-			// adminOrderRoutes.POST("/:id/deliver", c.OrderHandler.MarkAsDelivered)
-
-			// // ========================================
-			// // ANALYTICS & REPORTING
-			// // ========================================
-
-			// // Get order statistics
-			// adminOrderRoutes.GET("/stats/summary", c.OrderHandler.GetOrderStatistics)
-
-			// // Get order analytics by date range
-			// adminOrderRoutes.GET("/stats/analytics", c.OrderHandler.GetOrderAnalytics)
-
-			// // Export orders to CSV/Excel
-			// adminOrderRoutes.POST("/export", c.OrderHandler.ExportOrders)
-		}
-
-		// ========================================
-		// 💳 PAYMENT ROUTES (USER - PROTECTED)
-		// ========================================
-		paymentRoutes := v1.Group("/payments")
-		paymentRoutes.Use(middleware.AuthMiddleware(c.Config.JWT.Secret))
-		{
-			// ========================================
-			// PAYMENT CREATION
-			// ========================================
-
-			// Create payment (initiate payment gateway)
-			paymentRoutes.POST("/create", c.PaymentHandler.CreatePayment)
-
-			// Get payment status (for polling)
-			paymentRoutes.GET("/:payment_id", c.PaymentHandler.GetPaymentStatus)
-
-			// List user's payment history
-			paymentRoutes.GET("", c.PaymentHandler.ListUserPayments)
-
-			// ========================================
-			// REFUND MANAGEMENT
-			// ========================================
-
-			// Request refund for a payment
-			paymentRoutes.POST("/:payment_id/refund-request", c.PaymentHandler.RequestRefund)
-
-			// Get refund request status
-			paymentRoutes.GET("/:payment_id/refund-request", c.PaymentHandler.GetRefundStatus)
-		}
-
-		// ========================================
-		// 🔔 WEBHOOK ROUTES (PUBLIC - NO AUTH)
-		// ========================================
-		webhookRoutes := v1.Group("/webhooks")
-		{
-			// VNPay IPN webhook
-			webhookRoutes.GET("/vnpay", c.PaymentHandler.VNPayWebhook)
-			webhookRoutes.POST("/vnpay", c.PaymentHandler.VNPayWebhook)
-
-			// Momo IPN webhook
-			webhookRoutes.POST("/momo", c.PaymentHandler.MomoWebhook)
-		}
-
-		// ========================================
-		// 🛡️ ADMIN PAYMENT ROUTES (PROTECTED + ADMIN)
-		// ========================================
-		adminPaymentRoutes := v1.Group("/admin/payments")
-		// TODO: Add admin middleware
-		// adminPaymentRoutes.Use(middleware.AuthMiddleware(c.Config.JWT.Secret))
-		// adminPaymentRoutes.Use(middleware.RequireRole("admin"))
-		{
-			// ========================================
-			// PAYMENT MANAGEMENT
-			// ========================================
-
-			// List all payments with filters
-			adminPaymentRoutes.GET("", c.PaymentHandler.AdminListPayments)
-
-			// Get payment detail (with full gateway info)
-			adminPaymentRoutes.GET("/:payment_id", c.PaymentHandler.AdminGetPaymentDetail)
-
-			// Manual reconciliation (fix failed webhook)
-			adminPaymentRoutes.POST("/:payment_id/reconcile", c.PaymentHandler.AdminReconcilePayment)
-
-			// ========================================
-			// REFUND MANAGEMENT
-			// ========================================
-
-			// List pending refund requests
-			adminPaymentRoutes.GET("/refunds/pending", c.PaymentHandler.AdminListPendingRefunds)
-
-			// Get refund request detail
-			adminPaymentRoutes.GET("/refunds/:refund_id", c.PaymentHandler.AdminGetRefundDetail)
-
-			// Approve refund request
-			adminPaymentRoutes.POST("/refunds/:refund_id/approve", c.PaymentHandler.AdminApproveRefund)
-
-			// Reject refund request
-			adminPaymentRoutes.POST("/refunds/:refund_id/reject", c.PaymentHandler.AdminRejectRefund)
-
-			//  ===================================== REVIEW ====================
-			reviewRoutes := v1.Group("/reviews")
-			{
-				// Public endpoints (no auth)
-				reviewRoutes.GET("", c.ReviewHandler.ListReviews)   // List reviews with filters
-				reviewRoutes.GET("/:id", c.ReviewHandler.GetReview) // Get review by ID
-			}
-
-			// User review endpoints (auth required)
-			userReviewRoutes := v1.Group("/reviews")
-			userReviewRoutes.Use(middleware.AuthMiddleware(c.Config.JWT.Secret))
-			{
-				userReviewRoutes.POST("", c.ReviewHandler.CreateReview)       // Create review
-				userReviewRoutes.PUT("/:id", c.ReviewHandler.UpdateReview)    // Update review
-				userReviewRoutes.DELETE("/:id", c.ReviewHandler.DeleteReview) // Delete review
-				userReviewRoutes.GET("/me", c.ReviewHandler.ListMyReviews)    // List my reviews
-			}
-
-			// Book-specific review endpoints (public)
-			userReviewRoutes.GET("/books/:book_id/reviews", c.ReviewHandler.GetBookReviews)
-
-			// ========================================
-			// ADMIN REVIEW ROUTES
-			// ========================================
-
-			adminReviewRoutes := v1.Group("/admin/reviews")
-			// TODO: Add admin middleware
-			// adminReviewRoutes.Use(middleware.AuthMiddleware(c.Config.JWT.Secret))
-			// adminReviewRoutes.Use(middleware.RequireRole("admin"))
-			{
-				// List & View
-				adminReviewRoutes.GET("", c.ReviewHandler.AdminListReviews)              // List all reviews
-				adminReviewRoutes.GET("/:id", c.ReviewHandler.AdminGetReview)            // Get review detail
-				adminReviewRoutes.GET("/statistics", c.ReviewHandler.AdminGetStatistics) // Dashboard stats
-
-				// Moderation
-				adminReviewRoutes.PATCH("/:id/moderate", c.ReviewHandler.AdminModerateReview) // Approve/Hide
-				adminReviewRoutes.PATCH("/:id/feature", c.ReviewHandler.AdminFeatureReview)   // Feature
-				adminReviewRoutes.DELETE("/:id", c.ReviewHandler.AdminDeleteReview)           // Delete
-			}
-		}
+		setupAuthRoutes(v1, c)
+		setupUserRoutes(v1, c)
+		setupAdminRoutes(v1, c)
+		setupCategoryRoutes(v1, c)
+		setupAuthorRoutes(v1, c)
+		setupPublisherRoutes(v1, c)
+		setupAddressRoutes(v1, c)
+		setupBookRoutes(v1, c)
+		setupWarehouseRoutes(v1, c)
+		setupInventoryRoutes(v1, c)
+		setupCartRoutes(v1, c, &cartMiddlewareConfig)
+		setupPromotionRoutes(v1, c)
+		setupOrderRoutes(v1, c)
+		setupPaymentRoutes(v1, c)
+		setupWebhookRoutes(v1, c)
+		setupAdminOrderRoutes(v1, c)
+		setupAdminPaymentRoutes(v1, c)
+		setupReviewRoutes(v1, c)
 	}
 
 	return router
 }
 
 // ========================================
+// AUTH ROUTES
+// ========================================
+func setupAuthRoutes(v1 *gin.RouterGroup, c *container.Container) {
+	auth := v1.Group("/auth")
+	{
+		auth.POST("/register", c.UserHandler.Register)
+		auth.POST("/login", c.UserHandler.Login)
+		auth.POST("/refresh", c.UserHandler.RefreshToken)
+		auth.GET("/verify-email", c.UserHandler.VerifyEmail)
+		auth.POST("/resend-verification", c.UserHandler.ResendVerification)
+		auth.POST("/forgot-password", c.UserHandler.ForgotPassword)
+		auth.POST("/reset-password", c.UserHandler.ResetPassword)
+	}
+}
+
+// ========================================
+// USER ROUTES
+// ========================================
+func setupUserRoutes(v1 *gin.RouterGroup, c *container.Container) {
+	users := v1.Group("/users")
+	users.Use(middleware.AuthMiddleware(c.Config.JWT.Secret))
+	{
+		users.GET("/me", c.UserHandler.GetProfile)
+		users.PUT("/me", c.UserHandler.UpdateProfile)
+		users.PUT("/change-password", c.UserHandler.ChangePassword)
+	}
+}
+
+// ========================================
+// ADMIN ROUTES
+// ========================================
+func setupAdminRoutes(v1 *gin.RouterGroup, c *container.Container) {
+	// TODO: Add Auth + Role middleware
+	admin := v1.Group("/admin")
+	{
+		admin.GET("/users", c.UserHandler.ListUsers)
+		admin.PUT("/users/:id/role", c.UserHandler.UpdateUserRole)
+		admin.PUT("/users/:id/status", c.UserHandler.UpdateUserStatus)
+	}
+}
+
+// ========================================
+// CATEGORY ROUTES
+// ========================================
+func setupCategoryRoutes(v1 *gin.RouterGroup, c *container.Container) {
+	category := v1.Group("/categories")
+	{
+		category.POST("", c.CategoryHandler.Create)
+		category.GET("", c.CategoryHandler.GetAll)
+		category.GET("/tree", c.CategoryHandler.GetTree)
+		category.GET("/:id", c.CategoryHandler.GetByID)
+		category.GET("/:id/breadcrumb", c.CategoryHandler.GetBreadcrumb)
+		category.GET("/by-slug/:slug", c.CategoryHandler.GetBySlug)
+		category.PUT("/:id", c.CategoryHandler.Update)
+		category.PATCH("/:id/parent", c.CategoryHandler.MoveToParent)
+		category.POST("/:id/activate", c.CategoryHandler.Activate)
+		category.POST("/:id/deactivate", c.CategoryHandler.Deactivate)
+		category.DELETE("/:id", c.CategoryHandler.Delete)
+		category.DELETE("/bulk", c.CategoryHandler.BulkDelete)
+		category.POST("/bulk/activate", c.CategoryHandler.BulkActivate)
+		category.POST("/bulk/deactivate", c.CategoryHandler.BulkDeactivate)
+		category.GET("/:id/books", c.CategoryHandler.GetBooksInCategory)
+		category.GET("/:id/book-count", c.CategoryHandler.GetCategoryBookCount)
+	}
+}
+
+// ========================================
+// AUTHOR ROUTES
+// ========================================
+func setupAuthorRoutes(v1 *gin.RouterGroup, c *container.Container) {
+	author := v1.Group("/authors")
+	{
+		author.POST("", c.AuthorHandler.Create)
+		author.GET("/:id", c.AuthorHandler.GetByID)
+		author.GET("/slug/:slug", c.AuthorHandler.GetBySlug)
+		author.GET("", c.AuthorHandler.GetAll)
+		author.GET("/search", c.AuthorHandler.Search)
+		author.PUT("/:id", c.AuthorHandler.Update)
+		author.DELETE("/:id", c.AuthorHandler.Delete)
+		author.DELETE("/bulk", c.AuthorHandler.BulkDelete)
+		author.GET("/:id/books", c.AuthorHandler.GetWithBookCount)
+	}
+}
+
+// ========================================
+// PUBLISHER ROUTES
+// ========================================
+func setupPublisherRoutes(v1 *gin.RouterGroup, c *container.Container) {
+	publisher := v1.Group("/publishers")
+	{
+		publisher.POST("", c.PublisherHandler.CreatePublisher)
+		publisher.GET("", c.PublisherHandler.ListPublishers)
+		publisher.GET("/books", c.PublisherHandler.ListPublishersWithBooks)
+		publisher.GET("/slug/:slug", c.PublisherHandler.GetPublisherBySlug)
+		publisher.GET("/:id", c.PublisherHandler.GetPublisher)
+		publisher.GET("/:id/books", c.PublisherHandler.GetPublisherWithBooks)
+		publisher.PUT("/:id", c.PublisherHandler.UpdatePublisher)
+		publisher.DELETE("/:id", c.PublisherHandler.DeletePublisher)
+	}
+}
+
+// ========================================
+// ADDRESS ROUTES
+// ========================================
+func setupAddressRoutes(v1 *gin.RouterGroup, c *container.Container) {
+	addresses := v1.Group("/addresses")
+	addresses.Use(middleware.AuthMiddleware(c.Config.JWT.Secret))
+	{
+		addresses.POST("", c.AddressHandler.CreateAddress)
+		addresses.GET("", c.AddressHandler.ListUserAddresses)
+		addresses.GET("/default", c.AddressHandler.GetDefaultAddress)
+		addresses.GET("/:id", c.AddressHandler.GetAddressById)
+		addresses.PUT("/:id", c.AddressHandler.UpdateAddress)
+		addresses.PUT("/:id/set-default", c.AddressHandler.SetDefaultAddress)
+		addresses.PUT("/:id/unset-default", c.AddressHandler.UnsetDefaultAddress)
+		addresses.DELETE("/:id", c.AddressHandler.DeleteAddress)
+	}
+
+	// Admin address routes
+	// TODO: Add admin middleware
+	adminAddresses := v1.Group("/admin/addresses")
+	{
+		adminAddresses.GET("", c.AddressHandler.ListAllAddresses)
+		adminAddresses.GET("/:id", c.AddressHandler.GetAddressWithUser)
+	}
+}
+
+// ========================================
+// BOOK ROUTES
+// ========================================
+func setupBookRoutes(v1 *gin.RouterGroup, c *container.Container) {
+	books := v1.Group("/books")
+	{
+		books.GET("", c.BookHandler.ListBooks)
+		books.GET("/search", c.BookHandler.SearchBooks)
+		books.GET("/:id", c.BookHandler.GetBookDetail)
+		books.POST("", c.BookHandler.CreateBook)
+		books.PUT("/:id", c.BookHandler.UpdateBook)
+		books.DELETE("/:id", c.BookHandler.DeleteBook)
+		books.POST("/bulk-import", c.BulkImportHandler.ImportBooks)
+		books.GET("/export", c.BookHandler.ExportBooks)
+	}
+}
+
+// ========================================
+// WAREHOUSE ROUTES
+// ========================================
+func setupWarehouseRoutes(v1 *gin.RouterGroup, c *container.Container) {
+	warehouses := v1.Group("/warehouses")
+	{
+		warehouses.POST("", c.WarehouseHandler.CreateWarehouse)
+		warehouses.GET("", c.WarehouseHandler.ListWarehouses)
+		warehouses.GET("/active", c.WarehouseHandler.ListActiveWarehouses)
+		warehouses.GET("/nearest-with-stock", c.WarehouseHandler.FindNearestWarehouseWithStock)
+		warehouses.GET("/validate-stock", c.WarehouseHandler.ValidateWarehouseHasStock)
+		warehouses.GET("/code/:code", c.WarehouseHandler.GetWarehouseByCode)
+		warehouses.GET("/:id", c.WarehouseHandler.GetWarehouseByID)
+		warehouses.GET("/:id/performance", c.InventoryHandler.GetWarehousePerformance)
+		warehouses.PUT("/:id", c.WarehouseHandler.UpdateWarehouse)
+		warehouses.DELETE("/:id", c.WarehouseHandler.SoftDeleteWarehouse)
+		warehouses.DELETE("/deactive", c.InventoryHandler.DeactivateWarehouse)
+	}
+}
+
+// ========================================
+// INVENTORY ROUTES
+// ========================================
+func setupInventoryRoutes(v1 *gin.RouterGroup, c *container.Container) {
+	inventory := v1.Group("/inventories")
+	{
+		// CRUD
+		inventory.POST("", c.InventoryHandler.CreateInventory)
+		inventory.GET("", c.InventoryHandler.ListInventories)
+		inventory.GET("/:warehouse_id/:book_id", c.InventoryHandler.GetInventoryByWarehouseAndBook)
+		inventory.PATCH("/:warehouse_id/:book_id", c.InventoryHandler.UpdateInventory)
+		inventory.DELETE("/:warehouse_id/:book_id", c.InventoryHandler.DeleteInventory)
+
+		// Stock operations
+		inventory.POST("/reserve", c.InventoryHandler.ReserveStock)
+		inventory.POST("/release", c.InventoryHandler.ReleaseStock)
+		inventory.POST("/complete-sale", c.InventoryHandler.CompleteSale)
+		inventory.POST("/find-warehouse", c.InventoryHandler.FindOptimalWarehouse)
+		inventory.POST("/check-availability", c.InventoryHandler.CheckAvailability)
+		inventory.GET("/summary/:book_id", c.InventoryHandler.GetStockSummary)
+
+		// Stock adjustment
+		inventory.POST("/adjust", c.InventoryHandler.AdjustStock)
+		inventory.POST("/restock", c.InventoryHandler.RestockInventory)
+		inventory.POST("/bulk-update", c.InventoryHandler.BulkUpdateStock)
+		inventory.GET("/bulk-update/:job_id", c.InventoryHandler.GetBulkUpdateStatus)
+
+		// Audit & alerts
+		inventory.GET("/audit", c.InventoryHandler.GetAuditTrail)
+		inventory.GET("/:warehouse_id/:book_id/history", c.InventoryHandler.GetInventoryHistory)
+		inventory.POST("/audit/export", c.InventoryHandler.ExportAuditLog)
+		inventory.GET("/alerts/low-stock", c.InventoryHandler.GetLowStockAlerts)
+		inventory.GET("/alerts/out-of-stock", c.InventoryHandler.GetOutOfStockItems)
+		inventory.PATCH("/alerts/:alert_id/resolve", c.InventoryHandler.MarkAlertResolved)
+
+		// Dashboard
+		inventory.GET("/dashboard", c.InventoryHandler.GetDashboardSummary)
+		inventory.GET("/analysis/reservations", c.InventoryHandler.GetReservationAnalysis)
+	}
+}
+
+// ========================================
+// CART ROUTES
+// ========================================
+func setupCartRoutes(v1 *gin.RouterGroup, c *container.Container, config *middleware.CartMiddlewareConfig) {
+	cart := v1.Group("/cart")
+	cart.Use(
+		middleware.AuthMiddleware(c.Config.JWT.Secret),
+		middleware.CartMiddleware(*config),
+	)
+	{
+		cart.GET("", c.CartHandler.GetCart)
+		cart.POST("/items", c.CartHandler.AddItem)
+		cart.GET("/items", c.CartHandler.ListItems)
+		cart.PUT("/items/:item_id", c.CartHandler.UpdateItemQuantity)
+		cart.DELETE("/items/:item_id", c.CartHandler.RemoveItem)
+		cart.DELETE("", c.CartHandler.ClearCart)
+		cart.POST("/validate", c.CartHandler.ValidateCart)
+		cart.POST("/apply-promotion", c.CartHandler.ApplyPromoCode)
+		cart.DELETE("/remove-promotion", c.CartHandler.RemovePromoCode)
+		cart.POST("/checkout", c.CartHandler.Checkout)
+	}
+}
+
+// ========================================
+// PROMOTION ROUTES
+// ========================================
+func setupPromotionRoutes(v1 *gin.RouterGroup, c *container.Container) {
+	promotion := v1.Group("/promotion")
+	{
+		// Public routes
+		promotion.POST("/validate", c.PublicProHandler.ValidatePromotion)
+		promotion.GET("", c.PublicProHandler.ListActivePromotions)
+
+		// Admin routes (TODO: add auth middleware)
+		promotion.POST("/create", c.AdminProHandler.CreatePromotion)
+		promotion.GET("/list-promotion", c.AdminProHandler.ListPromotions)
+		promotion.GET("/:id", c.AdminProHandler.GetPromotionByID)
+		promotion.PUT("/:id", c.AdminProHandler.UpdatePromotion)
+		promotion.PATCH("/:id/status", c.AdminProHandler.UpdatePromotionStatus)
+		promotion.DELETE("/:id", c.AdminProHandler.DeletePromotion)
+		promotion.GET("/:id/usage", c.AdminProHandler.GetUsageHistory)
+		promotion.POST("/:id/export", c.AdminProHandler.ExportUsageReport)
+	}
+}
+
+// ========================================
+// ORDER ROUTES
+// ========================================
+func setupOrderRoutes(v1 *gin.RouterGroup, c *container.Container) {
+	orders := v1.Group("/orders")
+	orders.Use(middleware.AuthMiddleware(c.Config.JWT.Secret))
+	{
+		orders.POST("", c.OrderHandler.CreateOrder)
+		orders.GET("", c.OrderHandler.ListOrders)
+		orders.GET("/:id", c.OrderHandler.GetOrderDetail)
+		orders.POST("/:id/cancel", c.OrderHandler.CancelOrder)
+		orders.GET("/track/:order_number", c.OrderHandler.GetOrderByNumber)
+	}
+}
+
+// ========================================
+// PAYMENT ROUTES
+// ========================================
+func setupPaymentRoutes(v1 *gin.RouterGroup, c *container.Container) {
+	payments := v1.Group("/payments")
+	payments.Use(middleware.AuthMiddleware(c.Config.JWT.Secret))
+	{
+		payments.POST("/create", c.PaymentHandler.CreatePayment)
+		payments.GET("/:payment_id", c.PaymentHandler.GetPaymentStatus)
+		payments.GET("", c.PaymentHandler.ListUserPayments)
+		payments.POST("/:payment_id/refund-request", c.PaymentHandler.RequestRefund)
+		payments.GET("/:payment_id/refund-request", c.PaymentHandler.GetRefundStatus)
+	}
+}
+
+// ========================================
+// WEBHOOK ROUTES
+// ========================================
+func setupWebhookRoutes(v1 *gin.RouterGroup, c *container.Container) {
+	webhooks := v1.Group("/webhooks")
+	{
+		webhooks.GET("/vnpay", c.PaymentHandler.VNPayWebhook)
+		webhooks.POST("/vnpay", c.PaymentHandler.VNPayWebhook)
+		webhooks.POST("/momo", c.PaymentHandler.MomoWebhook)
+	}
+}
+
+// ========================================
+// ADMIN ORDER ROUTES
+// ========================================
+func setupAdminOrderRoutes(v1 *gin.RouterGroup, c *container.Container) {
+	// TODO: Add admin middleware
+	adminOrders := v1.Group("/admin/orders")
+	{
+		adminOrders.GET("", c.OrderHandler.ListAllOrders)
+		adminOrders.PATCH("/:id/status", c.OrderHandler.UpdateOrderStatus)
+	}
+}
+
+// ========================================
+// ADMIN PAYMENT ROUTES
+// ========================================
+func setupAdminPaymentRoutes(v1 *gin.RouterGroup, c *container.Container) {
+	// TODO: Add admin middleware
+	adminPayments := v1.Group("/admin/payments")
+	{
+		adminPayments.GET("", c.PaymentHandler.AdminListPayments)
+		adminPayments.GET("/:payment_id", c.PaymentHandler.AdminGetPaymentDetail)
+		adminPayments.POST("/:payment_id/reconcile", c.PaymentHandler.AdminReconcilePayment)
+		adminPayments.GET("/refunds/pending", c.PaymentHandler.AdminListPendingRefunds)
+		adminPayments.GET("/refunds/:refund_id", c.PaymentHandler.AdminGetRefundDetail)
+		adminPayments.POST("/refunds/:refund_id/approve", c.PaymentHandler.AdminApproveRefund)
+		adminPayments.POST("/refunds/:refund_id/reject", c.PaymentHandler.AdminRejectRefund)
+	}
+}
+
+// ========================================
+// REVIEW ROUTES
+// ========================================
+func setupReviewRoutes(v1 *gin.RouterGroup, c *container.Container) {
+	// Public review routes
+	reviews := v1.Group("/reviews")
+	{
+		reviews.GET("", c.ReviewHandler.ListReviews)
+		reviews.GET("/:id", c.ReviewHandler.GetReview)
+	}
+
+	// User review routes
+	userReviews := v1.Group("/reviews")
+	userReviews.Use(middleware.AuthMiddleware(c.Config.JWT.Secret))
+	{
+		userReviews.POST("", c.ReviewHandler.CreateReview)
+		userReviews.PUT("/:id", c.ReviewHandler.UpdateReview)
+		userReviews.DELETE("/:id", c.ReviewHandler.DeleteReview)
+		userReviews.GET("/me", c.ReviewHandler.ListMyReviews)
+		userReviews.GET("/books/:book_id/reviews", c.ReviewHandler.GetBookReviews)
+	}
+
+	// Admin review routes
+	// TODO: Add admin middleware
+	adminReviews := v1.Group("/admin/reviews")
+	{
+		adminReviews.GET("", c.ReviewHandler.AdminListReviews)
+		adminReviews.GET("/:id", c.ReviewHandler.AdminGetReview)
+		adminReviews.GET("/statistics", c.ReviewHandler.AdminGetStatistics)
+		adminReviews.PATCH("/:id/moderate", c.ReviewHandler.AdminModerateReview)
+		adminReviews.PATCH("/:id/feature", c.ReviewHandler.AdminFeatureReview)
+		adminReviews.DELETE("/:id", c.ReviewHandler.AdminDeleteReview)
+	}
+}
+
+// ========================================
 // HEALTH CHECK HANDLER
 // ========================================
-// healthCheckHandler trả về handler function với closure over appCtx
-// Pattern này cho phép inject dependencies vào handler
 func healthCheckHandler(appCtx *container.Container) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Response structure
 		health := gin.H{
 			"status":    "ok",
 			"timestamp": time.Now().Format(time.RFC3339),
@@ -634,15 +428,12 @@ func healthCheckHandler(appCtx *container.Container) gin.HandlerFunc {
 			"services":  gin.H{},
 		}
 
-		// ========================================
-		// CHECK DATABASE
-		// ========================================
+		// Check database
 		dbStatus := "ok"
 		if appCtx.DB == nil || appCtx.DB.Pool == nil {
 			dbStatus = "disconnected"
 			health["status"] = "degraded"
 		} else {
-			// Tạo context với timeout 2s cho health check
 			ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 			defer cancel()
 
@@ -652,36 +443,24 @@ func healthCheckHandler(appCtx *container.Container) gin.HandlerFunc {
 			}
 		}
 
-		// ========================================
-		// CHECK REDIS
-		// ========================================
+		// Check redis
 		redisStatus := "ok"
 		if appCtx.Cache == nil {
 			redisStatus = "disconnected"
-			// Redis failure không làm service unhealthy (non-critical)
 		} else {
 			ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 			defer cancel()
 
-			// Ping qua cache interface
 			if err := appCtx.Cache.Ping(ctx); err != nil {
 				redisStatus = fmt.Sprintf("error: %v", err)
-				// Redis failure không làm status = "degraded"
-				// Vì cache là optional, service vẫn hoạt động được
 			}
 		}
 
-		// Aggregate service statuses
 		health["services"] = gin.H{
 			"database": dbStatus,
 			"redis":    redisStatus,
 		}
 
-		// ========================================
-		// RETURN RESPONSE
-		// ========================================
-		// 503 Service Unavailable nếu database down (critical)
-		// 200 OK nếu database up (Redis down vẫn OK)
 		statusCode := http.StatusOK
 		if dbStatus != "ok" {
 			statusCode = http.StatusServiceUnavailable
@@ -694,10 +473,8 @@ func healthCheckHandler(appCtx *container.Container) gin.HandlerFunc {
 // ========================================
 // DATABASE TEST HANDLER
 // ========================================
-// databaseTestHandler test raw database queries (development/debugging only)
 func databaseTestHandler(appCtx *container.Container) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Guard: check database availability
 		if appCtx.DB == nil || appCtx.DB.Pool == nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{
 				"error": "Database not connected",
@@ -705,9 +482,6 @@ func databaseTestHandler(appCtx *container.Container) gin.HandlerFunc {
 			return
 		}
 
-		// ========================================
-		// TEST QUERY: Get PostgreSQL Version
-		// ========================================
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 		defer cancel()
 
@@ -720,22 +494,14 @@ func databaseTestHandler(appCtx *container.Container) gin.HandlerFunc {
 			return
 		}
 
-		// ========================================
-		// GET CONNECTION POOL STATS
-		// ========================================
 		stats := appCtx.DB.Pool.Stat()
 
-		// ========================================
-		// TEST REDIS CACHE
-		// ========================================
 		redisTest := "not tested"
 		if appCtx.Cache != nil {
-			// Test Set
 			testKey := "test:connection"
 			testValue := map[string]string{"test": "data", "timestamp": time.Now().Format(time.RFC3339)}
 
 			if err := appCtx.Cache.Set(ctx, testKey, testValue, 10*time.Second); err == nil {
-				// Test Get
 				var retrieved map[string]string
 				found, _ := appCtx.Cache.Get(ctx, testKey, &retrieved)
 				if found {
@@ -743,17 +509,12 @@ func databaseTestHandler(appCtx *container.Container) gin.HandlerFunc {
 				} else {
 					redisTest = "warning - set ok but get failed"
 				}
-
-				// Cleanup
 				_ = appCtx.Cache.Delete(ctx, testKey)
 			} else {
 				redisTest = fmt.Sprintf("error: %v", err)
 			}
 		}
 
-		// ========================================
-		// RETURN TEST RESULTS
-		// ========================================
 		c.JSON(http.StatusOK, gin.H{
 			"message": "Database test successful",
 			"database": gin.H{

@@ -379,6 +379,9 @@ func (s *InventoryService) FindOptimalWarehouse(ctx context.Context, req model.F
 
 func (s *InventoryService) CheckAvailability(ctx context.Context, req model.CheckAvailabilityRequest) (*model.CheckAvailabilityResponse, error) {
 	// Extract book IDs
+	logger.Info("CheckAvailability", map[string]interface{}{
+		"req": req,
+	})
 	bookIDs := make([]uuid.UUID, len(req.Items))
 	for i, item := range req.Items {
 		bookIDs[i] = item.BookID
@@ -439,7 +442,9 @@ func (s *InventoryService) CheckAvailability(ctx context.Context, req model.Chec
 
 		itemResponses = append(itemResponses, itemResp)
 	}
-
+	logger.Info("itemResponses", map[string]interface{}{
+		"itemResponses": itemResponses,
+	})
 	// Find best warehouse (most items can fulfill)
 	var recommendedWarehouse *model.WarehouseRecommendation
 	if overallFulfillable {
@@ -451,7 +456,9 @@ func (s *InventoryService) CheckAvailability(ctx context.Context, req model.Chec
 				bestWarehouseID = whID
 			}
 		}
-
+		logger.Info("bestWarehouseID", map[string]interface{}{
+			"bestWarehouseID": bestWarehouseID,
+		})
 		if maxScore > 0 {
 			wh, _ := s.repo.GetWarehouseByID(ctx, bestWarehouseID)
 			recommendedWarehouse = &model.WarehouseRecommendation{
@@ -460,7 +467,9 @@ func (s *InventoryService) CheckAvailability(ctx context.Context, req model.Chec
 			}
 		}
 	}
-
+	logger.Info("recommendedWarehouse", map[string]interface{}{
+		"recommendedWarehouse": recommendedWarehouse,
+	})
 	return &model.CheckAvailabilityResponse{
 		Overall:              overallFulfillable,
 		Items:                itemResponses,

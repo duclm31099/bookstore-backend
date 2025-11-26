@@ -54,12 +54,20 @@ func (c *Client) CreatePaymentURL(
 		return "", fmt.Errorf("amount must be positive")
 	}
 
-	// Get client IP from context (if available)
-	clientIP := "127.0.0.1"
+	// Get client IP from context (injected by middleware)
+	// This is critical for VNPay fraud detection and geolocation
+	clientIP := "127.0.0.1" // Safe fallback only
 	if ip := ctx.Value("client_ip"); ip != nil {
-		if ipStr, ok := ip.(string); ok {
+		if ipStr, ok := ip.(string); ok && ipStr != "" {
 			clientIP = ipStr
 		}
+	}
+
+	// ⚠️ Warning: If IP is localhost in production, VNPay might flag as suspicious
+	// This should only happen if middleware is not properly configured
+	if clientIP == "127.0.0.1" || clientIP == "::1" {
+		// Log warning - middleware might not be registered
+		fmt.Printf("⚠️ WARNING: Using localhost IP for VNPay request. Ensure IPExtractorMiddleware is registered.\n")
 	}
 
 	// Build parameters
