@@ -11,6 +11,7 @@ import (
 	"bookstore-backend/internal/domains/address/model"
 	"bookstore-backend/internal/domains/address/service"
 	"bookstore-backend/internal/shared/response"
+	"bookstore-backend/pkg/logger"
 )
 
 type AddressHandler struct {
@@ -36,7 +37,9 @@ func (h *AddressHandler) CreateAddress(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, "Invalid request payload", err.Error())
 		return
 	}
-
+	logger.Info("req", map[string]interface{}{
+		"req": req,
+	})
 	result, err := h.service.CreateAddress(c.Request.Context(), userID, &req)
 	if err != nil {
 		statusCode, message, code := model.GetErrorResponse(err)

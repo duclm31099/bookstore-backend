@@ -139,7 +139,7 @@ type CategoryResp struct {
 	Level         int        `json:"level"`
 	SortOrder     int        `json:"sort_order"`
 	ChildrenCount int        `json:"children_count,omitempty"`
-	BooksCount    int64      `json:"books_count,omitempty"`
+	BooksCount    int64      `json:"books_count"`
 	IsActive      bool       `json:"is_active"`
 	CreatedAt     time.Time  `json:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at"`
@@ -335,14 +335,15 @@ func CategoryToResp(c *Category) *CategoryResp {
 	}
 
 	resp := &CategoryResp{
-		ID:        c.ID,
-		Name:      c.Name,
-		Slug:      c.Slug,
-		ParentID:  c.ParentID,
-		SortOrder: c.SortOrder,
-		IsActive:  c.IsActive,
-		CreatedAt: c.CreatedAt,
-		UpdatedAt: c.UpdatedAt,
+		ID:         c.ID,
+		Name:       c.Name,
+		Slug:       c.Slug,
+		ParentID:   c.ParentID,
+		BooksCount: c.BooksCount,
+		SortOrder:  c.SortOrder,
+		IsActive:   c.IsActive,
+		CreatedAt:  c.CreatedAt,
+		UpdatedAt:  c.UpdatedAt,
 	}
 
 	// ========== ADD CHILDREN_COUNT ==========
@@ -352,10 +353,6 @@ func CategoryToResp(c *Category) *CategoryResp {
 
 	if c.ChildCount != nil {
 		resp.ChildrenCount = *c.ChildCount // ← ADD THIS
-	}
-
-	if c.TotalBooksCount != nil {
-		resp.BooksCount = *c.TotalBooksCount
 	}
 
 	return resp

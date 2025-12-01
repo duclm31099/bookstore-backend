@@ -42,3 +42,14 @@ type TrackCheckoutPayload struct {
 	PromoCode     *string         `json:"promo_code,omitempty"`
 	Discount      decimal.Decimal `json:"discount"`
 }
+
+// RemoveExpiredPromotionsPayload for scheduled job to remove expired promotions
+// WHY EMPTY STRUCT?
+// - This is a scheduled job that runs periodically without input parameters
+// - The job will query database to find carts with expired promotions
+// - No need to pass data from scheduler to handler
+// - Empty struct is better than nil for type safety and future extensibility
+type RemoveExpiredPromotionsPayload struct {
+	// Empty payload - job runs on fixed schedule (every 3 hours)
+	// Future: Could add optional filters like BatchSize, MaxProcessingTime
+}

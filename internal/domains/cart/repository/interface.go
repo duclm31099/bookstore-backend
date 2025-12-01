@@ -79,4 +79,34 @@ type RepositoryInterface interface {
 	UpdateItemWithTx(ctx context.Context, tx pgx.Tx, item *model.CartItem) error
 	AddItemWithTx(ctx context.Context, tx pgx.Tx, item *model.CartItem) error
 	DeleteCartWithTx(ctx context.Context, tx pgx.Tx, cartID uuid.UUID) error
+
+	// ================================================
+	// PROMOTION REMOVAL JOB METHODS
+	// ================================================
+
+	// GetCartsWithPromotions retrieves carts with active promotions in batches
+	// WHY THIS METHOD?
+	// - Efficient batch processing: Fetch 100 carts at a time to avoid memory issues
+	// - Single JOIN query: Gets cart + user + promotion data in one query (no N+1)
+	// - Pagination support: Use limit/offset for processing large datasets
+	// Returns: slice of carts with promotion info, error
+	GetCartsWithPromotions(ctx context.Context, limit int, offset int) ([]*model.CartWithPromoInfo, error)
+
+	// RemovePromotionWithLog removes promotion from cart and creates audit log
+	// WHY ATOMIC OPERATION?
+	// - Ensures promotion removal and logging happen together (transaction)
+	// - If logging fails, promotion removal is rolled back
+	// - Maintains data consistency and audit trail
+	// Parameters:
+	//   - cartID: Cart to remove promotion from
+	//   - reason: Why promotion was removed (expired, disabled, max_uses_reached)
+	//   - metadata: Full promotion details for audit log
+	RemovePromotionWithLog(ctx context.Context, cartID uuid.UUID, userID uuid.UUID, promoCode string, discount decimal.Decimal, reason string, metadata map[string]interface{}) error
+
+	// UpdatePromoMetadata updates only the promo_metadata JSONB field
+	// WHY SEPARATE METHOD?
+	// - Efficient: Only updates one field instead of entire cart row
+	// - Used to store last_checked_at timestamp for smart scheduling
+	// - Avoids race conditions with other cart updates
+	UpdatePromoMetadata(ctx context.Context, cartID uuid.UUID, metadata map[string]interface{}) error
 }

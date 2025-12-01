@@ -9,6 +9,7 @@ import (
 	dto "bookstore-backend/internal/domains/promotion/model"
 	"bookstore-backend/internal/domains/promotion/service"
 	"bookstore-backend/internal/shared/response"
+	"bookstore-backend/pkg/logger"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -56,6 +57,7 @@ func (h *PublicHandler) ValidatePromotion(c *gin.Context) {
 
 	// Validate request
 	if err := req.Validate(); err != nil {
+		logger.Error("err", err)
 		response.Error(c, http.StatusBadRequest, "Dữ liệu không hợp lệ", gin.H{
 			"RequestID": c.GetString("request_id"),
 			"Timestamp": time.Now(),

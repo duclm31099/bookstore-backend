@@ -1,6 +1,7 @@
 package category
 
 import (
+	"bookstore-backend/internal/domains/book/model"
 	"context"
 
 	"github.com/google/uuid"
@@ -552,7 +553,7 @@ type CategoryService interface {
 	// GET /v1/categories/tieu-thuyet/books?limit=10&offset=0
 	// => Service.GetBooksInCategory(categoryID, 10, 0)
 	// => [book_id1, book_id2, ...], total=245
-	GetBooksInCategory(ctx context.Context, categoryID uuid.UUID, limit int, offset int) ([]uuid.UUID, int64, error)
+	GetBooksInCategory(ctx context.Context, categoryID uuid.UUID, limit int, page int) ([]model.BookResponse, int64, error)
 
 	// GetCategoryBookCount lấy số books trong category
 	//

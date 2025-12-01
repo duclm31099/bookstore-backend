@@ -7,7 +7,6 @@ import (
 	"time"
 
 	validation "github.com/go-ozzo/ozzo-validation/v4"
-	"github.com/go-ozzo/ozzo-validation/v4/is"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
@@ -30,18 +29,14 @@ type CartItem struct {
 
 // Validate validates ValidatePromotionRequest
 func (r ValidatePromotionRequest) Validate() error {
+
 	return validation.ValidateStruct(&r,
 		validation.Field(&r.Code,
 			validation.Required.Error("Mã khuyến mãi không được để trống"),
 			validation.Length(3, 50).Error("Mã khuyến mãi phải từ 3-50 ký tự"),
 		),
 		validation.Field(&r.CartItems,
-			validation.Required.Error("Giỏ hàng không được trống"),
 			validation.Length(1, 100).Error("Giỏ hàng có từ 1-100 sản phẩm"),
-		),
-		validation.Field(&r.Subtotal,
-			validation.Required.Error("Tổng tiền không được để trống"),
-			validation.Min(decimal.NewFromInt(0)).Error("Tổng tiền phải >= 0"),
 		),
 	)
 }
@@ -64,9 +59,9 @@ func (r ValidatePromotionRequest) CalculateSubtotal() decimal.Decimal {
 // Validate validates CartItem
 func (c CartItem) Validate() error {
 	return validation.ValidateStruct(&c,
-		validation.Field(&c.BookID, validation.Required, is.UUIDv4),
-		validation.Field(&c.CategoryID, validation.Required, is.UUIDv4),
-		validation.Field(&c.Price, validation.Min(decimal.NewFromInt(0))),
+		validation.Field(&c.BookID, validation.Required),
+		validation.Field(&c.CategoryID, validation.Required),
+		validation.Field(&c.Price, validation.Required),
 		validation.Field(&c.Quantity, validation.Min(1), validation.Max(100)),
 	)
 }
@@ -250,6 +245,18 @@ type ValidationResult struct {
 // PromotionInfo - Thông tin promotion cho response
 type PromotionInfo struct {
 	ID                uuid.UUID        `json:"id"`
+	Code              string           `json:"code"`
+	Name              string           `json:"name"`
+	Description       *string          `json:"description,omitempty"`
+	DiscountType      string           `json:"discount_type"`
+	DiscountValue     decimal.Decimal  `json:"discount_value"`
+	MaxDiscountAmount *decimal.Decimal `json:"max_discount_amount,omitempty"`
+	MinOrderAmount    decimal.Decimal  `json:"min_order_amount"`
+	ExpiresAt         time.Time        `json:"expires_at"`
+}
+
+// AvailablePromotionResponse - Response cho danh sách promotions có thể áp dụng
+type AvailablePromotionResponse struct {
 	Code              string           `json:"code"`
 	Name              string           `json:"name"`
 	Description       *string          `json:"description,omitempty"`

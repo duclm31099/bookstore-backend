@@ -7,6 +7,7 @@ import (
 
 	"bookstore-backend/internal/domains/cart/model"
 	"bookstore-backend/internal/domains/cart/service"
+	promotionService "bookstore-backend/internal/domains/promotion/service"
 	"bookstore-backend/internal/shared/middleware"
 	cartMiddleware "bookstore-backend/internal/shared/middleware"
 	"bookstore-backend/internal/shared/response"
@@ -19,12 +20,16 @@ import (
 
 // Handler handles HTTP requests for cart
 type Handler struct {
-	service service.ServiceInterface
+	service          service.ServiceInterface
+	promotionService promotionService.ServiceInterface
 }
 
 // NewHandler creates handler instance
-func NewHandler(service service.ServiceInterface) *Handler {
-	return &Handler{service: service}
+func NewHandler(service service.ServiceInterface, promoService promotionService.ServiceInterface) *Handler {
+	return &Handler{
+		service:          service,
+		promotionService: promoService,
+	}
 }
 
 // ===================================
@@ -60,10 +65,7 @@ func (h *Handler) GetCart(c *gin.Context) {
 	} else if sessionID != "" {
 		sid = &sessionID
 	}
-	logger.Info("Get cart", map[string]interface{}{
-		"userID":    uid,
-		"sessionID": sid,
-	})
+
 	// Get or create cart
 	cart, err := h.service.GetOrCreateCart(c.Request.Context(), uid, sid)
 	if err != nil {
@@ -323,18 +325,47 @@ func (h *Handler) ValidateCart(c *gin.Context) {
 // @Summary Apply promo code
 // @Description Applies promo code and calculates discount
 func (h *Handler) ApplyPromoCode(c *gin.Context) {
-	userId, exist := c.Get("user_id")
+	userIdVal, exist := c.Get("user_id")
+
 	logger.Info("get user id", map[string]interface{}{
-		"userId": userId,
+		"userId": userIdVal,
 		"exist":  exist,
 	})
-	uid := utils.ParseStringToUUID(userId.(string))
-	if !exist || userId == nil {
-		response.Error(c, http.StatusUnauthorized, "Invalid user id - must login to use promotion", nil)
+
+	// 1) Kiểm tra tồn tại
+	if !exist || userIdVal == nil {
+		logger.Info("error", map[string]interface{}{
+			"userId": userIdVal,
+			"exist":  exist,
+		})
+		response.Error(c, http.StatusUnauthorized, "User not login", nil)
 		return
 	}
 
+	// 2) Kiểm tra kiểu cho chắc
+	userIdStr := fmt.Sprintf("%v", userIdVal)
+	if userIdStr == "" {
+		response.Error(c, http.StatusUnauthorized, "Can not parse to string", nil)
+		return
+	}
+
+	// 3) Parse UUID an toàn
+	uid := utils.ParseStringToUUID(userIdStr)
+	if uid == uuid.Nil {
+		// tùy bạn: có thể coi là lỗi auth
+		response.Error(c, http.StatusUnauthorized, "Can not parse to uuid", nil)
+		return
+	}
+
+	logger.Info("user id", map[string]interface{}{
+		"uid": uid,
+	})
+
 	cartID, err := middleware.GetCartID(c)
+	logger.Info("middlware get cart", map[string]interface{}{
+		"cartID": cartID,
+		"err":    err,
+	})
 	if err != nil {
 		response.Error(c, http.StatusBadRequest, "Invalid cart", err.Error())
 		return
@@ -342,12 +373,18 @@ func (h *Handler) ApplyPromoCode(c *gin.Context) {
 
 	var req model.ApplyPromoRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		logger.Error("bind promo code failed", err)
 		response.Error(c, http.StatusBadRequest, "Invalid request", err.Error())
 		return
 	}
-
+	logger.Info("Go to service", map[string]interface{}{
+		"cartID":    cartID,
+		"promoCode": req.PromoCode,
+		"uid":       uid,
+	})
 	result, err := h.service.ApplyPromoCode(c.Request.Context(), cartID, req.PromoCode, uid)
 	if err != nil {
+		logger.Error("apply promo code failed", err)
 		response.Error(c, http.StatusBadRequest, "Invalid promo code", err.Error())
 		return
 	}
@@ -377,6 +414,53 @@ func (h *Handler) RemovePromoCode(c *gin.Context) {
 	}
 
 	c.Status(http.StatusNoContent)
+}
+
+// GetAvailablePromotions handles GET /cart/:cart_id/promotions
+// @Summary Get available promotions for cart
+// @Description Returns list of promotions that can be applied to the cart
+// @Tags Cart
+// @Produce json
+// @Param cart_id path string true "Cart ID (UUID)"
+// @Success 200 {object} SuccessResponse{data=[]model.AvailablePromotionResponse}
+// @Failure 400 {object} ErrorResponse
+// @Failure 401 {object} ErrorResponse
+// @Router /cart/{cart_id}/promotions [get]
+func (h *Handler) GetAvailablePromotions(c *gin.Context) {
+	// Parse cart_id from URL
+	cartIDParam := c.Param("cart_id")
+	cartID, err := uuid.Parse(cartIDParam)
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, "Invalid cart ID", err.Error())
+		return
+	}
+
+	// Get userID from JWT context
+	userIDValue, exists := c.Get(middleware.ContextKeyUserID)
+	if !exists || userIDValue == nil {
+		response.Error(c, http.StatusUnauthorized, "Not authenticated", "User ID required")
+		return
+	}
+
+	userID, ok := userIDValue.(uuid.UUID)
+	if !ok {
+		response.Error(c, http.StatusUnauthorized, "Invalid user ID", "User ID must be UUID")
+		return
+	}
+
+	// Get available promotions
+	promotions, err := h.promotionService.GetAvailablePromotionsForCart(c.Request.Context(), cartID, userID)
+	if err != nil {
+		logger.Info("Failed to get available promotions", map[string]interface{}{
+			"cart_id": cartID,
+			"user_id": userID,
+			"error":   err.Error(),
+		})
+		response.Error(c, http.StatusInternalServerError, "Failed to get available promotions", err.Error())
+		return
+	}
+
+	response.Success(c, http.StatusOK, "Available promotions retrieved successfully", promotions)
 }
 
 // domains/cart/handler.go

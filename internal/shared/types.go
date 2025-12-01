@@ -26,6 +26,14 @@ const (
 	TypeSendOrderConfirmation  = "order:send_confirmation"
 	TypeAutoReleaseReservation = "inventory:auto_release_reservation"
 	TypeTrackCheckout          = "analytics:track_checkout"
+
+	// Promotion removal job
+	TypeRemoveExpiredPromotions = "cart:remove_expired_promotions"
+
+	// Notification jobs
+	TypeSendPendingNotifications = "notification:send_pending"
+	TypeCleanupOldNotifications  = "notification:cleanup_old"
+	TypeRetryFailedDeliveries    = "notification:retry_failed"
 )
 
 // SecurityAlertPayload represents data for security alert

@@ -30,11 +30,19 @@ func NewPostgresRepository(pool *pgxpool.Pool, cache cache.Cache) RepositoryInte
 
 // GetByUserID implements RepositoryInterface.GetByUserID
 func (r *postgresRepository) GetByUserID(ctx context.Context, userID uuid.UUID) (*model.Cart, error) {
+	// Check cache first
+	cacheKey := fmt.Sprintf(model.CacheKeyCartByUser, userID.String())
+	var cachedCart model.Cart
+	found, _ := r.cache.Get(ctx, cacheKey, &cachedCart)
+	if found {
+		return &cachedCart, nil
+	}
+
 	query := `
         SELECT 
             id, user_id, session_id, items_count, subtotal, version,
             created_at, updated_at, expires_at,
-            promo_code, discount, total, promo_metadata -- ✅ Add promo fields
+            promo_code, discount, total, promo_metadata
         FROM carts
         WHERE user_id = $1
     `
@@ -50,10 +58,10 @@ func (r *postgresRepository) GetByUserID(ctx context.Context, userID uuid.UUID) 
 		&cart.CreatedAt,
 		&cart.UpdatedAt,
 		&cart.ExpiresAt,
-		&cart.PromoCode,     // ✅ Add
-		&cart.Discount,      // ✅ Add
-		&cart.Total,         // ✅ Add
-		&cart.PromoMetadata, // ✅ Add
+		&cart.PromoCode,
+		&cart.Discount,
+		&cart.Total,
+		&cart.PromoMetadata,
 	)
 
 	if err != nil {
@@ -63,17 +71,28 @@ func (r *postgresRepository) GetByUserID(ctx context.Context, userID uuid.UUID) 
 		return nil, fmt.Errorf("failed to get user cart: %w", err)
 	}
 
+	// Cache for 5 minutes
+	_ = r.cache.Set(ctx, cacheKey, cart, time.Duration(model.CartCacheExpirationMinutes)*time.Minute)
+
 	return &cart, nil
 }
 
 func (r *postgresRepository) GetBySessionID(ctx context.Context, sessionID string) (*model.Cart, error) {
+	// Check cache first
+	cacheKey := fmt.Sprintf(model.CacheKeyCartBySession, sessionID)
+	var cachedCart model.Cart
+	found, _ := r.cache.Get(ctx, cacheKey, &cachedCart)
+	if found {
+		return &cachedCart, nil
+	}
+
 	query := `
         SELECT 
             id, user_id, session_id, items_count, subtotal, version,
             created_at, updated_at, expires_at,
-            promo_code, discount, total, promo_metadata -- ✅ Add promo fields
+            promo_code, discount, total, promo_metadata
         FROM carts
-        WHERE user_id = $1
+        WHERE session_id = $1
     `
 
 	var cart model.Cart
@@ -87,10 +106,10 @@ func (r *postgresRepository) GetBySessionID(ctx context.Context, sessionID strin
 		&cart.CreatedAt,
 		&cart.UpdatedAt,
 		&cart.ExpiresAt,
-		&cart.PromoCode,     // ✅ Add
-		&cart.Discount,      // ✅ Add
-		&cart.Total,         // ✅ Add
-		&cart.PromoMetadata, // ✅ Add
+		&cart.PromoCode,
+		&cart.Discount,
+		&cart.Total,
+		&cart.PromoMetadata,
 	)
 
 	if err != nil {
@@ -99,6 +118,9 @@ func (r *postgresRepository) GetBySessionID(ctx context.Context, sessionID strin
 		}
 		return nil, fmt.Errorf("failed to get session cart: %w", err)
 	}
+
+	// Cache for 5 minutes
+	_ = r.cache.Set(ctx, cacheKey, cart, time.Duration(model.CartCacheExpirationMinutes)*time.Minute)
 
 	return &cart, nil
 }
@@ -292,12 +314,16 @@ func (r *postgresRepository) GetItemsWithBooks(ctx context.Context, cartID uuid.
             a.name as book_author,
             b.price as current_price,
             b.is_active,
+						b.compare_at_price,
             COALESCE(bts.available, 0) as total_stock,
+            c.name as category_name,
+						c.id as category_id,
             COUNT(*) OVER() as total_count
         FROM cart_items ci
         LEFT JOIN books b ON ci.book_id = b.id
         LEFT JOIN authors a ON b.author_id = a.id
         LEFT JOIN books_total_stock bts ON b.id = bts.book_id
+				LEFT JOIN categories c ON b.category_id = c.id
         WHERE ci.cart_id = $1
         ORDER BY ci.created_at DESC
         ` + limitClause
@@ -327,7 +353,10 @@ func (r *postgresRepository) GetItemsWithBooks(ctx context.Context, cartID uuid.
 			&item.BookAuthor,
 			&item.CurrentPrice,
 			&item.IsActive,
+			&item.CompareAtPrice,
 			&item.TotalStock,
+			&item.CategoryName,
+			&item.CategoryID,
 			&totalCount, // ✅ Scan total count from window function
 		)
 		if err != nil {
@@ -339,9 +368,7 @@ func (r *postgresRepository) GetItemsWithBooks(ctx context.Context, cartID uuid.
 	if err := rows.Err(); err != nil {
 		return nil, 0, fmt.Errorf("error iterating items: %w", err)
 	}
-	logger.Info("GetItemsWithBooks", map[string]interface{}{
-		"items": items,
-	})
+
 	return items, totalCount, nil
 }
 
@@ -761,7 +788,6 @@ func (r *postgresRepository) GetItemsByCartID(ctx context.Context, cartID uuid.U
             id, cart_id, book_id, quantity, price, created_at, updated_at
         FROM cart_items
         WHERE cart_id = $1
-        FOR UPDATE -- Lock rows for transaction
     `
 
 	rows, err := r.pool.Query(ctx, query, cartID)
@@ -1074,4 +1100,212 @@ func (r *postgresRepository) GetUserEmail(ctx context.Context, userID uuid.UUID)
 	}
 
 	return email, nil
+}
+
+// ================================================
+// PROMOTION REMOVAL JOB METHODS
+// ================================================
+
+// GetCartsWithPromotions retrieves carts with active promotions for batch processing
+// WHY THIS QUERY DESIGN?
+// - Single JOIN query: Avoids N+1 problem (fetch cart + user + promotion in one query)
+// - LEFT JOIN promotions: Handles case where promotion was deleted from database
+// - Pagination: Process in batches to avoid memory issues with large datasets
+// - Filter authenticated users only: Guest carts can't have promotions (business rule)
+func (r *postgresRepository) GetCartsWithPromotions(ctx context.Context, limit int, offset int) ([]*model.CartWithPromoInfo, error) {
+	// QUERY EXPLANATION:
+	// 1. SELECT from carts WHERE promo_code IS NOT NULL (only carts with promotions)
+	// 2. INNER JOIN users: Get user activity (last_login_at) for smart scheduling
+	// 3. LEFT JOIN promotions: Get promotion details (might be NULL if deleted)
+	// 4. Filter user_id IS NOT NULL: Only authenticated users (business requirement)
+	// 5. ORDER BY updated_at DESC: Process most recently updated carts first
+	// 6. LIMIT/OFFSET: Batch processing (default 100 carts per batch)
+	query := `
+        SELECT 
+            c.id as cart_id,
+            c.user_id,
+            c.promo_code,
+            c.discount,
+            c.promo_metadata,
+            u.last_login_at,
+            p.id as promotion_id,
+            p.expires_at,
+            p.is_active,
+            p.max_uses,
+            p.current_uses
+        FROM carts c
+        INNER JOIN users u ON c.user_id = u.id
+        LEFT JOIN promotions p ON UPPER(c.promo_code) = p.code
+        WHERE c.promo_code IS NOT NULL
+          AND c.user_id IS NOT NULL
+        ORDER BY c.updated_at DESC
+        LIMIT $1 OFFSET $2
+    `
+
+	rows, err := r.pool.Query(ctx, query, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query carts with promotions: %w", err)
+	}
+	defer rows.Close()
+
+	var carts []*model.CartWithPromoInfo
+	for rows.Next() {
+		var cart model.CartWithPromoInfo
+		err := rows.Scan(
+			&cart.CartID,
+			&cart.UserID,
+			&cart.PromoCode,
+			&cart.Discount,
+			&cart.PromoMetadata,
+			&cart.LastLoginAt,
+			&cart.PromotionID,
+			&cart.ExpiresAt,
+			&cart.IsActive,
+			&cart.MaxUses,
+			&cart.CurrentUses,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan cart with promo: %w", err)
+		}
+		carts = append(carts, &cart)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating carts: %w", err)
+	}
+
+	return carts, nil
+}
+
+// RemovePromotionWithLog removes promotion from cart and creates audit log
+// WHY TRANSACTION?
+// - Atomicity: Both operations succeed or both fail (no partial state)
+// - Consistency: Audit log always matches actual cart state
+// - Isolation: Prevents race conditions with concurrent cart updates
+//
+// BUSINESS LOGIC:
+// 1. Remove promotion from cart (set promo_code=NULL, discount=0)
+// 2. Create audit log entry for compliance and future notifications
+// 3. If either step fails, rollback everything
+func (r *postgresRepository) RemovePromotionWithLog(
+	ctx context.Context,
+	cartID uuid.UUID,
+	userID uuid.UUID,
+	promoCode string,
+	discount decimal.Decimal,
+	reason string,
+	metadata map[string]interface{},
+) error {
+	// Start transaction
+	// WHY? Ensure cart update and log creation happen atomically
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx) // Rollback if not committed
+
+	// Step 1: Remove promotion from cart
+	// WHY SET discount=0 and promo_metadata=NULL?
+	// - discount=0: Clear discount amount
+	// - promo_metadata=NULL: Clear all promotion details
+	// - total will be recalculated by trigger (total = subtotal - discount)
+	updateCartQuery := `
+        UPDATE carts
+        SET 
+            promo_code = NULL,
+            discount = 0,
+            promo_metadata = NULL,
+            updated_at = NOW()
+        WHERE id = $1
+    `
+
+	result, err := tx.Exec(ctx, updateCartQuery, cartID)
+	if err != nil {
+		return fmt.Errorf("failed to remove promotion from cart: %w", err)
+	}
+
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("cart not found: %s", cartID)
+	}
+
+	// Step 2: Create audit log entry
+	// WHY LOG?
+	// - Compliance: Track all automatic changes for audit trail
+	// - Debugging: Understand why promotions were removed
+	// - Notifications: Future system can query unnotified removals
+	// - Analytics: Understand promotion expiry patterns
+	insertLogQuery := `
+        INSERT INTO promotion_removal_logs (
+            cart_id,
+            user_id,
+            promo_code,
+            discount_amount,
+            removal_reason,
+            promo_metadata,
+            removed_at,
+            notified
+        ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), false)
+    `
+
+	_, err = tx.Exec(ctx, insertLogQuery,
+		cartID,
+		userID,
+		promoCode,
+		discount,
+		reason,
+		metadata, // JSONB - stores full promotion details
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create removal log: %w", err)
+	}
+
+	// Commit transaction
+	// WHY? Make both changes permanent
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	logger.Info("Removed promotion from cart", map[string]interface{}{
+		"cart_id":    cartID,
+		"user_id":    userID,
+		"promo_code": promoCode,
+		"reason":     reason,
+	})
+
+	return nil
+}
+
+// UpdatePromoMetadata updates only the promo_metadata JSONB field
+// WHY SEPARATE METHOD?
+// - Efficiency: Only updates one field, not entire cart row
+// - Purpose: Store last_checked_at timestamp for smart scheduling
+// - Avoid conflicts: Doesn't interfere with other cart updates
+//
+// USAGE:
+// After checking a cart (whether promotion removed or not), update last_checked_at
+// This enables smart scheduling: inactive users only checked every 24h
+func (r *postgresRepository) UpdatePromoMetadata(ctx context.Context, cartID uuid.UUID, metadata map[string]interface{}) error {
+	// WHY COALESCE?
+	// - Merge new metadata with existing metadata
+	// - Preserves other fields in JSONB while updating last_checked_at
+	// - Example: If metadata has {promotion_id: "123"}, we add {last_checked_at: "2024-..."}
+	//   Result: {promotion_id: "123", last_checked_at: "2024-..."}
+	query := `
+        UPDATE carts
+        SET 
+            promo_metadata = COALESCE(promo_metadata, '{}'::jsonb) || $2::jsonb,
+            updated_at = NOW()
+        WHERE id = $1
+    `
+
+	result, err := r.pool.Exec(ctx, query, cartID, metadata)
+	if err != nil {
+		return fmt.Errorf("failed to update promo metadata: %w", err)
+	}
+
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("cart not found: %s", cartID)
+	}
+
+	return nil
 }

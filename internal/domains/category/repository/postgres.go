@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"bookstore-backend/internal/domains/book/model"
 	"bookstore-backend/internal/domains/category"
 	"bookstore-backend/pkg/cache"
 	"bookstore-backend/pkg/logger"
@@ -15,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/lib/pq"
 )
 
 type postgresRepository struct {
@@ -1377,7 +1379,7 @@ func (r *postgresRepository) GetBooksInCategory(
 	categoryID uuid.UUID,
 	limit int,
 	offset int,
-) ([]uuid.UUID, int64, error) {
+) ([]model.Book, int64, error) {
 	// ========== Get Active Descendants ONLY ==========
 	// Tạo recursive CTE để get active descendants
 	const descendantsQuery = `
@@ -1420,7 +1422,7 @@ func (r *postgresRepository) GetBooksInCategory(
 
 	// If no active categories found
 	if len(categoryIDs) == 0 {
-		return []uuid.UUID{}, 0, nil
+		return []model.Book{}, 0, nil
 	}
 
 	// ========== Count Query ==========
@@ -1440,7 +1442,9 @@ func (r *postgresRepository) GetBooksInCategory(
 
 	// ========== List Query ==========
 	const listQuery = `
-		SELECT DISTINCT b.id
+		SELECT b.id, b.title, b.slug, b.description, b.price, 
+			b.compare_at_price, b.is_active, b.published_year, b.view_count, b.sold_count,
+			b.images, b.rating_count, b.rating_average
 		FROM books b
 		WHERE b.category_id = ANY($1::uuid[])
 		AND b.is_active = true
@@ -1455,15 +1459,29 @@ func (r *postgresRepository) GetBooksInCategory(
 	}
 	defer rows.Close()
 
-	bookIDs := make([]uuid.UUID, 0, limit)
+	books := make([]model.Book, 0, limit)
 	for rows.Next() {
-		var bookID uuid.UUID
-		err := rows.Scan(&bookID)
+		var b model.Book
+		err := rows.Scan(
+			&b.ID,
+			&b.Title,
+			&b.Slug,
+			&b.Description,
+			&b.Price,
+			&b.CompareAtPrice,
+			&b.IsActive,
+			&b.PublishedYear,
+			&b.ViewCount,
+			&b.SoldCount,
+			&b.Images,
+			&b.RatingCount,
+			&b.RatingAverage,
+		)
 		if err != nil {
 			logger.Error("GetBooksInCategory: scan error", err)
 			return nil, 0, fmt.Errorf("failed to scan book: %w", err)
 		}
-		bookIDs = append(bookIDs, bookID)
+		books = append(books, b)
 	}
 
 	if err = rows.Err(); err != nil {
@@ -1471,7 +1489,7 @@ func (r *postgresRepository) GetBooksInCategory(
 		return nil, 0, fmt.Errorf("failed to get books: %w", err)
 	}
 
-	return bookIDs, total, nil
+	return books, total, nil
 }
 
 // ============================================================
@@ -1524,7 +1542,9 @@ func (r *postgresRepository) GetCategoryBookCount(
 	if len(categoryIDs) == 0 {
 		return 0, nil
 	}
-
+	logger.Info("GetCategoryBookCount: category IDs", map[string]interface{}{
+		"categoryIDs": categoryIDs,
+	})
 	// ========== Count Query ==========
 	const query = `
 		SELECT COUNT(*)
@@ -1534,7 +1554,7 @@ func (r *postgresRepository) GetCategoryBookCount(
 	`
 
 	var count int64
-	err = r.pool.QueryRow(ctx, query, categoryIDs).Scan(&count)
+	err = r.pool.QueryRow(ctx, query, pq.Array(categoryIDs)).Scan(&count)
 	if err != nil {
 		logger.Error("GetCategoryBookCount: database error", err)
 		return 0, fmt.Errorf("failed to get book count: %w", err)

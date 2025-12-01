@@ -477,15 +477,15 @@ func (h *CategoryHandler) GetBooksInCategory(c *gin.Context) {
 		}
 	}
 
-	offset := 0
-	if offsetStr := c.Query("offset"); offsetStr != "" {
-		if o, err := strconv.Atoi(offsetStr); err == nil && o >= 0 {
-			offset = o
+	page := 1
+	if pageStr := c.Query("page"); pageStr != "" {
+		if p, err := strconv.Atoi(pageStr); err == nil && p >= 1 {
+			page = p
 		}
 	}
 
 	// ========== Call Service ==========
-	bookIDs, total, err := h.service.GetBooksInCategory(c.Request.Context(), id, limit, offset)
+	books, total, err := h.service.GetBooksInCategory(c.Request.Context(), id, limit, page)
 	if err != nil {
 		statusCode := category.GetHTTPStatusCode(err)
 		response.Error(c, statusCode, "Bad Request", err.Error())
@@ -494,11 +494,11 @@ func (h *CategoryHandler) GetBooksInCategory(c *gin.Context) {
 
 	// ========== Build Response ==========
 	res := map[string]interface{}{
-		"book_ids": bookIDs,
+		"books":    books,
 		"total":    total,
 		"limit":    limit,
-		"offset":   offset,
-		"has_more": (offset + limit) < int(total),
+		"page":     page,
+		"has_more": (page + limit) < int(total),
 	}
 
 	// ========== Success Response ==========

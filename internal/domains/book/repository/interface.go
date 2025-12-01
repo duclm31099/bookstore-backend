@@ -32,6 +32,7 @@ type RepositoryInterface interface {
 	// NEW: Methods for bulk import
 	CreateBookWithTx(ctx context.Context, tx pgx.Tx, book *model.Book) error
 	FindBySlugWithTx(ctx context.Context, tx pgx.Tx, slug string) (*model.Book, error)
+	GetBooksByIDs(ctx context.Context, ids []string) ([]model.Book, error)
 }
 
 // BookFilter - Filter object for database query

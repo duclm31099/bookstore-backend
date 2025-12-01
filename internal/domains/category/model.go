@@ -135,7 +135,7 @@ type Category struct {
 
 	// TotalBooksCount: Tổng books (bao gồm descendants)
 	// Dùng: Display badge "245 cuốn sách"
-	TotalBooksCount *int64
+	BooksCount int64
 }
 
 // ============================================================
@@ -395,7 +395,7 @@ func (c *Category) CanDelete() bool {
 	}
 
 	// Nếu có books, không delete
-	if c.TotalBooksCount != nil && *c.TotalBooksCount > 0 {
+	if c.BooksCount > 0 {
 		return false
 	}
 

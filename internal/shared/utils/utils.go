@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"bookstore-backend/pkg/logger"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -22,6 +23,7 @@ func ParseFloatToDecimal(number *float64) *decimal.Decimal {
 func ParseStringToUUID(s string) uuid.UUID {
 	uid, err := uuid.Parse(s)
 	if err != nil || s == "" {
+		logger.Error(" errororroro ", err)
 		return uuid.Nil
 	}
 	return uid

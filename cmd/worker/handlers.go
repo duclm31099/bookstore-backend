@@ -6,6 +6,7 @@ import (
 	bookJob "bookstore-backend/internal/domains/book/job"
 	cartJob "bookstore-backend/internal/domains/cart/job"
 	inventoryJob "bookstore-backend/internal/domains/inventory/job"
+	notificationJob "bookstore-backend/internal/domains/notification/job"
 	"bookstore-backend/internal/domains/user/job"
 	"bookstore-backend/internal/infrastructure/email"
 	emailjob "bookstore-backend/internal/infrastructure/email/job"
@@ -34,6 +35,15 @@ type HandlerRegistry struct {
 	sendOrderConfirmation  *cartJob.SendOrderConfirmationHandler
 	autoReleaseReservation *cartJob.AutoReleaseReservationHandler
 	trackCheckout          *cartJob.TrackCheckoutHandler
+
+	// WHY THIS HANDLER?
+	// - Automatically removes expired/invalid promotions from carts
+	// - Runs every 3 hours with smart scheduling based on user activity
+	// - Prevents checkout with expired promotions
+	removeExpiredPromotions  *cartJob.RemoveExpiredPromotionsHandler
+	sendPendingNotifications *notificationJob.SendPendingNotificationsHandler
+	cleanupOldNotifications  *notificationJob.CleanupOldNotificationsHandler // NEW
+	retryFailedDeliveries    *notificationJob.RetryFailedDeliveriesHandler
 }
 
 // initializeHandlers creates all job handlers with their dependencies
@@ -60,11 +70,25 @@ func initializeHandlers(c *container.Container, cfg *Config) *HandlerRegistry {
 			c.Cache,
 		),
 
-		// Cart
+		// Cart handlers
 		clearCart:              cartJob.NewClearCartHandler(c.CartRepo),
 		sendOrderConfirmation:  cartJob.NewSendOrderConfirmationHandler(emailSvc),
 		autoReleaseReservation: cartJob.NewAutoReleaseReservationHandler(c.OrderRepo, c.InventoryService),
 		trackCheckout:          cartJob.NewTrackCheckoutHandler(),
+
+		// WHY CART REPO + NOTIFICATION SERVICE?
+		// - Cart repo: Query carts and update them
+		// - Notification service: Create notifications when promotions removed
+		// - User info comes from JOIN query (no separate user repo needed)
+		// - Promotion validation done in model methods (no promotion service needed)
+		removeExpiredPromotions:  cartJob.NewRemoveExpiredPromotionsHandler(c.CartRepo, c.NotificationService),
+		sendPendingNotifications: notificationJob.NewSendPendingNotificationsHandler(c.NotificationService),
+		cleanupOldNotifications: notificationJob.NewCleanupOldNotificationsHandler(
+			c.NotificationService,
+		),
+		retryFailedDeliveries: notificationJob.NewRetryFailedDeliveriesHandler(
+			c.DeliveryService,
+		),
 	}
 }
 
@@ -85,9 +109,19 @@ func (h *HandlerRegistry) RegisterHandlers(mux *asynq.ServeMux) {
 	// Inventory
 	mux.HandleFunc(shared.TypeInventorySyncBookStock, h.inventorySync.ProcessTask)
 
-	// Cart
+	// Cart tasks
 	mux.HandleFunc(shared.TypeClearCart, h.clearCart.ProcessTask)
 	mux.HandleFunc(shared.TypeSendOrderConfirmation, h.sendOrderConfirmation.ProcessTask)
 	mux.HandleFunc(shared.TypeAutoReleaseReservation, h.autoReleaseReservation.ProcessTask)
 	mux.HandleFunc(shared.TypeTrackCheckout, h.trackCheckout.ProcessTask)
+
+	// WHY REGISTER?
+	// - Maps task type to handler function
+	// - When scheduler enqueues task, worker knows which handler to call
+	// - Task type: "cart:remove_expired_promotions"
+	mux.HandleFunc(shared.TypeRemoveExpiredPromotions, h.removeExpiredPromotions.ProcessTask)
+	mux.HandleFunc(shared.TypeSendPendingNotifications, h.sendPendingNotifications.ProcessTask)
+	mux.HandleFunc(shared.TypeCleanupOldNotifications, h.cleanupOldNotifications.ProcessTask)
+	mux.HandleFunc(shared.TypeRetryFailedDeliveries, h.retryFailedDeliveries.ProcessTask)
+
 }

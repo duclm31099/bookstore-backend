@@ -11,6 +11,7 @@ type Service interface {
 	// Authentication
 	Register(ctx context.Context, req RegisterRequest) (*UserDTO, error)
 	Login(ctx context.Context, req LoginRequest) (*LoginResponse, error)
+	Logout(ctx context.Context, userID uuid.UUID) error
 	VerifyEmail(ctx context.Context, token string) error
 	ForgotPassword(ctx context.Context, req ForgotPasswordRequest) error
 	ResetPassword(ctx context.Context, req ResetPasswordRequest) error

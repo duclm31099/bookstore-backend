@@ -54,6 +54,35 @@ func BookToListDTO(book Book) ListBooksResponse {
 		MetaKeywords:    book.MetaKeywords,
 	}
 }
+func ToBookResponse(books []Book) []BookResponse {
+
+	var result []BookResponse
+	for _, b := range books {
+		var temp BookResponse
+		temp = BookResponse{
+			ID:             b.ID,
+			Title:          b.Title,
+			Author:         &AuthorResponse{ID: b.AuthorID, Name: b.AuthorName},
+			Publisher:      &PublisherResponse{ID: b.PublisherID, Name: b.PublisherName},
+			Slug:           b.Slug,
+			Description:    b.Description,
+			Price:          b.Price,
+			CompareAtPrice: b.CompareAtPrice,
+			CoverURL:       b.CoverURL,
+			Language:       b.Language,
+			Format:         b.Format,
+			AverageRating:  &b.RatingAverage,
+			ReviewCount:    &b.RatingCount,
+			ViewCount:      b.ViewCount,
+			SoldCount:      b.SoldCount,
+			IsFeatured:     b.IsFeatured,
+			TotalStock:     &b.TotalStock,
+			Images:         b.Images,
+		}
+		result = append(result, temp)
+	}
+	return result
+}
 
 // Helper: Hash string to integer
 func hashString(s string) uint32 {
@@ -130,5 +159,37 @@ func ToBookEntity(req CreateBookRequest, finalSlug string) *Book {
 		Version:         0,
 		CreatedAt:       time.Now(),
 		UpdatedAt:       time.Now(),
+	}
+}
+
+func BookEntityToDetailResponse(b Book) *BookDetailResponse {
+	return &BookDetailResponse{
+		ID:              b.ID,
+		Title:           b.Title,
+		Author:          &AuthorDTO{ID: b.AuthorID, Name: b.AuthorName},
+		Category:        &CategoryDTO{ID: b.CategoryID, Name: b.CategoryName},
+		Publisher:       &PublisherDTO{ID: b.PublisherID, Name: b.PublisherName},
+		Description:     b.Description,
+		Price:           b.Price,
+		Language:        b.Language,
+		Format:          b.Format,
+		CoverURL:        b.CoverURL,
+		PublishedYear:   b.PublishedYear,
+		ViewCount:       b.ViewCount,
+		SoldCount:       b.SoldCount,
+		TotalStock:      b.TotalStock,
+		Inventories:     []InventoryDetailDTO{}, // Batch fetch doesn't include detailed inventory
+		Reviews:         []ReviewDTO{},          // Batch fetch doesn't include reviews
+		Dimensions:      b.Dimensions,
+		WeightGrams:     b.WeightGrams,
+		EbookFileURL:    b.EbookFileURL,
+		EbookFileSizeMB: b.EbookFileSizeMB,
+		ISBN:            b.ISBN,
+		EbookFormat:     b.EbookFormat,
+		IsActive:        b.IsActive,
+		MetaTitle:       b.MetaTitle,
+		MetaDescription: b.MetaDescription,
+		MetaKeywords:    b.MetaKeywords,
+		Images:          b.Images,
 	}
 }

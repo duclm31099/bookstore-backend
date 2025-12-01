@@ -137,7 +137,7 @@ func (r *PostgresRepository) FindByCodeActive(ctx context.Context, code string) 
 			id, code, name, description,
 			discount_type, discount_value, max_discount_amount,
 			min_order_amount, applicable_category_ids, first_order_only,
-			max_uses, max_uses_per_user, current_uses,
+			max_uses, COALESCE(max_uses_per_user, 0) AS max_uses_per_user, current_uses,
 			starts_at, expires_at, is_active, version,
 			created_at, updated_at
 		FROM promotions

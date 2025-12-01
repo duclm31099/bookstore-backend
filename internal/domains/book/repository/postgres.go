@@ -783,3 +783,45 @@ func (r *postgresRepository) FindBySlugWithTx(ctx context.Context, tx pgx.Tx, sl
 
 	return &book, nil
 }
+
+func (r *postgresRepository) GetBooksByIDs(ctx context.Context, ids []string) ([]model.Book, error) {
+	if len(ids) == 0 {
+		return []model.Book{}, nil
+	}
+
+	query := `
+		SELECT 
+			b.id, b.title, b.slug, b.isbn, b.author_id, b.publisher_id, 
+			b.category_id, b.price, b.compare_at_price, b.cost_price, 
+			b.cover_url, b.description, b.pages, b.language, b.published_year, 
+			b.format, b.dimensions, b.weight_grams, b.ebook_file_url, 
+			b.ebook_file_size_mb, b.ebook_format, b.is_active, b.is_featured, 
+			b.view_count, b.sold_count, b.meta_title, b.meta_description, 
+			COALESCE(b.meta_keywords, ARRAY[]::text[]) AS meta_keywords, b.rating_average, b.rating_count, b.version, 
+			b.images, b.created_at, b.updated_at, b.deleted_at,
+			a.name AS author_name,
+			c.name AS category_name,
+			p.name AS publisher_name,
+			COALESCE(bts.available, 0) AS total_stock
+		FROM books b
+		LEFT JOIN authors a ON b.author_id = a.id
+		LEFT JOIN categories c ON b.category_id = c.id
+		LEFT JOIN publishers p ON b.publisher_id = p.id
+		LEFT JOIN books_total_stock bts ON b.id = bts.book_id
+		WHERE b.id = ANY($1) AND b.deleted_at IS NULL
+	`
+
+	rows, err := r.pool.Query(ctx, query, ids)
+	if err != nil {
+		return nil, fmt.Errorf("failed to batch get books: %w", err)
+	}
+	defer rows.Close()
+
+	// Use pgx.CollectRows for cleaner scanning
+	books, err := pgx.CollectRows(rows, pgx.RowToStructByName[model.Book])
+	if err != nil {
+		return nil, fmt.Errorf("failed to collect rows: %w", err)
+	}
+
+	return books, nil
+}

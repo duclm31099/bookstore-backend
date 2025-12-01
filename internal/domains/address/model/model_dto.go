@@ -307,12 +307,6 @@ func ValidateWard(ward string) error {
 		return NewInvalidWard("ward must not exceed 100 characters")
 	}
 
-	wardRegex := regexp.MustCompile(`^[a-zA-Z0-9\s\-àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ]+$`)
-
-	if !wardRegex.MatchString(ward) {
-		return NewInvalidWard(ward)
-	}
-
 	return nil
 }
 

@@ -25,9 +25,11 @@ func NewPostgresRepository(pool *pgxpool.Pool) RepositoryInterface {
 func (r *postgresRepository) Create(ctx context.Context, addr *model.Address) (*model.Address, error) {
 	query := `
         INSERT INTO addresses 
-        (user_id, recipient_name, phone, province, district, ward, street, address_type, is_default, notes, latitude, longitude, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
-        RETURNING id, user_id, recipient_name, phone, province, district, ward, street, address_type, is_default, notes, latitude, longitude, created_at, updated_at
+        (user_id, recipient_name, phone, province, district, ward, street, address_type, is_default, notes, latitude, longitude)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        RETURNING 
+					id, user_id, recipient_name, phone, province, district, ward, street, 
+					address_type, is_default, notes, latitude, longitude
     `
 
 	row := r.pool.QueryRow(
@@ -43,7 +45,6 @@ func (r *postgresRepository) Create(ctx context.Context, addr *model.Address) (*
 		&address.Province, &address.District, &address.Ward, &address.Street,
 		&address.AddressType, &address.IsDefault, &address.Notes,
 		&address.Latitude, &address.Longitude,
-		&address.CreatedAt, &address.UpdatedAt,
 	)
 
 	if err != nil {

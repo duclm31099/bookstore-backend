@@ -29,9 +29,10 @@ type CartResponse struct {
 	Subtotal   decimal.Decimal    `json:"subtotal"`
 
 	// Promo information (if applied)
-	PromoCode      *string          `json:"promo_code,omitempty"`
-	DiscountAmount *decimal.Decimal `json:"discount_amount,omitempty"`
-	Total          *decimal.Decimal `json:"total,omitempty"`
+	PromoCode      *string                `json:"promo_code,omitempty"`
+	DiscountAmount *decimal.Decimal       `json:"discount_amount,omitempty"`
+	Total          *decimal.Decimal       `json:"total,omitempty"`
+	PromoMetadata  map[string]interface{} `json:"promo_metadata,omitempty" db:"promo_metadata"` // ✅ JSONB
 
 	ExpiresAt  time.Time `json:"expires_at"`
 	CreatedAt  time.Time `json:"created_at"`
@@ -48,13 +49,13 @@ type Pagination struct {
 
 // CartItemResponse represents cart item with book details
 type CartItemResponse struct {
-	ID       uuid.UUID       `json:"id"`
-	BookID   uuid.UUID       `json:"book_id"`
-	CartID   uuid.UUID       `json:"cart_id"`
-	Quantity int             `json:"quantity"`
-	Price    decimal.Decimal `json:"price"`    // Snapshot price
-	Subtotal decimal.Decimal `json:"subtotal"` // quantity * price
-
+	ID             uuid.UUID       `json:"id"`
+	BookID         uuid.UUID       `json:"book_id"`
+	CartID         uuid.UUID       `json:"cart_id"`
+	Quantity       int             `json:"quantity"`
+	Price          decimal.Decimal `json:"price"`    // Snapshot price
+	Subtotal       decimal.Decimal `json:"subtotal"` // quantity * price
+	CompareAtPrice decimal.Decimal `json:"compare_at_price"`
 	// Book details (from JOIN)
 	BookTitle      string          `json:"book_title"`
 	BookSlug       string          `json:"book_slug"`
@@ -67,32 +68,41 @@ type CartItemResponse struct {
 	CreatedAt      time.Time       `json:"created_at"`
 	TotalStock     int             `json:"total_stock"`
 	UpdatedAt      time.Time       `json:"updated_at"`
+	CategoryName   *string         `json:"category_name"`
+	CategoryID     *uuid.UUID      `json:"category_id"`
 }
 
 // CartItemWithBook is used for query with JOIN
 type CartItemWithBook struct {
 	CartItem
-	BookTitle    string          `db:"book_title"`
-	BookSlug     string          `db:"book_slug"`
-	BookCoverURL *string         `db:"book_cover_url"`
-	BookAuthor   string          `db:"book_author"`
-	CurrentPrice decimal.Decimal `db:"current_price"`
-	IsActive     bool            `db:"is_active"`
-	TotalStock   int             `db:"total_stock"`
+	BookTitle      string          `db:"book_title"`
+	BookSlug       string          `db:"book_slug"`
+	BookCoverURL   *string         `db:"book_cover_url"`
+	BookAuthor     string          `db:"book_author"`
+	CurrentPrice   decimal.Decimal `db:"current_price"`
+	CompareAtPrice decimal.Decimal `db:"compare_at_price"`
+	IsActive       bool            `db:"is_active"`
+	TotalStock     int             `db:"total_stock"`
+	CategoryName   *string         `db:"category_name"`
+	CategoryID     *uuid.UUID      `db:"category_id"`
 }
 
 // ToResponse converts Cart to CartResponse
 func (c *Cart) ToResponse(items []CartItemResponse) *CartResponse {
 	return &CartResponse{
-		ID:         c.ID,
-		UserID:     c.UserID,
-		SessionID:  c.SessionID,
-		Items:      items,
-		ItemsCount: c.ItemsCount,
-		Subtotal:   c.Subtotal,
-		ExpiresAt:  c.ExpiresAt,
-		CreatedAt:  c.CreatedAt,
-		UpdatedAt:  c.UpdatedAt,
+		ID:             c.ID,
+		UserID:         c.UserID,
+		SessionID:      c.SessionID,
+		Items:          items,
+		ItemsCount:     c.ItemsCount,
+		Subtotal:       c.Subtotal,
+		ExpiresAt:      c.ExpiresAt,
+		CreatedAt:      c.CreatedAt,
+		UpdatedAt:      c.UpdatedAt,
+		PromoCode:      c.PromoCode,
+		DiscountAmount: &c.Discount,
+		Total:          &c.Total,
+		PromoMetadata:  c.PromoMetadata,
 	}
 }
 
@@ -113,12 +123,15 @@ func (ci *CartItemWithBook) ToItemResponse() *CartItemResponse {
 		BookTitle:      ci.BookTitle,
 		BookSlug:       ci.BookSlug,
 		BookCoverURL:   ci.BookCoverURL,
+		CompareAtPrice: ci.CompareAtPrice,
 		BookAuthor:     ci.BookAuthor,
 		CurrentPrice:   ci.CurrentPrice,
 		IsAvailable:    ci.IsActive && ci.TotalStock > 0,
 		AvailableStock: availableStock,
 		CreatedAt:      ci.CreatedAt,
 		UpdatedAt:      ci.UpdatedAt,
+		CategoryName:   ci.CategoryName,
+		CategoryID:     ci.CategoryID,
 	}
 }
 

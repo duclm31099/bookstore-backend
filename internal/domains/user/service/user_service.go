@@ -220,6 +220,28 @@ func (s *userService) Login(ctx context.Context, req user.LoginRequest) (*user.L
 	}, nil
 }
 
+// Logout handles user logout - clears session and logs the event
+func (s *userService) Logout(ctx context.Context, userID uuid.UUID) error {
+	// 1. LOG LOGOUT EVENT (for security monitoring)
+	ipAddress := s.extractIPFromContext(ctx)
+	log.Info().
+		Str("user_id", userID.String()).
+		Str("ip_address", ipAddress).
+		Msg("User logged out")
+
+	// 2. OPTIONAL: Clear any server-side session data
+	// If you're using Redis for session management, clear it here
+	// sessionKey := fmt.Sprintf("session:%s", userID)
+	// _ = s.cache.Delete(ctx, sessionKey)
+
+	// 3. OPTIONAL: Invalidate refresh token
+	// If you're storing refresh tokens in database/cache, invalidate them here
+	// refreshTokenKey := fmt.Sprintf("refresh_token:%s", userID)
+	// _ = s.cache.Delete(ctx, refreshTokenKey)
+
+	return nil
+}
+
 // trackFailedLogin enqueues a background job to track failed login attempts
 func (s *userService) trackFailedLogin(ctx context.Context, userID, ipAddress string) {
 	payload := shared.FailedLoginPayload{

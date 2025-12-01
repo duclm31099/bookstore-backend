@@ -1,6 +1,7 @@
 package category
 
 import (
+	"bookstore-backend/internal/domains/book/model"
 	"context"
 
 	"github.com/google/uuid"
@@ -320,7 +321,7 @@ type CategoryRepository interface {
 	// USE CASE:
 	// - Category page: "Tất cả sách trong mục này"
 	// - Display: "Có X cuốn sách"
-	GetBooksInCategory(ctx context.Context, categoryID uuid.UUID, limit int, offset int) ([]uuid.UUID, int64, error)
+	GetBooksInCategory(ctx context.Context, categoryID uuid.UUID, limit int, offset int) ([]model.Book, int64, error)
 
 	// GetCategoryBookCount lấy số books
 	GetCategoryBookCount(ctx context.Context, categoryID uuid.UUID) (int64, error)

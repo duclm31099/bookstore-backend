@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"bookstore-backend/internal/domains/book/model"
 	"bookstore-backend/internal/domains/category"
 	"bookstore-backend/pkg/logger"
 
@@ -249,6 +250,16 @@ func (s *categoryServiceImpl) GetAll(
 			"error": fmt.Sprintf("GetAll: repository get failed: %v", err),
 		})
 		return nil, fmt.Errorf("get categories: failed to fetch")
+	}
+	for i, entity := range entities {
+		count, err := s.repository.GetCategoryBookCount(ctx, entity.ID)
+		entities[i].BooksCount = count
+		if err != nil {
+			logger.Info("GetAll failed", map[string]interface{}{
+				"error": fmt.Sprintf("GetAll: repository get failed: %v", err),
+			})
+			return nil, fmt.Errorf("get categories: failed to fetch")
+		}
 	}
 
 	// ========== Map to Response DTOs ==========
@@ -678,7 +689,7 @@ func (s *categoryServiceImpl) Delete(ctx context.Context, categoryID uuid.UUID) 
 		if entity.ChildCount != nil && *entity.ChildCount > 0 {
 			return category.ErrHasChildren
 		}
-		if entity.TotalBooksCount != nil && *entity.TotalBooksCount > 0 {
+		if entity.BooksCount > 0 {
 			return category.ErrHasBooks
 		}
 
@@ -799,8 +810,8 @@ func (s *categoryServiceImpl) BulkDelete(ctx context.Context, req *category.Bulk
 			reason := ""
 			if entity.ChildCount != nil && *entity.ChildCount > 0 {
 				reason = fmt.Sprintf("has %d children", *entity.ChildCount)
-			} else if entity.TotalBooksCount != nil && *entity.TotalBooksCount > 0 {
-				reason = fmt.Sprintf("has %d books", *entity.TotalBooksCount)
+			} else if entity.BooksCount > 0 {
+				reason = fmt.Sprintf("has %d books", entity.BooksCount)
 			}
 			failedItems = append(failedItems, category.BulkActionFailedItem{
 				ID:     id,
@@ -838,8 +849,8 @@ func (s *categoryServiceImpl) GetBooksInCategory(
 	ctx context.Context,
 	categoryID uuid.UUID,
 	limit int,
-	offset int,
-) ([]uuid.UUID, int64, error) {
+	page int,
+) ([]model.BookResponse, int64, error) {
 	// ========== Validate Input ==========
 	if categoryID == uuid.Nil {
 		return nil, 0, fmt.Errorf("get books: invalid category id")
@@ -849,8 +860,8 @@ func (s *categoryServiceImpl) GetBooksInCategory(
 	if limit <= 0 || limit > 100 {
 		limit = 10
 	}
-	if offset < 0 {
-		offset = 0
+	if page < 0 {
+		page = 0
 	}
 
 	// ========== Check Category Exists ==========
@@ -864,12 +875,12 @@ func (s *categoryServiceImpl) GetBooksInCategory(
 	}
 
 	// ========== Get Books from Repository ==========
-	bookIDs, total, err := s.repository.GetBooksInCategory(ctx, categoryID, limit, offset)
+	books, total, err := s.repository.GetBooksInCategory(ctx, categoryID, limit, page)
 	if err != nil {
 		return nil, 0, fmt.Errorf("get books: failed to fetch")
 	}
-
-	return bookIDs, total, nil
+	b := model.ToBookResponse(books)
+	return b, total, nil
 }
 
 // ========== BOOK-RELATED: GetCategoryBookCount ==========

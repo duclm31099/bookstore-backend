@@ -14,6 +14,7 @@ import (
 	cartService "bookstore-backend/internal/domains/cart/service"
 	"bookstore-backend/internal/domains/promotion/model"
 	"bookstore-backend/internal/domains/promotion/repository"
+	"bookstore-backend/pkg/logger"
 )
 
 // PromotionService xử lý business logic cho promotion
@@ -401,6 +402,9 @@ func (s *promotionService) ValidatePromotion(ctx context.Context, req *model.Val
 
 	// Step 1: Find active promotion
 	promo, err := s.repo.FindByCodeActive(ctx, req.Code)
+	logger.Info("find promo by code", map[string]interface{}{
+		"promo": promo,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -558,6 +562,86 @@ func (s *promotionService) ValidatePromotion(ctx context.Context, req *model.Val
 // ListActivePromotions lấy danh sách promotion active (Public API)
 func (s *promotionService) ListActivePromotions(ctx context.Context, categoryID *uuid.UUID, page, limit int) ([]*model.Promotion, int, error) {
 	return s.repo.ListActive(ctx, categoryID, page, limit)
+}
+
+// GetAvailablePromotionsForCart lấy danh sách promotions có thể áp dụng cho cart
+//
+// Business Logic Flow:
+// 1. Get cart info by cartID and verify ownership
+// 2. Get all active promotions
+// 3. Filter promotions based on:
+//   - is_active = true
+//   - Valid time window (starts_at <= now <= expires_at)
+//   - min_order_amount <= cart.subtotal
+//   - Usage limit not reached
+//
+// 4. Convert to AvailablePromotionResponse and return
+func (s *promotionService) GetAvailablePromotionsForCart(
+	ctx context.Context,
+	cartID uuid.UUID,
+	userID uuid.UUID,
+) ([]*model.AvailablePromotionResponse, error) {
+	// Step 1: Get cart info and verify ownership
+	cartInfo, err := s.cart.GetOrCreateCart(ctx, &userID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("get cart: %w", err)
+	}
+
+	// Verify cart ID matches
+	if cartInfo.ID != cartID {
+		return nil, fmt.Errorf("cart not found or access denied")
+	}
+
+	// Step 2: Get all active promotions (limit 100 for now)
+	allPromotions, _, err := s.repo.ListActive(ctx, nil, 1, 100)
+	if err != nil {
+		return nil, fmt.Errorf("list active promotions: %w", err)
+	}
+
+	// Step 3: Filter promotions
+	var availablePromotions []*model.AvailablePromotionResponse
+	now := time.Now()
+
+	for _, promo := range allPromotions {
+		// Check is_active
+		if !promo.IsActive {
+			continue
+		}
+
+		// Check valid time window
+		if !promo.IsValidTimeWindow() {
+			continue
+		}
+
+		// Check if not expired or not started
+		if now.Before(promo.StartsAt) || now.After(promo.ExpiresAt) {
+			continue
+		}
+
+		// Check usage limit not reached
+		if promo.IsUsageLimitReached() {
+			continue
+		}
+
+		// Check minimum order amount
+		if cartInfo.Subtotal.LessThan(promo.MinOrderAmount) {
+			continue
+		}
+
+		// Promotion is available, add to result
+		availablePromotions = append(availablePromotions, &model.AvailablePromotionResponse{
+			Code:              promo.Code,
+			Name:              promo.Name,
+			Description:       promo.Description,
+			DiscountType:      string(promo.DiscountType),
+			DiscountValue:     promo.DiscountValue,
+			MaxDiscountAmount: promo.MaxDiscountAmount,
+			MinOrderAmount:    promo.MinOrderAmount,
+			ExpiresAt:         promo.ExpiresAt,
+		})
+	}
+
+	return availablePromotions, nil
 }
 
 // -------------------------------------------------------------------

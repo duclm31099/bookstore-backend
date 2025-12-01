@@ -54,6 +54,7 @@ func SetupRouter(c *container.Container) *gin.Engine {
 		setupAdminOrderRoutes(v1, c)
 		setupAdminPaymentRoutes(v1, c)
 		setupReviewRoutes(v1, c)
+		setupNotificationRoutes(v1, c)
 	}
 
 	return router
@@ -67,6 +68,7 @@ func setupAuthRoutes(v1 *gin.RouterGroup, c *container.Container) {
 	{
 		auth.POST("/register", c.UserHandler.Register)
 		auth.POST("/login", c.UserHandler.Login)
+		auth.POST("/logout", middleware.AuthMiddleware(c.Config.JWT.Secret), c.UserHandler.Logout)
 		auth.POST("/refresh", c.UserHandler.RefreshToken)
 		auth.GET("/verify-email", c.UserHandler.VerifyEmail)
 		auth.POST("/resend-verification", c.UserHandler.ResendVerification)
@@ -285,6 +287,7 @@ func setupCartRoutes(v1 *gin.RouterGroup, c *container.Container, config *middle
 		cart.POST("/apply-promotion", c.CartHandler.ApplyPromoCode)
 		cart.DELETE("/remove-promotion", c.CartHandler.RemovePromoCode)
 		cart.POST("/checkout", c.CartHandler.Checkout)
+		cart.GET("/:cart_id/promotions", c.CartHandler.GetAvailablePromotions)
 	}
 }
 
@@ -413,6 +416,58 @@ func setupReviewRoutes(v1 *gin.RouterGroup, c *container.Container) {
 		adminReviews.PATCH("/:id/moderate", c.ReviewHandler.AdminModerateReview)
 		adminReviews.PATCH("/:id/feature", c.ReviewHandler.AdminFeatureReview)
 		adminReviews.DELETE("/:id", c.ReviewHandler.AdminDeleteReview)
+	}
+}
+
+// ========================================
+// NOTIFICATION ROUTES
+// ========================================
+func setupNotificationRoutes(v1 *gin.RouterGroup, c *container.Container) {
+	// User notification routes
+	notifications := v1.Group("/notifications")
+
+	notifications.Use(middleware.AuthMiddleware(c.Config.JWT.Secret))
+	{
+		// Notifications
+		notifications.GET("", c.NotificationHandler.ListNotifications)
+		notifications.GET("/unread-count", c.NotificationHandler.GetUnreadCount)
+		notifications.GET("/:id", c.NotificationHandler.GetNotification)
+		notifications.POST("/mark-read", c.NotificationHandler.MarkAsRead)
+		notifications.POST("/mark-all-read", c.NotificationHandler.MarkAllAsRead)
+		notifications.DELETE("/:id", c.NotificationHandler.DeleteNotification)
+
+		// Preferences
+		notifications.GET("/preferences", c.PreferencesHandler.GetPreferences)
+		notifications.PUT("/preferences", c.PreferencesHandler.UpdatePreferences)
+	}
+
+	// ================================================
+	// ADMIN ENDPOINTS (Admin Only)
+	// ================================================
+
+	admin := v1.Group("/admin")
+	// admin.Use(middleware.AdminMiddleware(c.Config.JWT.Secret))
+	{
+		// Templates
+		templates := admin.Group("/notification-templates")
+		{
+			templates.POST("", c.TemplateHandler.CreateTemplate)
+			templates.GET("", c.TemplateHandler.ListTemplates)
+			templates.GET("/:id", c.TemplateHandler.GetTemplate)
+			templates.PUT("/:id", c.TemplateHandler.UpdateTemplate)
+			templates.DELETE("/:id", c.TemplateHandler.DeleteTemplate)
+		}
+
+		// Campaigns
+		campaigns := admin.Group("/notification-campaigns")
+		{
+			campaigns.POST("", c.CampaignHandler.CreateCampaign)
+			campaigns.GET("", c.CampaignHandler.ListCampaigns)
+			campaigns.GET("/:id", c.CampaignHandler.GetCampaign)
+			campaigns.POST("/:id/start", c.CampaignHandler.StartCampaign)
+			campaigns.POST("/:id/cancel", c.CampaignHandler.CancelCampaign)
+		}
+
 	}
 }
 

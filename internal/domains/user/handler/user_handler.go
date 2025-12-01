@@ -202,6 +202,46 @@ func (h *UserHandler) Login(c *gin.Context) {
 	response.Success(c, http.StatusOK, "Login successful", res)
 }
 
+// Logout xử lý POST /auth/logout
+// @Summary      User logout
+// @Description  Logout user and clear refresh token cookie
+// @Security     BearerAuth
+// @Router       /auth/logout [post]
+func (h *UserHandler) Logout(c *gin.Context) {
+	// STEP 1: GET USER ID FROM CONTEXT
+	userID, err := getUserIDFromContext(c)
+	if err != nil {
+		// If no user in context, still clear cookie and return success
+		// This handles cases where token is expired but user wants to logout
+		c.SetCookie("refresh_token", "", -1, "/", "", true, true)
+		response.Success(c, http.StatusOK, "Logged out successfully", nil)
+		return
+	}
+
+	// STEP 2: CALL SERVICE LAYER
+	// Service logs the logout event for security monitoring
+	if err := h.service.Logout(c.Request.Context(), userID); err != nil {
+		h.handleError(c, err)
+		return
+	}
+
+	// STEP 3: CLEAR REFRESH TOKEN COOKIE
+	// Set MaxAge to -1 to delete the cookie
+	c.SetCookie(
+		"refresh_token", // Cookie name
+		"",              // Empty value
+		-1,              // MaxAge -1 = delete cookie
+		"/",             // Path
+		"",              // Domain
+		true,            // Secure
+		true,            // HttpOnly
+	)
+
+	// STEP 4: SUCCESS RESPONSE
+	// Client should also clear access token from localStorage
+	response.Success(c, http.StatusOK, "Logged out successfully", nil)
+}
+
 // VerifyEmail xử lý GET /auth/verify-email?token=xxx - FR-AUTH-001
 // @Summary      Verify email address
 // @Description  Confirm email verification token

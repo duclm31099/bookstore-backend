@@ -13,9 +13,11 @@ import (
 
 type ServiceInterface interface {
 	ValidatePromotion(ctx context.Context, req *model.ValidatePromotionRequest) (*model.ValidationResult, error)
+	ValidatePromotionForOrder(ctx context.Context, code string, userID uuid.UUID, orderItems []cart.CartItem, subtotal decimal.Decimal) (*model.ValidationResult, error)
 	ApplyPromotionToCart(ctx context.Context, userID uuid.UUID, code string) (*cart.CartResponse, error)
 	RemovePromotionFromCart(ctx context.Context, userID uuid.UUID) (*cart.CartResponse, error)
 	ListActivePromotions(ctx context.Context, categoryID *uuid.UUID, page, limit int) ([]*model.Promotion, int, error)
+	GetAvailablePromotionsForCart(ctx context.Context, cartID uuid.UUID, userID uuid.UUID) ([]*model.AvailablePromotionResponse, error)
 
 	// Admin methods
 	CreatePromotion(ctx context.Context, req *model.CreatePromotionRequest) (*model.Promotion, error)

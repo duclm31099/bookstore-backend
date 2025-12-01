@@ -60,17 +60,22 @@ func (s *BookService) ListBooks(ctx context.Context, req model.ListBooksRequest)
 	if err := model.ValidateListRequest(req); err != nil {
 		return nil, nil, err
 	}
+	// 1) Định nghĩa type rõ ràng (dễ debug hơn)
+	type BooksCache struct {
+		Data       []model.ListBooksResponse `json:"data"`
+		Pagination model.PaginationMeta      `json:"pagination"`
+	}
+	var result BooksCache
 
 	// Generate cache key from request parameters
 	cacheKey := model.GenerateCacheKey("books:list", req)
-	var result struct {
-		Data       []model.ListBooksResponse
-		Pagination model.PaginationMeta
-	}
-	_, err := s.cache.Get(ctx, cacheKey, &result)
+	found, err := s.cache.Get(ctx, cacheKey, &result)
 	// Try to get from cache first
 	if err != nil {
 		return nil, nil, err
+	}
+	if found {
+		return result.Data, &result.Pagination, nil
 	}
 
 	// Cache MISS - query database
@@ -113,18 +118,13 @@ func (s *BookService) ListBooks(ctx context.Context, req model.ListBooksRequest)
 	}
 
 	// Cache the result
-	cacheData := struct {
-		Data []model.ListBooksResponse
-		Meta model.PaginationMeta
-	}{
-		Data: responses,
-		Meta: *meta,
+	cacheData := BooksCache{
+		Data:       responses,
+		Pagination: *meta,
 	}
 
-	jsonData, _ := json.Marshal(cacheData)
-	if err := s.cache.Set(ctx, cacheKey, string(jsonData), 60*time.Minute); err != nil { // TTL 1 hour
+	if err := s.cache.Set(ctx, cacheKey, cacheData, 24*time.Hour); err != nil {
 		log.Printf("Cache SET error for key %s: %v", cacheKey, err)
-		// Don't fail request if cache write fails
 	}
 
 	return responses, meta, nil
@@ -643,4 +643,25 @@ func (s *BookService) buildBooksExcelFile(books []model.ListBooksResponse) (*exc
 	}
 
 	return f, nil
+}
+func (s *BookService) GetBooksByIDs(ctx context.Context, ids []string) ([]model.BookDetailResponse, error) {
+	if len(ids) == 0 {
+		return []model.BookDetailResponse{}, nil
+	}
+
+	// 1. Get books from repository
+	books, err := s.repo.GetBooksByIDs(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get books by IDs: %w", err)
+	}
+
+	// 2. Map to DTOs
+	responses := make([]model.BookDetailResponse, len(books))
+	for i, book := range books {
+		// Note: Batch fetch currently doesn't include inventories or reviews for performance
+		// If needed, we can add batch fetching for those as well
+		responses[i] = *model.BookEntityToDetailResponse(book)
+	}
+
+	return responses, nil
 }

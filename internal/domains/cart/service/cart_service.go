@@ -2,6 +2,7 @@ package service
 
 import (
 	addressService "bookstore-backend/internal/domains/address/service"
+	bookModel "bookstore-backend/internal/domains/book/model"
 	bookS "bookstore-backend/internal/domains/book/service"
 	"bookstore-backend/internal/domains/cart/model"
 	repo "bookstore-backend/internal/domains/cart/repository"
@@ -10,6 +11,7 @@ import (
 	inveService "bookstore-backend/internal/domains/inventory/service"
 	orderModel "bookstore-backend/internal/domains/order/model"
 	orderS "bookstore-backend/internal/domains/order/service"
+	promotionModel "bookstore-backend/internal/domains/promotion/model"
 	"bookstore-backend/internal/shared"
 	"bookstore-backend/internal/shared/utils"
 	"bookstore-backend/pkg/logger"
@@ -23,6 +25,11 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+type PromotionServiceInterface interface {
+	ValidatePromotion(ctx context.Context, req *promotionModel.ValidatePromotionRequest) (*promotionModel.ValidationResult, error)
+	CalculateDiscount(promo *promotionModel.Promotion, subtotal decimal.Decimal) decimal.Decimal
+}
+
 type CartService struct {
 	repository       repo.RepositoryInterface
 	inventoryService inveService.ServiceInterface
@@ -31,6 +38,7 @@ type CartService struct {
 	bookService      bookS.ServiceInterface
 	orderService     orderS.OrderService
 	asynqClient      *asynq.Client
+	promotionService PromotionServiceInterface
 }
 
 func NewCartService(
@@ -43,12 +51,7 @@ func NewCartService(
 	asynqClient *asynq.Client,
 
 ) ServiceInterface {
-	if orderService == nil {
-		logger.Info("orderService", map[string]interface{}{
-			"orderService": orderService,
-		})
-		panic("orderService is required")
-	}
+
 	return &CartService{
 		repository:       r,
 		inventoryService: inventoryS,
@@ -59,6 +62,11 @@ func NewCartService(
 		asynqClient:      asynqClient,
 	}
 }
+
+func (s *CartService) SetPromotionService(p PromotionServiceInterface) {
+	s.promotionService = p
+}
+
 func (s *CartService) ValidatePromoCode(ctx context.Context, req *model.ValidatePromoRequest) (*model.PromotionValidationResult, error) {
 	// Step 1: Normalize and validate input
 	promoCode := strings.ToUpper(strings.TrimSpace(req.PromoCode))
@@ -261,6 +269,7 @@ func (s *CartService) GetOrCreateCart(ctx context.Context, userID *uuid.UUID, se
 func (s *CartService) AddItem(ctx context.Context, cartID uuid.UUID, req model.AddToCartRequest) (*model.CartItemResponse, error) {
 	// Step 1: Validate cart exists and not expired
 	cart, err := s.repository.GetByID(ctx, cartID)
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to get cart: %w", err)
 	}
@@ -272,12 +281,13 @@ func (s *CartService) AddItem(ctx context.Context, cartID uuid.UUID, req model.A
 	}
 
 	// Step 2: Validate request quantity
-	if req.Quantity <= 0 || req.Quantity > 100 {
+	if req.Quantity <= 0 || req.Quantity > model.MaxItemsPerProduct {
 		return nil, model.ErrInvalidQuantity
 	}
 
 	// Step 3: Get book and validate
 	book, err := s.bookService.GetBookDetail(ctx, req.BookID.String())
+
 	if err != nil {
 		return nil, fmt.Errorf("book not found: %w", err)
 	}
@@ -287,6 +297,7 @@ func (s *CartService) AddItem(ctx context.Context, cartID uuid.UUID, req model.A
 
 	// Step 4: Check existing item
 	existingItem, err := s.repository.GetItemByBookInCart(ctx, cartID, req.BookID)
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to check existing item: %w", err)
 	}
@@ -303,12 +314,12 @@ func (s *CartService) AddItem(ctx context.Context, cartID uuid.UUID, req model.A
 		isUpdate = false
 	}
 
-	if finalQuantity > 100 {
+	if finalQuantity > model.MaxItemsPerProduct {
 		currentQty := 0
 		if existingItem != nil {
 			currentQty = existingItem.Quantity
 		}
-		return nil, fmt.Errorf("maximum 100 items per product (current: %d, adding: %d)", currentQty, req.Quantity)
+		return nil, fmt.Errorf("maximum %d items per product (current: %d, adding: %d)", model.MaxItemsPerProduct, currentQty, req.Quantity)
 	}
 
 	// Step 6: Check stock availability (only for increment)
@@ -316,13 +327,19 @@ func (s *CartService) AddItem(ctx context.Context, cartID uuid.UUID, req model.A
 		incrementQty := req.Quantity
 		if incrementQty > 0 {
 			// Only check stock for increment
-			totalAvailable := s.getTotalAvailableStock(ctx, req.BookID)
+			totalAvailable, err := s.getTotalAvailableStock(ctx, req.BookID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to check stock: %w", err)
+			}
 			if totalAvailable < incrementQty {
 				return nil, fmt.Errorf("insufficient stock: requested %d more, available %d", incrementQty, totalAvailable)
 			}
 		}
 	} else {
-		totalAvailable := s.getTotalAvailableStock(ctx, req.BookID)
+		totalAvailable, err := s.getTotalAvailableStock(ctx, req.BookID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check stock: %w", err)
+		}
 		if totalAvailable < req.Quantity {
 			return nil, fmt.Errorf("insufficient stock: requested %d, available %d", req.Quantity, totalAvailable)
 		}
@@ -348,7 +365,6 @@ func (s *CartService) AddItem(ctx context.Context, cartID uuid.UUID, req model.A
 	if err != nil {
 		return nil, fmt.Errorf("failed to save item: %w", err)
 	}
-
 	// Step 8: Build response
 	response := &model.CartItemResponse{
 		ID:           savedItem.ID,
@@ -362,25 +378,30 @@ func (s *CartService) AddItem(ctx context.Context, cartID uuid.UUID, req model.A
 		BookAuthor:   book.Author.Name,
 		CurrentPrice: book.Price,
 		IsActive:     book.IsActive,
-		TotalStock:   s.getTotalAvailableStock(ctx, req.BookID),
 		CreatedAt:    savedItem.CreatedAt,
 		UpdatedAt:    savedItem.UpdatedAt,
 	}
+	// Fetch total stock separately (errors are non-critical for response)
+	totalStock, _ := s.getTotalAvailableStock(ctx, req.BookID)
+	response.TotalStock = totalStock
 
 	return response, nil
 }
 
-// Helper method
-func (s *CartService) getTotalAvailableStock(ctx context.Context, bookID uuid.UUID) int {
-	inventories, err := s.inventoryRepo.GetInventoriesByBook(ctx, bookID)
+// getTotalAvailableStock gets total available stock across all warehouses
+// Uses database aggregation for better performance
+func (s *CartService) getTotalAvailableStock(ctx context.Context, bookID uuid.UUID) (int, error) {
+	totalStock, err := s.inventoryRepo.GetTotalStockForBook(ctx, bookID)
 	if err != nil {
-		return 0
+		logger.Error("Failed to get total stock", err)
+		return 0, fmt.Errorf("failed to check stock: %w", err)
 	}
-	total := 0
-	for _, inv := range inventories {
-		total += inv.AvailableQuantity
+
+	if totalStock == nil {
+		return 0, nil // No inventory records
 	}
-	return total
+
+	return totalStock.TotalAvailable, nil
 }
 
 // ListItems implements ServiceInterface.ListItems
@@ -389,8 +410,8 @@ func (s *CartService) ListItems(ctx context.Context, cartID uuid.UUID, page int,
 	if page < 1 {
 		page = 1
 	}
-	if limit < 1 || limit > 100 {
-		limit = 20
+	if limit < 1 || limit > model.MaxPageSize {
+		limit = model.DefaultPageSize
 	}
 
 	// Step 1: Fetch cart from DB (validate exists + get metadata)
@@ -577,12 +598,28 @@ func (s *CartService) MergeCart(ctx context.Context, sessionID string, userID uu
 	}
 
 	// Step 5: Merge items
+	// Batch load books to avoid N+1 query
+	bookIDs := make([]string, len(anonymousItems))
+	for i, item := range anonymousItems {
+		bookIDs[i] = item.BookID.String()
+	}
+
+	books, err := s.bookService.GetBooksByIDs(ctx, bookIDs)
+	if err != nil {
+		return fmt.Errorf("failed to batch load books: %w", err)
+	}
+
+	booksMap := make(map[string]bookModel.BookDetailResponse)
+	for _, b := range books {
+		booksMap[b.ID.String()] = b
+	}
+
 	for _, anonItem := range anonymousItems {
 		// Validate book still active
-		book, err := s.bookService.GetBookDetail(ctx, anonItem.BookID.String())
-		if err != nil || !book.IsActive {
+		book, exists := booksMap[anonItem.BookID.String()]
+		if !exists || !book.IsActive {
 			// Skip inactive books
-			logger.Error("Skipping inactive book in merge", err)
+			logger.Error("Skipping inactive/missing book in merge", nil)
 			continue
 		}
 
@@ -591,8 +628,8 @@ func (s *CartService) MergeCart(ctx context.Context, sessionID string, userID uu
 		if exists {
 			// Merge: ADD quantities together (not max)
 			newQty := existingUserItem.Quantity + anonItem.Quantity
-			if newQty > 100 {
-				newQty = 100 // Cap at max
+			if newQty > model.MaxItemsPerProduct {
+				newQty = model.MaxItemsPerProduct // Cap at max
 			}
 
 			// Update with latest price
@@ -642,7 +679,7 @@ func (s *CartService) MergeCart(ctx context.Context, sessionID string, userID uu
 
 func (s *CartService) UpdateItemQuantity(ctx context.Context, cartID uuid.UUID, itemID uuid.UUID, quantity int) (*model.CartItemResponse, error) {
 	// Step 1: Validate quantity
-	if quantity < 0 || quantity > 100 {
+	if quantity < 0 || quantity > model.MaxItemsPerProduct {
 		return nil, model.ErrInvalidQuantity
 	}
 
@@ -685,7 +722,10 @@ func (s *CartService) UpdateItemQuantity(ctx context.Context, cartID uuid.UUID, 
 	// Step 5: Check stock if increasing quantity
 	if quantity > item.Quantity {
 		additionalQty := quantity - item.Quantity
-		totalAvailable := s.getTotalAvailableStock(ctx, item.BookID)
+		totalAvailable, err := s.getTotalAvailableStock(ctx, item.BookID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check stock: %w", err)
+		}
 
 		if totalAvailable < additionalQty {
 			return nil, fmt.Errorf("insufficient stock: need %d more, only %d available",
@@ -1104,9 +1144,7 @@ func (s *CartService) Checkout(ctx context.Context, userID uuid.UUID, cartID uui
 
 	// Validate cart
 	validation, err := s.ValidateCart(ctx, cartID, userID)
-	logger.Info("validation", map[string]interface{}{
-		"validation": validation,
-	})
+
 	if err != nil || !validation.IsValid {
 		for _, valErr := range validation.Errors {
 			response.Errors = append(response.Errors, model.CheckoutError{
@@ -1135,9 +1173,7 @@ func (s *CartService) Checkout(ctx context.Context, userID uuid.UUID, cartID uui
 
 	// ==================== PHASE 2: Validate Address ====================
 	phaseStart = time.Now()
-	logger.Info("ShippingAddressID", map[string]interface{}{
-		"ShippingAddressID": req.ShippingAddressID,
-	})
+
 	shippingAddr, err := s.address.GetAddressByID(ctx, userID, req.ShippingAddressID)
 	if err != nil {
 		response.Phases = append(response.Phases, model.CheckoutPhaseResult{
@@ -1154,9 +1190,7 @@ func (s *CartService) Checkout(ctx context.Context, userID uuid.UUID, cartID uui
 		response.Status = "failed"
 		return response, nil
 	}
-	logger.Info("shippingAddr info", map[string]interface{}{
-		"shippingAddr": shippingAddr,
-	})
+
 	if shippingAddr.Latitude == nil || shippingAddr.Longitude == nil {
 		response.Warnings = append(response.Warnings, model.CheckoutWarning{
 			Code:    "MISSING_COORDINATES",
@@ -1220,9 +1254,6 @@ func (s *CartService) Checkout(ctx context.Context, userID uuid.UUID, cartID uui
 		Message:   "Pricing calculated",
 		Timestamp: phaseStart,
 	})
-	logger.Info("response", map[string]interface{}{
-		"response": response,
-	})
 
 	// ==================== PHASE 5: Warehouse Selection (1 LẦN DUY NHẤT) ====================
 	phaseStart = time.Now()
@@ -1250,9 +1281,7 @@ func (s *CartService) Checkout(ctx context.Context, userID uuid.UUID, cartID uui
 	if err != nil {
 		return s.failCheckout(response, "AVAILABILITY_CHECK_FAILED", "Cannot check stock: "+err.Error(), "WAREHOUSE_SELECTION")
 	}
-	logger.Info("availability result", map[string]interface{}{
-		"availability": availability,
-	})
+
 	if !availability.Overall {
 		response.Errors = append(response.Errors, model.CheckoutError{
 			Code:     "INSUFFICIENT_STOCK",
@@ -1290,9 +1319,7 @@ func (s *CartService) Checkout(ctx context.Context, userID uuid.UUID, cartID uui
 			EstimatedDelivery: availability.RecommendedWarehouse.EstimatedDelivery,
 		}
 	}
-	logger.Info("response.WarehouseInfo ", map[string]interface{}{
-		"response.WarehouseInfo ": response.WarehouseInfo,
-	})
+
 	response.Phases = append(response.Phases, model.CheckoutPhaseResult{
 		Phase:     "WAREHOUSE_SELECTION",
 		Status:    "success",
@@ -1312,11 +1339,6 @@ func (s *CartService) Checkout(ctx context.Context, userID uuid.UUID, cartID uui
 		Items:         nil,
 		// Items sẽ được override bên trong orderService từ cart_items
 	}
-	logger.Info("createReq", map[string]interface{}{
-		"createReq": createReq,
-		"ctx":       ctx,
-		"userID":    userID,
-	})
 	// Gọi order service (use case duy nhất)
 	orderResp, err := s.orderService.CreateOrder(ctx, userID, createReq)
 	if err != nil {
