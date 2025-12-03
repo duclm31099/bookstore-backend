@@ -6,10 +6,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/rs/zerolog/log"
 
 	"bookstore-backend/internal/domains/notification/model"
 	"bookstore-backend/internal/domains/notification/repository"
+	user "bookstore-backend/internal/domains/user"
+	"bookstore-backend/pkg/logger"
 )
 
 // ================================================
@@ -22,6 +23,7 @@ type notificationService struct {
 	templateRepo    repository.TemplateRepository
 	rateLimitRepo   repository.RateLimitRepository
 	deliveryLogRepo repository.DeliveryLogRepository
+	userRepository  user.Repository
 
 	// Dependencies
 	prefsService    PreferencesService
@@ -35,6 +37,7 @@ func NewNotificationService(
 	templateRepo repository.TemplateRepository,
 	rateLimitRepo repository.RateLimitRepository,
 	deliveryLogRepo repository.DeliveryLogRepository,
+	userRepository user.Repository,
 ) NotificationService {
 	return &notificationService{
 		notifRepo:       notifRepo,
@@ -42,6 +45,7 @@ func NewNotificationService(
 		templateRepo:    templateRepo,
 		rateLimitRepo:   rateLimitRepo,
 		deliveryLogRepo: deliveryLogRepo,
+		userRepository:  userRepository,
 	}
 }
 
@@ -61,10 +65,10 @@ func (s *notificationService) SetDependencies(
 // ================================================
 
 func (s *notificationService) SendNotification(ctx context.Context, req model.SendNotificationRequest) (*model.Notification, error) {
-	log.Info().
-		Str("user_id", req.UserID.String()).
-		Str("template_code", req.TemplateCode).
-		Msg("[NotificationService] SendNotification started")
+	logger.Info("[NotificationService] SendNotification started", map[string]interface{}{
+		"user_id":       req.UserID.String(),
+		"template_code": req.TemplateCode,
+	})
 
 	// 1. VALIDATE TEMPLATE EXISTS AND ACTIVE
 	template, err := s.templateRepo.GetByCode(ctx, req.TemplateCode)
@@ -92,25 +96,25 @@ func (s *notificationService) SendNotification(ctx context.Context, req model.Se
 	for _, channel := range channels {
 		allowed, reason, err := s.prefsService.CanSendNotification(ctx, req.UserID, template.Code, channel)
 		if err != nil {
-			log.Warn().Err(err).Str("channel", channel).Msg("Error checking channel permission")
+			logger.Error("Error checking channel permission", err)
 			continue
 		}
 		if allowed {
 			allowedChannels = append(allowedChannels, channel)
 		} else {
-			log.Info().
-				Str("user_id", req.UserID.String()).
-				Str("channel", channel).
-				Str("reason", reason).
-				Msg("Channel blocked by user preference")
+			logger.Info("Channel blocked by user preference", map[string]interface{}{
+				"user_id": req.UserID.String(),
+				"channel": channel,
+				"reason":  reason,
+			})
 		}
 	}
 
 	if len(allowedChannels) == 0 {
-		log.Warn().
-			Str("user_id", req.UserID.String()).
-			Str("template_code", req.TemplateCode).
-			Msg("All channels blocked by user preferences")
+		logger.Info("All channels blocked by user preferences", map[string]interface{}{
+			"user_id":       req.UserID.String(),
+			"template_code": req.TemplateCode,
+		})
 		return nil, fmt.Errorf("no available channels: all blocked by user preferences")
 	}
 
@@ -123,7 +127,7 @@ func (s *notificationService) SendNotification(ctx context.Context, req model.Se
 		60, // 60 minutes window
 	)
 	if err != nil {
-		log.Error().Err(err).Msg("Error checking rate limit")
+		logger.Error("Error checking rate limit", err)
 		// Don't fail, just log and continue
 	} else if !allowed {
 		return nil, model.ErrRateLimitExceeded
@@ -134,7 +138,7 @@ func (s *notificationService) SendNotification(ctx context.Context, req model.Se
 	for _, channel := range allowedChannels {
 		title, body, err := s.templateService.RenderTemplate(ctx, req.TemplateCode, channel, req.Data)
 		if err != nil {
-			log.Error().Err(err).Str("channel", channel).Msg("Error rendering template")
+			logger.Error("Error rendering template", err)
 			continue
 		}
 
@@ -151,9 +155,9 @@ func (s *notificationService) SendNotification(ctx context.Context, req model.Se
 	// 8. CHECK FOR DUPLICATE (Idempotency)
 	existing, err := s.notifRepo.GetByIdempotencyKey(ctx, idempotencyKey)
 	if err == nil && existing != nil {
-		log.Info().
-			Str("idempotency_key", idempotencyKey).
-			Msg("Duplicate notification detected, returning existing")
+		logger.Info("Duplicate notification detected, returning existing", map[string]interface{}{
+			"idempotency_key": idempotencyKey,
+		})
 		return existing, nil
 	}
 
@@ -197,18 +201,18 @@ func (s *notificationService) SendNotification(ctx context.Context, req model.Se
 
 	// 12. INCREMENT RATE LIMIT COUNTER
 	if err := s.rateLimitRepo.IncrementCount(ctx, model.RateLimitScopeUser, req.UserID.String(), 60); err != nil {
-		log.Warn().Err(err).Msg("Error incrementing rate limit counter")
+		logger.Error("Error incrementing rate limit counter", err)
 	}
 
 	// 13. SEND VIA DELIVERY SERVICE (Async - Non-blocking)
 	// This will be handled by background worker via queue
 	// For now, we just create the notification and worker will pick it up
 
-	log.Info().
-		Str("notification_id", notification.ID.String()).
-		Str("user_id", req.UserID.String()).
-		Strs("channels", allowedChannels).
-		Msg("[NotificationService] Notification created successfully")
+	logger.Info("[NotificationService] Notification created successfully", map[string]interface{}{
+		"notification_id": notification.ID.String(),
+		"user_id":         req.UserID.String(),
+		"channels":        allowedChannels,
+	})
 
 	return notification, nil
 }
@@ -218,10 +222,10 @@ func (s *notificationService) SendNotification(ctx context.Context, req model.Se
 // ================================================
 
 func (s *notificationService) CreateNotification(ctx context.Context, req model.CreateNotificationRequest) (*model.Notification, error) {
-	log.Info().
-		Str("user_id", req.UserID.String()).
-		Str("type", req.Type).
-		Msg("[NotificationService] CreateNotification started")
+	logger.Info("[NotificationService] CreateNotification started", map[string]interface{}{
+		"user_id": req.UserID.String(),
+		"type":    req.Type,
+	})
 
 	// 1. VALIDATE NOTIFICATION TYPE
 	validTypes := []string{
@@ -259,16 +263,16 @@ func (s *notificationService) CreateNotification(ctx context.Context, req model.
 	for _, channel := range req.Channels {
 		allowed, reason, err := s.prefsService.CanSendNotification(ctx, req.UserID, req.Type, channel)
 		if err != nil {
-			log.Warn().Err(err).Str("channel", channel).Msg("Error checking channel permission")
+			logger.Error("Error checking channel permission", err)
 			continue
 		}
 		if allowed {
 			allowedChannels = append(allowedChannels, channel)
 		} else {
-			log.Info().
-				Str("channel", channel).
-				Str("reason", reason).
-				Msg("Channel blocked by user preference")
+			logger.Info("Channel blocked by user preference", map[string]interface{}{
+				"channel": channel,
+				"reason":  reason,
+			})
 		}
 	}
 
@@ -285,7 +289,7 @@ func (s *notificationService) CreateNotification(ctx context.Context, req model.
 		60,
 	)
 	if err != nil {
-		log.Warn().Err(err).Msg("Error checking rate limit")
+		logger.Error("Error checking rate limit", err)
 	} else if !allowed {
 		return nil, model.ErrRateLimitExceeded
 	}
@@ -323,7 +327,9 @@ func (s *notificationService) CreateNotification(ctx context.Context, req model.
 		// Check for duplicate
 		existing, err := s.notifRepo.GetByIdempotencyKey(ctx, key)
 		if err == nil && existing != nil {
-			log.Info().Str("idempotency_key", key).Msg("Duplicate notification")
+			logger.Info("Duplicate notification", map[string]interface{}{
+				"idempotency_key": key,
+			})
 			return existing, nil
 		}
 	}
@@ -334,12 +340,12 @@ func (s *notificationService) CreateNotification(ctx context.Context, req model.
 
 	// 8. INCREMENT RATE LIMIT
 	if err := s.rateLimitRepo.IncrementCount(ctx, model.RateLimitScopeUser, req.UserID.String(), 60); err != nil {
-		log.Warn().Err(err).Msg("Error incrementing rate limit")
+		logger.Error("Error incrementing rate limit", err)
 	}
 
-	log.Info().
-		Str("notification_id", notification.ID.String()).
-		Msg("[NotificationService] Notification created")
+	logger.Info("[NotificationService] Notification created", map[string]interface{}{
+		"notification_id": notification.ID.String(),
+	})
 
 	return notification, nil
 }
@@ -398,7 +404,7 @@ func (s *notificationService) ListNotifications(ctx context.Context, req model.L
 	// Get unread count
 	unreadCount, err := s.notifRepo.GetUnreadCount(ctx, req.UserID)
 	if err != nil {
-		log.Warn().Err(err).Msg("Error getting unread count")
+		logger.Error("Error getting unread count", err)
 		unreadCount = 0
 	}
 
@@ -477,7 +483,9 @@ func (s *notificationService) DeleteNotification(ctx context.Context, userID, no
 // ================================================
 
 func (s *notificationService) ProcessUnsentNotifications(ctx context.Context, limit int) error {
-	log.Info().Int("limit", limit).Msg("[Background] Processing unsent notifications")
+	logger.Info("[Background] Processing unsent notifications", map[string]interface{}{
+		"limit": limit,
+	})
 
 	notifications, err := s.notifRepo.GetUnsentNotifications(ctx, limit)
 	if err != nil {
@@ -485,7 +493,7 @@ func (s *notificationService) ProcessUnsentNotifications(ctx context.Context, li
 	}
 
 	if len(notifications) == 0 {
-		log.Info().Msg("[Background] No unsent notifications")
+		logger.Info("[Background] No unsent notifications", map[string]interface{}{})
 		return nil
 	}
 
@@ -493,46 +501,99 @@ func (s *notificationService) ProcessUnsentNotifications(ctx context.Context, li
 	errorCount := 0
 
 	for _, notification := range notifications {
+		channelSuccessCount := 0
+		channelErrorCount := 0
+
 		// Send via delivery service for each channel
 		for _, channel := range notification.Channels {
-			var recipient string
-
 			// Get recipient based on channel
-			// This would typically fetch from user profile
-			// For now, we'll use placeholder logic
-
+			var recipient string
 			var err error
+
+			switch channel {
+			case model.ChannelEmail:
+				user, err := s.userRepository.FindByID(ctx, notification.UserID)
+				if err != nil {
+					logger.Error("Failed to get user for email", err)
+					channelErrorCount++
+					continue
+				}
+				recipient = user.Email
+
+			case model.ChannelSMS:
+				user, err := s.userRepository.FindByID(ctx, notification.UserID)
+				if err != nil {
+					logger.Error("Failed to get user for SMS", err)
+					channelErrorCount++
+					continue
+				}
+				if user.Phone == nil {
+					logger.Info("User has no phone number", map[string]interface{}{
+						"user_id": notification.UserID,
+					})
+					channelErrorCount++
+					continue
+				}
+				recipient = *user.Phone
+
+				// case model.ChannelPush:
+				// 	// Get device token from user_devices table
+				// 	deviceToken, err := s.deviceRepo.GetActiveToken(ctx, notification.UserID)
+				// 	if err != nil {
+				// 		logger.Error("Failed to get device token", err)
+				// 		channelErrorCount++
+				// 		continue
+				// 	}
+				// 	recipient = deviceToken
+			}
+
+			if recipient == "" {
+				logger.Info("Empty recipient, skipping channel", map[string]interface{}{
+					"channel": channel,
+					"user_id": notification.UserID,
+				})
+				channelErrorCount++
+				continue
+			}
+
+			// Send notification via appropriate channel
 			switch channel {
 			case model.ChannelEmail:
 				err = s.deliveryService.SendEmail(ctx, &notification, recipient)
 			case model.ChannelSMS:
 				err = s.deliveryService.SendSMS(ctx, &notification, recipient)
-			case model.ChannelPush:
-				err = s.deliveryService.SendPush(ctx, &notification, recipient)
+				// case model.ChannelPush:
+				// 	err = s.deliveryService.SendPush(ctx, &notification, recipient)
 			}
 
 			if err != nil {
-				log.Error().
-					Err(err).
-					Str("notification_id", notification.ID.String()).
-					Str("channel", channel).
-					Msg("Error sending notification")
-				errorCount++
+				logger.Error("Error sending notification", err)
+				channelErrorCount++
 			} else {
-				successCount++
+				channelSuccessCount++
 			}
 		}
 
-		// Mark as sent
-		if err := s.notifRepo.MarkAsSent(ctx, notification.ID); err != nil {
-			log.Error().Err(err).Str("notification_id", notification.ID.String()).Msg("Error marking as sent")
+		// Only mark as sent if at least one channel succeeded
+		if channelSuccessCount > 0 {
+			if err := s.notifRepo.MarkAsSent(ctx, notification.ID); err != nil {
+				logger.Error("Error marking as sent", err)
+			}
+			successCount++
+		} else {
+			logger.Info("All channels failed for notification, not marking as sent", map[string]interface{}{
+				"notification_id": notification.ID,
+				"user_id":         notification.UserID,
+				"channels":        notification.Channels,
+			})
+			errorCount++
 		}
 	}
 
-	log.Info().
-		Int("success", successCount).
-		Int("errors", errorCount).
-		Msg("[Background] Finished processing unsent notifications")
+	logger.Info("[Background] Finished processing unsent notifications", map[string]interface{}{
+		"success": successCount,
+		"errors":  errorCount,
+	})
 
 	return nil
 }
@@ -542,15 +603,31 @@ func (s *notificationService) ProcessUnsentNotifications(ctx context.Context, li
 // ================================================
 
 func (s *notificationService) CleanupExpiredNotifications(ctx context.Context) (int, error) {
-	log.Info().Msg("[Background] Cleaning up expired notifications")
+	logger.Info("[Background] Cleaning up expired notifications", map[string]interface{}{})
 
-	count, err := s.notifRepo.DeleteExpired(ctx, time.Now())
-	if err != nil {
-		return 0, fmt.Errorf("delete expired: %w", err)
+	// Use batch delete to avoid long table locks
+	// DELETE is atomic in PostgreSQL, so we don't need explicit transaction
+	totalDeleted := 0
+	batchSize := 1000
+
+	for {
+		count, err := s.notifRepo.DeleteExpired(ctx, time.Now())
+		if err != nil {
+			return totalDeleted, fmt.Errorf("delete expired (deleted %d so far): %w", totalDeleted, err)
+		}
+
+		totalDeleted += count
+
+		// If deleted less than batch size, we're done
+		if count < batchSize {
+			break
+		}
 	}
 
-	log.Info().Int("count", count).Msg("[Background] Expired notifications cleaned up")
-	return count, nil
+	logger.Info("[Background] Expired notifications cleaned up", map[string]interface{}{
+		"count": totalDeleted,
+	})
+	return totalDeleted, nil
 }
 
 // ================================================
@@ -558,16 +635,34 @@ func (s *notificationService) CleanupExpiredNotifications(ctx context.Context) (
 // ================================================
 
 func (s *notificationService) CleanupOldReadNotifications(ctx context.Context, olderThan time.Duration) (int, error) {
-	log.Info().Dur("older_than", olderThan).Msg("[Background] Cleaning up old read notifications")
+	logger.Info("[Background] Cleaning up old read notifications", map[string]interface{}{
+		"older_than": olderThan.String(),
+	})
 
+	// Use batch delete to avoid long table locks
+	// DELETE is atomic in PostgreSQL, so we don't need explicit transaction
 	before := time.Now().Add(-olderThan)
-	count, err := s.notifRepo.DeleteOldRead(ctx, before)
-	if err != nil {
-		return 0, fmt.Errorf("delete old read: %w", err)
+	totalDeleted := 0
+	batchSize := 1000
+
+	for {
+		count, err := s.notifRepo.DeleteOldRead(ctx, before)
+		if err != nil {
+			return totalDeleted, fmt.Errorf("delete old read (deleted %d so far): %w", totalDeleted, err)
+		}
+
+		totalDeleted += count
+
+		// If deleted less than batch size, we're done
+		if count < batchSize {
+			break
+		}
 	}
 
-	log.Info().Int("count", count).Msg("[Background] Old read notifications cleaned up")
-	return count, nil
+	logger.Info("[Background] Old read notifications cleaned up", map[string]interface{}{
+		"count": totalDeleted,
+	})
+	return totalDeleted, nil
 }
 
 // ================================================

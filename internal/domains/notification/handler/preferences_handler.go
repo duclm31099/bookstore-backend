@@ -5,11 +5,11 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/rs/zerolog/log"
 
 	"bookstore-backend/internal/domains/notification/model"
 	"bookstore-backend/internal/domains/notification/service"
 	"bookstore-backend/internal/shared/response"
+	"bookstore-backend/pkg/logger"
 )
 
 // ================================================
@@ -42,7 +42,7 @@ func (h *preferencesHandler) GetPreferences(c *gin.Context) {
 	// 2. CALL SERVICE
 	preferences, err := h.preferencesService.GetUserPreferences(c.Request.Context(), userID)
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to get preferences")
+		logger.Error("Failed to get preferences", err)
 		response.Error(c, http.StatusInternalServerError, "Failed to get preferences", err.Error())
 		return
 	}
@@ -89,7 +89,7 @@ func (h *preferencesHandler) UpdatePreferences(c *gin.Context) {
 	// 4. CALL SERVICE
 	preferences, err := h.preferencesService.UpdateUserPreferences(c.Request.Context(), userID, req)
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to update preferences")
+		logger.Error("Failed to update preferences", err)
 		response.Error(c, http.StatusInternalServerError, "Failed to update preferences", err.Error())
 		return
 	}

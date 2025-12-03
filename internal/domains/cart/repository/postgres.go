@@ -31,12 +31,12 @@ func NewPostgresRepository(pool *pgxpool.Pool, cache cache.Cache) RepositoryInte
 // GetByUserID implements RepositoryInterface.GetByUserID
 func (r *postgresRepository) GetByUserID(ctx context.Context, userID uuid.UUID) (*model.Cart, error) {
 	// Check cache first
-	cacheKey := fmt.Sprintf(model.CacheKeyCartByUser, userID.String())
-	var cachedCart model.Cart
-	found, _ := r.cache.Get(ctx, cacheKey, &cachedCart)
-	if found {
-		return &cachedCart, nil
-	}
+	// cacheKey := fmt.Sprintf(model.CacheKeyCartByUser, userID.String())
+	// var cachedCart model.Cart
+	// found, _ := r.cache.Get(ctx, cacheKey, &cachedCart)
+	// if found {
+	// 	return &cachedCart, nil
+	// }
 
 	query := `
         SELECT 
@@ -63,7 +63,10 @@ func (r *postgresRepository) GetByUserID(ctx context.Context, userID uuid.UUID) 
 		&cart.Total,
 		&cart.PromoMetadata,
 	)
-
+	logger.Info("Fetched cart by user ID", map[string]interface{}{
+		"user_id": userID,
+		"cart":    cart,
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil // Not found
@@ -72,7 +75,7 @@ func (r *postgresRepository) GetByUserID(ctx context.Context, userID uuid.UUID) 
 	}
 
 	// Cache for 5 minutes
-	_ = r.cache.Set(ctx, cacheKey, cart, time.Duration(model.CartCacheExpirationMinutes)*time.Minute)
+	// _ = r.cache.Set(ctx, cacheKey, cart, time.Duration(model.CartCacheExpirationMinutes)*time.Minute)
 
 	return &cart, nil
 }

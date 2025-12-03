@@ -17,4 +17,5 @@ type ServiceInterface interface {
 	ExportBooksToExcel(ctx context.Context, req model.ListBooksRequest) (*excelize.File, *[]model.ListBooksResponse, error)
 	SearchBooks(ctx context.Context, req model.SearchBooksRequest) ([]model.BookSearchResponse, error)
 	GetBooksByIDs(ctx context.Context, ids []string) ([]model.BookDetailResponse, error)
+	GetBooksCheckout(ctx context.Context, ids []string) ([]model.BookCheckoutResponse, error)
 }

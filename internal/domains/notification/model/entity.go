@@ -275,15 +275,20 @@ func (j JSONB) Value() (driver.Value, error) {
 
 // MarshalJSON implements json.Marshaler
 func (j JSONB) MarshalJSON() ([]byte, error) {
+	if j == nil {
+		return []byte("null"), nil
+	}
+	// Marshal underlying map để tránh recursion
 	return json.Marshal(map[string]interface{}(j))
 }
 
 // UnmarshalJSON implements json.Unmarshaler
 func (j *JSONB) UnmarshalJSON(data []byte) error {
-	result := make(JSONB)
-	if err := json.Unmarshal(data, &result); err != nil {
+	// Unmarshal vào map thay vì JSONB để tránh recursion
+	var m map[string]interface{}
+	if err := json.Unmarshal(data, &m); err != nil {
 		return err
 	}
-	*j = result
+	*j = JSONB(m)
 	return nil
 }

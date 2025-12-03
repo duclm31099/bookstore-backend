@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -112,11 +113,11 @@ func (r *deliveryLogRepository) GetByID(ctx context.Context, id uuid.UUID) (*mod
 		FROM notification_delivery_logs
 		WHERE id = $1
 	`
-
+	var responseBytes []byte
 	var log model.DeliveryLog
 	err := r.db.QueryRow(ctx, query, id).Scan(
 		&log.ID, &log.NotificationID, &log.Channel, &log.AttemptNumber, &log.Status,
-		&log.Recipient, &log.Provider, &log.ProviderMessageID, &log.ProviderResponse,
+		&log.Recipient, &log.Provider, &log.ProviderMessageID, &responseBytes,
 		&log.ErrorCode, &log.ErrorMessage,
 		&log.QueuedAt, &log.ProcessingAt, &log.SentAt, &log.DeliveredAt,
 		&log.OpenedAt, &log.ClickedAt, &log.FailedAt, &log.RetryAfter,
@@ -128,6 +129,12 @@ func (r *deliveryLogRepository) GetByID(ctx context.Context, id uuid.UUID) (*mod
 			return nil, fmt.Errorf("delivery log not found")
 		}
 		return nil, fmt.Errorf("get delivery log by id: %w", err)
+	}
+
+	if len(responseBytes) > 0 {
+		if err := json.Unmarshal(responseBytes, &log.ProviderResponse); err != nil {
+			return nil, fmt.Errorf("unmarshal provider response: %w", err)
+		}
 	}
 
 	return &log, nil
@@ -350,12 +357,12 @@ func (r *deliveryLogRepository) CountByStatus(ctx context.Context, status string
 // Helper function to scan delivery logs
 func scanDeliveryLogs(rows pgx.Rows) ([]model.DeliveryLog, error) {
 	var logs []model.DeliveryLog
-
+	var providerResponseBytes []byte
 	for rows.Next() {
 		var log model.DeliveryLog
 		err := rows.Scan(
 			&log.ID, &log.NotificationID, &log.Channel, &log.AttemptNumber, &log.Status,
-			&log.Recipient, &log.Provider, &log.ProviderMessageID, &log.ProviderResponse,
+			&log.Recipient, &log.Provider, &log.ProviderMessageID, &providerResponseBytes,
 			&log.ErrorCode, &log.ErrorMessage,
 			&log.QueuedAt, &log.ProcessingAt, &log.SentAt, &log.DeliveredAt,
 			&log.OpenedAt, &log.ClickedAt, &log.FailedAt, &log.RetryAfter,
@@ -363,6 +370,11 @@ func scanDeliveryLogs(rows pgx.Rows) ([]model.DeliveryLog, error) {
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan delivery log: %w", err)
+		}
+		if len(providerResponseBytes) > 0 {
+			if err := json.Unmarshal(providerResponseBytes, &log.ProviderResponse); err != nil {
+				return nil, fmt.Errorf("unmarshal provider response: %w", err)
+			}
 		}
 		logs = append(logs, log)
 	}

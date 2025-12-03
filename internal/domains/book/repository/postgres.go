@@ -825,3 +825,49 @@ func (r *postgresRepository) GetBooksByIDs(ctx context.Context, ids []string) ([
 
 	return books, nil
 }
+
+func (p *postgresRepository) GetBooksCheckout(ctx context.Context, ids []string) ([]model.BookCheckoutResponse, error) {
+	query := `
+		SELECT 
+			b.id, b.title, b.price,
+			b.cover_url, b.description,
+			a.name AS author_name,
+			c.name AS category_name,
+			p.name AS publisher_name
+		FROM books b
+		LEFT JOIN authors a ON b.author_id = a.id
+		LEFT JOIN categories c ON b.category_id = c.id
+		LEFT JOIN publishers p ON b.publisher_id = p.id
+		WHERE b.id = ANY($1) AND b.deleted_at IS NULL
+	`
+
+	var books []model.BookCheckoutResponse
+	rows, err := p.pool.Query(ctx, query, ids)
+	if err != nil {
+		return nil, fmt.Errorf("failed to batch get books: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var book model.BookCheckoutResponse
+		err := rows.Scan(
+			&book.ID,
+			&book.Title,
+			&book.Price,
+			&book.CoverURL,
+			&book.Description,
+			&book.AuthorName,
+			&book.CategoryName,
+			&book.PublisherName,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan row: %w", err)
+		}
+		books = append(books, book)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to collect rows: %w", err)
+	}
+
+	return books, nil
+}

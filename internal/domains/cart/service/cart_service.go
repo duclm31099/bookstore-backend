@@ -199,9 +199,7 @@ func (s *CartService) GetOrCreateCart(ctx context.Context, userID *uuid.UUID, se
 	if err != nil {
 		return nil, fmt.Errorf("failed to get cart: %w", err)
 	}
-	logger.Info("cart", map[string]interface{}{
-		"cart": cart,
-	})
+
 	// Step 3: Check if cart expired
 	// if cart != nil && cart.ExpiresAt.Before(time.Now()) {
 	// 	// Cart expired → clear items and reset
@@ -229,9 +227,6 @@ func (s *CartService) GetOrCreateCart(ctx context.Context, userID *uuid.UUID, se
 			return nil, fmt.Errorf("failed to create cart: %w", err)
 		}
 	} else {
-		logger.Info("Using existing cart", map[string]interface{}{
-			"cart_id": cart.ID,
-		})
 		// Step 5: Update expiration (keep-alive)
 		if err := s.repository.UpdateExpiration(ctx, cart.ID); err != nil {
 			// Log warning but don't fail request
@@ -248,9 +243,6 @@ func (s *CartService) GetOrCreateCart(ctx context.Context, userID *uuid.UUID, se
 
 	// Step 6: Fetch all items with book details (no hardcode limit)
 	items, _, err := s.repository.GetItemsWithBooks(ctx, cartID, 0, 0) // 0,0 = fetch all
-	logger.Info("Fetched cart items", map[string]interface{}{
-		"items": items,
-	})
 	if err != nil {
 		// Log but continue - return cart without items
 		logger.Error("Failed to get cart items", err)
@@ -831,9 +823,6 @@ func (s *CartService) ValidateCart(ctx context.Context, cartID uuid.UUID, userID
 		Warnings:        []model.CartValidationWarning{},
 		ItemValidations: []model.ItemValidation{},
 	}
-	logger.Info("Validate cart method:", map[string]interface{}{
-		"cartID": cartID,
-	})
 	// Step 1: Get cart by ID (not userID)
 	cart, err := s.repository.GetByID(ctx, cartID)
 	if err != nil {
@@ -1224,13 +1213,9 @@ func (s *CartService) Checkout(ctx context.Context, userID uuid.UUID, cartID uui
 		discount = subtotal
 	}
 
-	taxRate := decimal.NewFromFloat(0) // 0% tax
-	tax := subtotal.Sub(discount).Mul(taxRate)
-	shipping := decimal.NewFromInt(15000) // 15k VND
+	tax := decimal.Zero
+	shipping := decimal.Zero // 15k VND
 	codFee := decimal.Zero
-	if req.PaymentMethod == "cash_on_delivery" {
-		codFee = decimal.NewFromInt(15000)
-	}
 
 	total := subtotal.Sub(discount).Add(tax).Add(shipping).Add(codFee)
 
@@ -1241,7 +1226,7 @@ func (s *CartService) Checkout(ctx context.Context, userID uuid.UUID, cartID uui
 		Shipping:      shipping,
 		Total:         total,
 		Currency:      "VND",
-		TaxRate:       taxRate,
+		TaxRate:       decimal.Zero,
 	}
 
 	response.CartSummary.EstimatedTax = tax
@@ -1375,9 +1360,6 @@ func (s *CartService) Checkout(ctx context.Context, userID uuid.UUID, cartID uui
 	return response, nil
 }
 func mapCartPaymentMethod(method string) string {
-	logger.Info("method payment", map[string]interface{}{
-		"method": method,
-	})
 	switch method {
 	case "cash_on_delivery":
 		return orderModel.PaymentMethodCOD
@@ -1519,7 +1501,7 @@ func (s *CartService) enqueuePostCheckoutTasks(
 	// s.enqueueClearCart(cartID, userID)
 
 	// Task 2: Send order confirmation email (default priority, immediate)
-	if userEmail != "" {
+	if userEmail != "" && req.PaymentMethod == "cash_on_delivery" {
 		s.enqueueSendOrderConfirmation(orderID, orderNumber, userID, userEmail, total, req, itemCount)
 	}
 

@@ -7,11 +7,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/rs/zerolog/log"
 
 	"bookstore-backend/internal/domains/notification/model"
 	"bookstore-backend/internal/domains/notification/service"
 	"bookstore-backend/internal/shared/response"
+	"bookstore-backend/pkg/logger"
 )
 
 // ================================================
@@ -36,7 +36,12 @@ func NewTemplateHandler(templateService service.TemplateService) TemplateHandler
 func (h *templateHandler) CreateTemplate(c *gin.Context) {
 	// 1. GET ADMIN ID FROM AUTH CONTEXT
 	adminID, err := getUserIDFromContext(c)
+	logger.Info("adminID", map[string]interface{}{
+		"adminID": adminID,
+		"err":     err,
+	})
 	if err != nil {
+		logger.Error("adminID error", err)
 		response.Error(c, http.StatusUnauthorized, "Unauthorized", err.Error())
 		return
 	}
@@ -61,7 +66,7 @@ func (h *templateHandler) CreateTemplate(c *gin.Context) {
 			response.Error(c, http.StatusConflict, "Template code already exists", err.Error())
 			return
 		}
-		log.Error().Err(err).Msg("Failed to create template")
+		logger.Error("Failed to create template", err)
 		response.Error(c, http.StatusInternalServerError, "Failed to create template", err.Error())
 		return
 	}
@@ -90,7 +95,7 @@ func (h *templateHandler) GetTemplate(c *gin.Context) {
 			response.Error(c, http.StatusNotFound, "Template not found", err.Error())
 			return
 		}
-		log.Error().Err(err).Msg("Failed to get template")
+		logger.Error("Failed to get template", err)
 		response.Error(c, http.StatusInternalServerError, "Failed to get template", err.Error())
 		return
 	}
@@ -123,7 +128,7 @@ func (h *templateHandler) ListTemplates(c *gin.Context) {
 	// 2. CALL SERVICE
 	templates, total, err := h.templateService.ListTemplates(c.Request.Context(), category, isActive, page, pageSize)
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to list templates")
+		logger.Error("Failed to list templates", err)
 		response.Error(c, http.StatusInternalServerError, "Failed to list templates", err.Error())
 		return
 	}
@@ -180,7 +185,7 @@ func (h *templateHandler) UpdateTemplate(c *gin.Context) {
 			response.Error(c, http.StatusNotFound, "Template not found", err.Error())
 			return
 		}
-		log.Error().Err(err).Msg("Failed to update template")
+		logger.Error("Failed to update template", err)
 		response.Error(c, http.StatusInternalServerError, "Failed to update template", err.Error())
 		return
 	}
@@ -208,7 +213,7 @@ func (h *templateHandler) DeleteTemplate(c *gin.Context) {
 			response.Error(c, http.StatusNotFound, "Template not found", err.Error())
 			return
 		}
-		log.Error().Err(err).Msg("Failed to delete template")
+		logger.Error("Failed to delete template", err)
 		response.Error(c, http.StatusInternalServerError, "Failed to delete template", err.Error())
 		return
 	}

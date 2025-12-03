@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -59,6 +60,7 @@ func (r *preferencesRepository) Create(ctx context.Context, prefs *model.Notific
 
 // GetByUserID retrieves preferences by user ID
 func (r *preferencesRepository) GetByUserID(ctx context.Context, userID uuid.UUID) (*model.NotificationPreferences, error) {
+	var preferenceByte []byte
 	query := `
 		SELECT 
 			id, user_id, preferences, do_not_disturb,
@@ -72,7 +74,7 @@ func (r *preferencesRepository) GetByUserID(ctx context.Context, userID uuid.UUI
 	err := r.db.QueryRow(ctx, query, userID).Scan(
 		&prefs.ID,
 		&prefs.UserID,
-		&prefs.Preferences,
+		&preferenceByte,
 		&prefs.DoNotDisturb,
 		&prefs.QuietHoursStart,
 		&prefs.QuietHoursEnd,
@@ -86,7 +88,9 @@ func (r *preferencesRepository) GetByUserID(ctx context.Context, userID uuid.UUI
 		}
 		return nil, fmt.Errorf("get preferences by user id: %w", err)
 	}
-
+	if err := json.Unmarshal(preferenceByte, &prefs.Preferences); err != nil {
+		return nil, fmt.Errorf("unmarshal preferences: %w", err)
+	}
 	return &prefs, nil
 }
 

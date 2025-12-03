@@ -7,12 +7,9 @@ import (
 	"math"
 	"time"
 
-	"github.com/google/uuid"
-	"github.com/hibiken/asynq"
-	"github.com/shopspring/decimal"
-
 	addressModel "bookstore-backend/internal/domains/address/model"
 	address "bookstore-backend/internal/domains/address/repository"
+	book "bookstore-backend/internal/domains/book/service"
 	cartModel "bookstore-backend/internal/domains/cart/model"
 	cart "bookstore-backend/internal/domains/cart/repository"
 	invenRepo "bookstore-backend/internal/domains/inventory/repository"
@@ -26,6 +23,10 @@ import (
 	"bookstore-backend/internal/shared"
 	"bookstore-backend/internal/shared/utils"
 	"bookstore-backend/pkg/logger"
+
+	"github.com/google/uuid"
+	"github.com/hibiken/asynq"
+	"github.com/shopspring/decimal"
 )
 
 // =====================================================
@@ -40,7 +41,7 @@ type orderService struct {
 	promoRepo        promo.PromotionRepository
 	inventorySerivce invenSer.ServiceInterface
 	asynq            *asynq.Client // DI từ container, queue riêng inventory
-
+	bookService      book.ServiceInterface
 }
 
 // NewOrderService creates a new order service
@@ -51,6 +52,7 @@ func NewOrderService(
 	addressRepo address.RepositoryInterface,
 	cartRepo cart.RepositoryInterface,
 	promoRepo promo.PromotionRepository,
+	bookService book.ServiceInterface,
 	inventorySerivce invenSer.ServiceInterface,
 	asynq *asynq.Client,
 
@@ -64,6 +66,7 @@ func NewOrderService(
 		promoRepo:        promoRepo,
 		inventorySerivce: inventorySerivce,
 		asynq:            asynq,
+		bookService:      bookService,
 	}
 }
 
@@ -75,14 +78,8 @@ func NewOrderService(
 // =====================================================
 
 func (s *orderService) CreateOrder(ctx context.Context, userID uuid.UUID, req model.CreateOrderRequest) (*model.CreateOrderResponse, error) {
-	logger.Info("In in create order:", map[string]interface{}{
-		"req":     req,
-		"user id": userID,
-		"ctx":     ctx,
-	})
 	// Step 1: Validate request cơ bản (format)
 	if err := req.Validate(); err != nil {
-		logger.Error("validate create order", err)
 		return nil, model.NewOrderError(model.ErrCodeOrderNotFound, "Invalid request", err)
 	}
 	// ==================== STEP 2: LẤY CART + ITEMS TỪ DB ====================
@@ -97,17 +94,6 @@ func (s *orderService) CreateOrder(ctx context.Context, userID uuid.UUID, req mo
 		return nil, model.NewOrderError(model.ErrCodeOrderNotFound, "Cart is empty", err)
 	}
 
-	// Build CreateOrderItem list từ cart_items (chỉ BookID + Quantity)
-	items := make([]model.CreateOrderItem, len(cartItems))
-	for i, ci := range cartItems {
-		items[i] = model.CreateOrderItem{
-			BookID:   ci.BookID,
-			Quantity: ci.Quantity,
-		}
-	}
-	// Ghi đè req.Items bằng items từ cart để đảm bảo source of truth
-	req.Items = items
-
 	// ==================== STEP 3: ADDRESS HANDLING ====================
 	var address *addressModel.Address
 	if req.AddressID != uuid.Nil {
@@ -115,6 +101,9 @@ func (s *orderService) CreateOrder(ctx context.Context, userID uuid.UUID, req mo
 		address, err = s.addressRepo.GetByID(ctx, req.AddressID)
 		if err != nil {
 			return nil, model.NewOrderError(model.ErrCodeInvalidAddress, "Invalid shipping address", err)
+		}
+		if address.UserID != userID {
+			return nil, model.NewOrderError(model.ErrCodeInvalidAddress, "Address does not belong to user", nil)
 		}
 	} else {
 		// Nếu không gửi thì fallback default address
@@ -124,14 +113,20 @@ func (s *orderService) CreateOrder(ctx context.Context, userID uuid.UUID, req mo
 		}
 		req.AddressID = address.ID
 	}
-
+	var oi []model.CreateOrderItem
+	for _, item := range cartItems {
+		oi = append(oi, model.CreateOrderItem{
+			BookID:   item.BookID,
+			Quantity: item.Quantity,
+		})
+	}
 	// ==================== STEP 4: LẤY BOOK DATA & TÍNH SUBTOTAL ====================
-	bookItems, err := s.validateAndFetchBookItems(ctx, req.Items)
+	bookItems, err := s.validateAndFetchBookItems(ctx, oi)
 	if err != nil {
-		return nil, err
+		return nil, model.NewOrderError(model.ErrCodeOrderNotFound, "Invalid cart items", err)
 	}
 
-	subtotal := s.calculateItemsSubtotal(bookItems)
+	subtotal := cart.Subtotal
 
 	// ==================== STEP 5: PROMO TỪ CART (KHÔNG TIN CLIENT) ====================
 	var promotion *modelPromo.Promotion
@@ -160,10 +155,7 @@ func (s *orderService) CreateOrder(ctx context.Context, userID uuid.UUID, req mo
 	isCOD := req.PaymentMethod == model.PaymentMethodCOD
 	_, finalDiscount, shippingFee, codFee, taxAmount, total := model.CalculateOrderAmounts(
 		subtotal,
-		decimal.Zero,
-		decimal.Zero,
 		discountAmount,
-		"",
 		isCOD,
 	)
 
@@ -186,7 +178,7 @@ func (s *orderService) CreateOrder(ctx context.Context, userID uuid.UUID, req mo
 		if err := s.inventoryRepo.ReserveStockWithTx(ctx, tx, selectedWarehouseID, item.BookID, item.Quantity, &userID); err != nil {
 			return nil, model.NewOrderError(
 				model.ErrCodeInsufficientStock,
-				fmt.Sprintf("Failed to reserve stock for book: %s", item.BookTitle),
+				fmt.Sprintf("Failed to reserve stock for book: %s", item.BookID),
 				err,
 			)
 		}
@@ -222,7 +214,9 @@ func (s *orderService) CreateOrder(ctx context.Context, userID uuid.UUID, req mo
 	} else {
 		order.Status = model.OrderStatusPending
 	}
-
+	logger.Info("Go to serrvice:", map[string]interface{}{
+		"order request": order,
+	})
 	// Step 11: Tạo order
 	if err := s.orderRepo.CreateOrderWithTx(ctx, tx, order); err != nil {
 		return nil, fmt.Errorf("failed to create order: %w", err)
@@ -230,6 +224,9 @@ func (s *orderService) CreateOrder(ctx context.Context, userID uuid.UUID, req mo
 
 	// Step 12: Tạo order items
 	orderItems := s.buildOrderItems(orderID, bookItems)
+	logger.Info("Go to save order items :", map[string]interface{}{
+		"order items": orderItems,
+	})
 	if err := s.orderRepo.CreateOrderItemsWithTx(ctx, tx, orderItems); err != nil {
 		return nil, fmt.Errorf("failed to create order items: %w", err)
 	}
@@ -282,7 +279,6 @@ func (s *orderService) CreateOrder(ctx context.Context, userID uuid.UUID, req mo
 			}
 		}
 	}
-
 	// (Optional) enqueue payment-timeout job ở Phase 1.3
 
 	// Step 18: Response
@@ -335,7 +331,7 @@ func (s *orderService) selectSingleWarehouseForOrder(
 			if err != nil || !ok {
 				return nil, model.NewOrderError(
 					model.ErrCodeInsufficientStock,
-					fmt.Sprintf("Default warehouse does not have sufficient stock for book: %s", item.BookTitle),
+					fmt.Sprintf("Default warehouse does not have sufficient stock for book: %s", item.BookID),
 					err,
 				)
 			}
@@ -365,7 +361,7 @@ func (s *orderService) selectSingleWarehouseForOrder(
 	if err != nil || nearestWH == nil {
 		return nil, model.NewOrderError(
 			model.ErrCodeInsufficientStock,
-			fmt.Sprintf("No warehouse with stock found for book: %s", firstItem.BookTitle),
+			fmt.Sprintf("No warehouse with stock found for book: %s", firstItem.BookID),
 			err,
 		)
 	}
@@ -381,7 +377,7 @@ func (s *orderService) selectSingleWarehouseForOrder(
 		if err != nil || !hasStock {
 			return nil, model.NewOrderError(
 				model.ErrCodeInsufficientStock,
-				fmt.Sprintf("Warehouse %s does not have sufficient stock for book: %s", nearestWH.Name, item.BookTitle),
+				fmt.Sprintf("Warehouse %s does not have sufficient stock for book: %s", nearestWH.Name, item.BookID),
 				nil,
 			)
 		}
@@ -792,29 +788,13 @@ func (s *orderService) createOrderFromItems(
 	}
 	subtotal := s.calculateItemsSubtotal(bookItems)
 
-	// 4. Promo (optional): hiện tại Reorder không reuse promo
-	var promotion *modelPromo.Promotion
 	var discountAmount decimal.Decimal = decimal.Zero
-
-	if req.PromoCode != nil && *req.PromoCode != "" {
-		promotion, err = s.promoRepo.FindByCode(ctx, *req.PromoCode)
-		if err != nil {
-			return nil, model.NewOrderError(model.ErrCodePromoInvalid, "Invalid promotion code", err)
-		}
-		if err := s.validatePromotion(promotion, subtotal, userID); err != nil {
-			return nil, err
-		}
-		discountAmount = s.calculateDiscount(promotion, subtotal)
-	}
 
 	// 5. Tính tổng tiền
 	isCOD := req.PaymentMethod == model.PaymentMethodCOD
 	_, finalDiscount, shippingFee, codFee, taxAmount, total := model.CalculateOrderAmounts(
 		subtotal,
-		decimal.Zero,
-		decimal.Zero,
 		discountAmount,
-		"",
 		isCOD,
 	)
 
@@ -837,7 +817,7 @@ func (s *orderService) createOrderFromItems(
 		if err := s.inventoryRepo.ReserveStockWithTx(ctx, tx, selectedWarehouseID, item.BookID, item.Quantity, &userID); err != nil {
 			return nil, model.NewOrderError(
 				model.ErrCodeInsufficientStock,
-				fmt.Sprintf("Failed to reserve stock for book: %s", item.BookTitle),
+				fmt.Sprintf("Failed to reserve stock for book: %s", item.BookID),
 				err,
 			)
 		}
@@ -845,16 +825,12 @@ func (s *orderService) createOrderFromItems(
 
 	// 9. Build order entity
 	orderID := uuid.New()
-	var promotionID *uuid.UUID
-	if promotion != nil {
-		promotionID = &promotion.ID
-	}
 
 	order := &model.Order{
 		ID:             orderID,
 		UserID:         userID,
 		AddressID:      req.AddressID,
-		PromotionID:    promotionID,
+		PromotionID:    nil,
 		WarehouseID:    &selectedWarehouseID,
 		Subtotal:       subtotal,
 		ShippingFee:    shippingFee,
@@ -873,7 +849,6 @@ func (s *orderService) createOrderFromItems(
 	} else {
 		order.Status = model.OrderStatusPending
 	}
-
 	// 10. Insert order
 	if err := s.orderRepo.CreateOrderWithTx(ctx, tx, order); err != nil {
 		return nil, fmt.Errorf("failed to create order: %w", err)
@@ -881,6 +856,7 @@ func (s *orderService) createOrderFromItems(
 
 	// 11. Insert order items
 	orderItems := s.buildOrderItems(orderID, bookItems)
+
 	if err := s.orderRepo.CreateOrderItemsWithTx(ctx, tx, orderItems); err != nil {
 		return nil, fmt.Errorf("failed to create order items: %w", err)
 	}
@@ -895,19 +871,6 @@ func (s *orderService) createOrderFromItems(
 	}
 	if err := s.orderRepo.CreateOrderStatusHistoryWithTx(ctx, tx, statusHistory); err != nil {
 		return nil, fmt.Errorf("failed to create order status history: %w", err)
-	}
-
-	// 13. Promotion usage (nếu có)
-	if promotion != nil {
-		usage := &modelPromo.PromotionUsage{
-			PromotionID:    promotion.ID,
-			UserID:         userID,
-			OrderID:        orderID,
-			DiscountAmount: discountAmount,
-		}
-		if err := s.promoRepo.CreateUsage(ctx, tx, usage); err != nil {
-			return nil, fmt.Errorf("failed to create promotion usage: %w", err)
-		}
 	}
 
 	// 14. Commit
@@ -1097,21 +1060,25 @@ func (s *orderService) GetOrderByNumber(
 // validateAndFetchBookItems validates items and fetches book details
 // In production, this should call Book service/repository
 func (s *orderService) validateAndFetchBookItems(ctx context.Context, items []model.CreateOrderItem) ([]bookItemData, error) {
-	// TODO: Implement book service call to fetch book details
-	// For now, return placeholder
-	// This should fetch: book_id, title, slug, cover_url, author, price
+	bookIDs := make([]string, len(items))
+	for i, book := range items {
+		bookIDs[i] = book.BookID.String()
+	}
+	books, err := s.bookService.GetBooksCheckout(ctx, bookIDs)
+	if err != nil {
+		return nil, err
+	}
 
 	result := make([]bookItemData, len(items))
-	for i, item := range items {
+	for i, book := range books {
 		// Mock data - replace with actual book service call
 		result[i] = bookItemData{
-			BookID:       item.BookID,
-			BookTitle:    "Book Title", // Fetch from book service
-			BookSlug:     "book-slug",
-			BookCoverURL: nil,
-			AuthorName:   nil,
-			Quantity:     item.Quantity,
-			Price:        decimal.NewFromInt(100000), // Fetch from book service
+			BookID:     book.ID,
+			Quantity:   items[i].Quantity,
+			Price:      book.Price,
+			Title:      book.Title,
+			AuthorName: book.AuthorName,
+			CoverURL:   *book.CoverURL,
 		}
 	}
 
@@ -1120,13 +1087,12 @@ func (s *orderService) validateAndFetchBookItems(ctx context.Context, items []mo
 
 // bookItemData holds book details for order creation
 type bookItemData struct {
-	BookID       uuid.UUID
-	BookTitle    string
-	BookSlug     string
-	BookCoverURL *string
-	AuthorName   *string
-	Quantity     int
-	Price        decimal.Decimal
+	BookID     uuid.UUID
+	Quantity   int
+	Price      decimal.Decimal
+	Title      string
+	AuthorName string
+	CoverURL   string
 }
 
 // calculateItemsSubtotal calculates total subtotal from all items
@@ -1205,18 +1171,15 @@ func (s *orderService) calculateDiscount(promo *modelPromo.Promotion, subtotal d
 func (s *orderService) buildOrderItems(orderID uuid.UUID, bookItems []bookItemData) []model.OrderItem {
 	items := make([]model.OrderItem, len(bookItems))
 	for i, book := range bookItems {
-		subtotal := book.Price.Mul(decimal.NewFromInt(int64(book.Quantity)))
 		items[i] = model.OrderItem{
-			ID:           uuid.New(),
-			OrderID:      orderID,
-			BookID:       book.BookID,
-			BookTitle:    book.BookTitle,
-			BookSlug:     book.BookSlug,
-			BookCoverURL: book.BookCoverURL,
-			AuthorName:   book.AuthorName,
-			Quantity:     book.Quantity,
-			Price:        book.Price,
-			Subtotal:     subtotal,
+			ID:         uuid.New(),
+			OrderID:    orderID,
+			BookID:     book.BookID,
+			Quantity:   book.Quantity,
+			Price:      book.Price,
+			AuthorName: &book.AuthorName,
+			BookTitle:  book.Title,
+			Subtotal:   book.Price.Mul(decimal.NewFromInt(int64(book.Quantity))),
 		}
 	}
 	return items

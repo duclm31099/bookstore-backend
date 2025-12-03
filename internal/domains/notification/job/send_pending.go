@@ -6,6 +6,7 @@ import (
 
 	"github.com/hibiken/asynq"
 
+	"bookstore-backend/internal/config"
 	"bookstore-backend/internal/domains/notification/service"
 	"bookstore-backend/internal/shared/utils"
 	"bookstore-backend/pkg/logger"
@@ -18,14 +19,17 @@ import (
 // SendPendingNotificationsHandler xử lý job gửi notification chưa gửi
 type SendPendingNotificationsHandler struct {
 	notificationService service.NotificationService
+	jobConfig           config.JobConfig
 }
 
 // NewSendPendingNotificationsHandler tạo handler mới
 func NewSendPendingNotificationsHandler(
 	notificationService service.NotificationService,
+	jobConfig config.JobConfig,
 ) *SendPendingNotificationsHandler {
 	return &SendPendingNotificationsHandler{
 		notificationService: notificationService,
+		jobConfig:           jobConfig,
 	}
 }
 
@@ -48,8 +52,8 @@ func (h *SendPendingNotificationsHandler) ProcessTask(ctx context.Context, t *as
 
 	// 2. Xác định limit
 	limit := payload.Limit
-	if limit <= 0 || limit > 100 {
-		limit = 100 // mặc định theo yêu cầu
+	if limit <= 0 || limit > 100 || payload.Limit == 0 {
+		limit = h.jobConfig.SendPendingLimit // mặc định theo yêu cầu
 	}
 
 	logger.Info("Starting SendPendingNotifications job", map[string]interface{}{

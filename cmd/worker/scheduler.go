@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 
+	"bookstore-backend/internal/config"
 	"bookstore-backend/internal/infrastructure/queue"
 )
 
@@ -12,8 +13,8 @@ type asynqScheduler struct {
 }
 
 // setupScheduler creates and configures the scheduler
-func setupScheduler(cfg *Config) *asynqScheduler {
-	scheduler := queue.NewScheduler(cfg.RedisAddr)
+func setupScheduler(cfg *Config, jobConfig config.JobConfig) *asynqScheduler {
+	scheduler := queue.NewScheduler(cfg.RedisAddr, jobConfig)
 
 	// Register cron jobs
 	if err := scheduler.RegisterCleanupJobs(); err != nil {

@@ -6,10 +6,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/rs/zerolog/log"
 
 	"bookstore-backend/internal/domains/notification/model"
 	"bookstore-backend/internal/domains/notification/repository"
+	"bookstore-backend/pkg/logger"
 )
 
 // ================================================
@@ -35,7 +35,9 @@ func (s *preferencesService) GetUserPreferences(ctx context.Context, userID uuid
 	if err != nil {
 		// If preferences not found, create default preferences
 		if err == model.ErrPreferencesNotFound {
-			log.Info().Str("user_id", userID.String()).Msg("Creating default preferences")
+			logger.Info("Creating default preferences", map[string]interface{}{
+				"user_id": userID.String(),
+			})
 
 			defaultPrefs := s.createDefaultPreferences(userID)
 			if err := s.prefsRepo.Create(ctx, defaultPrefs); err != nil {
@@ -55,7 +57,9 @@ func (s *preferencesService) GetUserPreferences(ctx context.Context, userID uuid
 // ================================================
 
 func (s *preferencesService) UpdateUserPreferences(ctx context.Context, userID uuid.UUID, req model.UpdatePreferencesRequest) (*model.PreferencesResponse, error) {
-	log.Info().Str("user_id", userID.String()).Msg("[PreferencesService] UpdateUserPreferences")
+	logger.Info("[PreferencesService] UpdateUserPreferences", map[string]interface{}{
+		"user_id": userID.String(),
+	})
 
 	// 1. GET EXISTING PREFERENCES (or create if not exists)
 	existing, err := s.prefsRepo.GetByUserID(ctx, userID)
@@ -112,7 +116,9 @@ func (s *preferencesService) UpdateUserPreferences(ctx context.Context, userID u
 		return nil, fmt.Errorf("update preferences: %w", err)
 	}
 
-	log.Info().Str("user_id", userID.String()).Msg("[PreferencesService] Preferences updated successfully")
+	logger.Info("[PreferencesService] Preferences updated successfully", map[string]interface{}{
+		"user_id": userID.String(),
+	})
 
 	return s.toResponse(existing), nil
 }
@@ -125,7 +131,7 @@ func (s *preferencesService) CanSendNotification(ctx context.Context, userID uui
 	// 1. CHECK DO NOT DISTURB
 	isDND, err := s.prefsRepo.IsDoNotDisturb(ctx, userID)
 	if err != nil {
-		log.Warn().Err(err).Msg("Error checking do not disturb")
+		logger.Error("Error checking do not disturb", err)
 	}
 	if isDND {
 		return false, "User has enabled Do Not Disturb mode", nil
@@ -135,7 +141,7 @@ func (s *preferencesService) CanSendNotification(ctx context.Context, userID uui
 	if channel == model.ChannelEmail || channel == model.ChannelPush {
 		inQuietHours, err := s.prefsRepo.IsInQuietHours(ctx, userID, time.Now())
 		if err != nil {
-			log.Warn().Err(err).Msg("Error checking quiet hours")
+			logger.Error("Error checking quiet hours", err)
 		}
 		if inQuietHours {
 			return false, "Currently in user's quiet hours", nil
@@ -145,7 +151,7 @@ func (s *preferencesService) CanSendNotification(ctx context.Context, userID uui
 	// 3. CHECK CHANNEL-SPECIFIC PREFERENCES
 	isEnabled, err := s.prefsRepo.IsChannelEnabled(ctx, userID, notificationType, channel)
 	if err != nil {
-		log.Warn().Err(err).Msg("Error checking channel enabled")
+		logger.Error("Error checking channel enabled", err)
 		// Default to enabled on error
 		return true, "", nil
 	}
@@ -202,11 +208,15 @@ func (s *preferencesService) createDefaultPreferences(userID uuid.UUID) *model.N
 			"push":   false,
 		},
 	}
+	startTime, _ := time.Parse("15:04", "22:00")
+	endTime, _ := time.Parse("15:04", "07:00")
 
 	return &model.NotificationPreferences{
-		UserID:       userID,
-		Preferences:  defaultPrefs,
-		DoNotDisturb: false,
+		UserID:          userID,
+		Preferences:     defaultPrefs,
+		DoNotDisturb:    false,
+		QuietHoursStart: &startTime,
+		QuietHoursEnd:   &endTime,
 	}
 }
 

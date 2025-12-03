@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -74,15 +75,16 @@ func (r *campaignRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.
 		FROM notification_campaigns
 		WHERE id = $1
 	`
+	var targetFilterByte, templateData []byte
 
 	var c model.Campaign
 	err := r.db.QueryRow(ctx, query, id).Scan(
 		&c.ID, &c.Name, &c.Description, &c.TemplateCode,
-		&c.TargetType, &c.TargetSegment, &c.TargetUserIDs, &c.TargetFilters,
+		&c.TargetType, &c.TargetSegment, &c.TargetUserIDs, &targetFilterByte,
 		&c.ScheduledAt, &c.StartedAt, &c.CompletedAt, &c.CancelledAt,
 		&c.Status, &c.BatchSize, &c.BatchDelaySeconds,
 		&c.TotalRecipients, &c.ProcessedCount, &c.SentCount, &c.DeliveredCount, &c.FailedCount,
-		&c.TemplateData, &c.Channels, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt,
+		&templateData, &c.Channels, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt,
 	)
 
 	if err != nil {
@@ -91,7 +93,16 @@ func (r *campaignRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.
 		}
 		return nil, fmt.Errorf("get campaign by id: %w", err)
 	}
-
+	if len(targetFilterByte) > 0 {
+		if err := json.Unmarshal(targetFilterByte, &c.TargetFilters); err != nil {
+			return nil, fmt.Errorf("get campaign by id: %w", err)
+		}
+	}
+	if len(templateData) > 0 {
+		if err := json.Unmarshal(templateData, &c.TemplateData); err != nil {
+			return nil, fmt.Errorf("get campaign by id: %w", err)
+		}
+	}
 	return &c, nil
 }
 
@@ -200,20 +211,29 @@ func (r *campaignRepository) List(ctx context.Context, status *string, createdBy
 		return nil, 0, fmt.Errorf("list campaigns: %w", err)
 	}
 	defer rows.Close()
-
+	var targetFilterBytes, templateDataBytes []byte
 	var campaigns []model.Campaign
 	for rows.Next() {
 		var c model.Campaign
 		err := rows.Scan(
 			&c.ID, &c.Name, &c.Description, &c.TemplateCode,
-			&c.TargetType, &c.TargetSegment, &c.TargetUserIDs, &c.TargetFilters,
+			&c.TargetType, &c.TargetSegment, &c.TargetUserIDs, &targetFilterBytes,
 			&c.ScheduledAt, &c.StartedAt, &c.CompletedAt, &c.CancelledAt,
 			&c.Status, &c.BatchSize, &c.BatchDelaySeconds,
 			&c.TotalRecipients, &c.ProcessedCount, &c.SentCount, &c.DeliveredCount, &c.FailedCount,
-			&c.TemplateData, &c.Channels, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt,
+			&templateDataBytes, &c.Channels, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("scan campaign: %w", err)
+		}
+		if targetFilterBytes != nil && string(targetFilterBytes) != "" {
+			if err := json.Unmarshal(targetFilterBytes, &c.TargetFilters); err != nil {
+				return nil, 0, fmt.Errorf("unmarshal target filters: %w", err)
+			}
+		}
+
+		if err := json.Unmarshal(templateDataBytes, &c.TemplateData); err != nil {
+			return nil, 0, fmt.Errorf("unmarshal template data: %w", err)
 		}
 		campaigns = append(campaigns, c)
 	}
@@ -247,20 +267,30 @@ func (r *campaignRepository) ListScheduled(ctx context.Context, before time.Time
 		return nil, fmt.Errorf("list scheduled campaigns: %w", err)
 	}
 	defer rows.Close()
-
+	var targetFilterBytes, templateDataBytes []byte
 	var campaigns []model.Campaign
 	for rows.Next() {
 		var c model.Campaign
 		err := rows.Scan(
 			&c.ID, &c.Name, &c.Description, &c.TemplateCode,
-			&c.TargetType, &c.TargetSegment, &c.TargetUserIDs, &c.TargetFilters,
+			&c.TargetType, &c.TargetSegment, &c.TargetUserIDs, &targetFilterBytes,
 			&c.ScheduledAt, &c.StartedAt, &c.CompletedAt, &c.CancelledAt,
 			&c.Status, &c.BatchSize, &c.BatchDelaySeconds,
 			&c.TotalRecipients, &c.ProcessedCount, &c.SentCount, &c.DeliveredCount, &c.FailedCount,
-			&c.TemplateData, &c.Channels, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt,
+			&templateDataBytes, &c.Channels, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan campaign: %w", err)
+		}
+		if targetFilterBytes != nil && string(targetFilterBytes) != "" {
+			if err := json.Unmarshal(targetFilterBytes, &c.TargetFilters); err != nil {
+				return nil, fmt.Errorf("unmarshal target filters: %w", err)
+			}
+		}
+		if templateDataBytes != nil && string(templateDataBytes) != "" {
+			if err := json.Unmarshal(templateDataBytes, &c.TemplateData); err != nil {
+				return nil, fmt.Errorf("unmarshal template data: %w", err)
+			}
 		}
 		campaigns = append(campaigns, c)
 	}

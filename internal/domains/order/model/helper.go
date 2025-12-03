@@ -15,44 +15,30 @@ import (
 // Returns: subtotal, discount, shipping, cod_fee, tax, total
 func CalculateOrderAmounts(
 	itemsSubtotal decimal.Decimal,
-	discountPercent decimal.Decimal,
-	maxDiscount decimal.Decimal,
-	fixedDiscount decimal.Decimal,
-	promoType string, // "percentage" or "fixed"
+	discountAmount decimal.Decimal, // ✅ Đơn giản: chỉ nhận discount đã tính sẵn
 	isCOD bool,
 ) (subtotal, discount, shipping, codFee, tax, total decimal.Decimal) {
 
 	subtotal = itemsSubtotal
+	discount = discountAmount
 
-	// Calculate discount based on promo type
-	if promoType == "percentage" {
-		discount = subtotal.Mul(discountPercent).Div(decimal.NewFromInt(100))
-		if maxDiscount.GreaterThan(decimal.Zero) && discount.GreaterThan(maxDiscount) {
-			discount = maxDiscount
-		}
-	} else if promoType == "fixed" {
-		discount = fixedDiscount
-	} else {
-		discount = decimal.Zero
-	}
-
-	// Shipping fee (fixed 15,000 VND)
+	// Shipping fee (15,000 VND)
 	shipping = decimal.NewFromInt(ShippingFee)
 
-	// COD fee (15,000 VND if payment method is COD)
+	// COD fee (15,000 VND if COD)
 	if isCOD {
 		codFee = decimal.NewFromInt(CODFee)
 	} else {
 		codFee = decimal.Zero
 	}
 
-	// Tax (0% for now)
+	// Tax (0%)
 	tax = decimal.Zero
 
 	// Total = subtotal - discount + shipping + cod_fee + tax
 	total = subtotal.Sub(discount).Add(shipping).Add(codFee).Add(tax)
 
-	// Ensure total is not negative
+	// Ensure non-negative
 	if total.LessThan(decimal.Zero) {
 		total = decimal.Zero
 	}

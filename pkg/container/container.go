@@ -86,6 +86,7 @@ type Container struct {
 	AsynqClient    *asynq.Client
 	MinIOStorage   *storage.MinIOStorage
 	ImageProcessor *storage.ImageProcessor
+	JobConfig      config.JobConfig
 
 	// Infrastructure Services
 	EmailService              email.EmailService
@@ -216,6 +217,7 @@ func (c *Container) initInfrastructure() error {
 	}
 	c.Config = cfg
 	log.Println("✅ Config loaded")
+	c.JobConfig = cfg.Job
 
 	// Database
 	dbConfig, err := config.LoadDatabaseConfig()
@@ -522,6 +524,7 @@ func (c *Container) initDependentServices() error {
 		c.AddressRepo,
 		c.CartRepo,
 		c.PromotionRepo,
+		c.BookService,
 		c.InventoryService,
 		c.AsynqClient,
 	)
@@ -606,6 +609,7 @@ func (c *Container) initNotificationServices() error {
 		c.TemplateRepo,
 		c.RateLimitRepo,
 		c.DeliveryLogRepo,
+		c.UserRepo,
 	)
 	log.Println("  ✓ NotificationService (base)")
 

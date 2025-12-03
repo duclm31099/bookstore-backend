@@ -446,7 +446,7 @@ func setupNotificationRoutes(v1 *gin.RouterGroup, c *container.Container) {
 	// ================================================
 
 	admin := v1.Group("/admin")
-	// admin.Use(middleware.AdminMiddleware(c.Config.JWT.Secret))
+	admin.Use(middleware.AuthMiddleware(c.Config.JWT.Secret))
 	{
 		// Templates
 		templates := admin.Group("/notification-templates")

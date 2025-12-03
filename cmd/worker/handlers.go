@@ -82,12 +82,14 @@ func initializeHandlers(c *container.Container, cfg *Config) *HandlerRegistry {
 		// - User info comes from JOIN query (no separate user repo needed)
 		// - Promotion validation done in model methods (no promotion service needed)
 		removeExpiredPromotions:  cartJob.NewRemoveExpiredPromotionsHandler(c.CartRepo, c.NotificationService),
-		sendPendingNotifications: notificationJob.NewSendPendingNotificationsHandler(c.NotificationService),
+		sendPendingNotifications: notificationJob.NewSendPendingNotificationsHandler(c.NotificationService, c.JobConfig),
 		cleanupOldNotifications: notificationJob.NewCleanupOldNotificationsHandler(
 			c.NotificationService,
+			c.JobConfig,
 		),
 		retryFailedDeliveries: notificationJob.NewRetryFailedDeliveriesHandler(
 			c.DeliveryService,
+			c.JobConfig,
 		),
 	}
 }

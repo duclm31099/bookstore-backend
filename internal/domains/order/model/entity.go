@@ -46,10 +46,10 @@ const (
 // BUSINESS CONSTANTS
 // =====================================================
 const (
-	ShippingFee        = 15000 // 15,000 VND
-	CODFee             = 15000 // 15,000 VND
-	MinimumOrderAmount = 0     // No minimum (set to 0, can be updated later)
-	TaxRate            = 0.0   // 0% tax
+	ShippingFee        = 0   // 15,000 VND
+	CODFee             = 0   // 15,000 VND
+	MinimumOrderAmount = 0   // No minimum (set to 0, can be updated later)
+	TaxRate            = 0.0 // 0% tax
 )
 
 // =====================================================

@@ -7,11 +7,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/rs/zerolog/log"
 
 	"bookstore-backend/internal/domains/notification/model"
 	"bookstore-backend/internal/domains/notification/service"
 	"bookstore-backend/internal/shared/response"
+	"bookstore-backend/pkg/logger"
 )
 
 // ================================================
@@ -75,7 +75,7 @@ func (h *notificationHandler) ListNotifications(c *gin.Context) {
 	// 3. CALL SERVICE
 	result, err := h.notificationService.ListNotifications(c.Request.Context(), req)
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to list notifications")
+		logger.Error("Failed to list notifications", err)
 		response.Error(c, http.StatusInternalServerError, "Failed to list notifications", err.Error())
 		return
 	}
@@ -115,7 +115,7 @@ func (h *notificationHandler) GetNotification(c *gin.Context) {
 			response.Error(c, http.StatusGone, "Notification expired", err.Error())
 			return
 		}
-		log.Error().Err(err).Msg("Failed to get notification")
+		logger.Error("Failed to get notification", err)
 		response.Error(c, http.StatusInternalServerError, "Failed to get notification", err.Error())
 		return
 	}
@@ -157,7 +157,7 @@ func (h *notificationHandler) MarkAsRead(c *gin.Context) {
 
 	// 4. CALL SERVICE
 	if err := h.notificationService.MarkAsRead(c.Request.Context(), userID, req); err != nil {
-		log.Error().Err(err).Msg("Failed to mark notifications as read")
+		logger.Error("Failed to mark notifications as read", err)
 		response.Error(c, http.StatusInternalServerError, "Failed to mark notifications as read", err.Error())
 		return
 	}
@@ -182,7 +182,7 @@ func (h *notificationHandler) MarkAllAsRead(c *gin.Context) {
 	// 2. CALL SERVICE
 	count, err := h.notificationService.MarkAllAsRead(c.Request.Context(), userID)
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to mark all notifications as read")
+		logger.Error("Failed to mark all notifications as read", err)
 		response.Error(c, http.StatusInternalServerError, "Failed to mark all notifications as read", err.Error())
 		return
 	}
@@ -219,7 +219,7 @@ func (h *notificationHandler) DeleteNotification(c *gin.Context) {
 			response.Error(c, http.StatusNotFound, "Notification not found", err.Error())
 			return
 		}
-		log.Error().Err(err).Msg("Failed to delete notification")
+		logger.Error("Failed to delete notification", err)
 		response.Error(c, http.StatusInternalServerError, "Failed to delete notification", err.Error())
 		return
 	}
@@ -244,7 +244,7 @@ func (h *notificationHandler) GetUnreadCount(c *gin.Context) {
 	// 2. CALL SERVICE
 	count, err := h.notificationService.GetUnreadCount(c.Request.Context(), userID)
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to get unread count")
+		logger.Error("Failed to get unread count", err)
 		response.Error(c, http.StatusInternalServerError, "Failed to get unread count", err.Error())
 		return
 	}

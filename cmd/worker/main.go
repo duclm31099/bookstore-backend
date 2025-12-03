@@ -28,7 +28,7 @@ func main() {
 	srv := setupAsynqServer(cfg, handlers)
 
 	// Setup scheduler
-	scheduler := setupScheduler(cfg)
+	scheduler := setupScheduler(cfg, c.JobConfig)
 
 	// ✅ Perform health checks and log startup
 	if err := startServices(srv, scheduler, cfg); err != nil {

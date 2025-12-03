@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/hibiken/asynq"
-	"github.com/rs/zerolog/log"
 )
 
 type CleanupExpiredTokensPayload struct {
@@ -37,10 +36,6 @@ func (h *CleanupExpiredTokenHandler) ProcessTask(ctx context.Context, task *asyn
 		cleanupDate = payload.Date
 	}
 
-	log.Info().
-		Time("cleanup_date", cleanupDate).
-		Msg("Starting cleanup of expired tokens")
-
 	// Cleanup verification tokens đã hết hạn (>24 giờ)
 	verifycationCutoff := cleanupDate.Add(-24 * time.Hour)
 	deletedVerify, err := h.userRepo.DeleteExpiredVerifyTokens(ctx, verifycationCutoff)
@@ -56,10 +51,10 @@ func (h *CleanupExpiredTokenHandler) ProcessTask(ctx context.Context, task *asyn
 		logger.Error("Delete expired reset token failed due to ", err)
 		return err
 	}
-	log.Info().
-		Int("verification_tokens_deleted", deletedVerify).
-		Int("reset_tokens_deleted", deletedReset).
-		Msg("Successfully cleaned up expired tokens")
+	logger.Info("Cleanup Expired Token result", map[string]interface{}{
+		"deleted_verify_tokens": deletedVerify,
+		"deleted_reset_tokens":  deletedReset,
+	})
 
 	return nil
 }

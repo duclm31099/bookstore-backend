@@ -33,6 +33,7 @@ type RepositoryInterface interface {
 	CreateBookWithTx(ctx context.Context, tx pgx.Tx, book *model.Book) error
 	FindBySlugWithTx(ctx context.Context, tx pgx.Tx, slug string) (*model.Book, error)
 	GetBooksByIDs(ctx context.Context, ids []string) ([]model.Book, error)
+	GetBooksCheckout(ctx context.Context, ids []string) ([]model.BookCheckoutResponse, error)
 }
 
 // BookFilter - Filter object for database query

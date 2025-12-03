@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"bookstore-backend/internal/config"
 	"bookstore-backend/internal/domains/notification/service"
+	"bookstore-backend/internal/shared"
 	"bookstore-backend/internal/shared/utils"
 	"bookstore-backend/pkg/logger"
 
@@ -17,28 +19,27 @@ import (
 
 type RetryFailedDeliveriesHandler struct {
 	deliveryService service.DeliveryService
+	jobConfig       config.JobConfig
 }
 
 func NewRetryFailedDeliveriesHandler(
 	deliveryService service.DeliveryService,
+	jobConfig config.JobConfig,
 ) *RetryFailedDeliveriesHandler {
 	return &RetryFailedDeliveriesHandler{
 		deliveryService: deliveryService,
+		jobConfig:       jobConfig,
 	}
 }
 
-type retryFailedPayload struct {
-	Limit int `json:"limit"`
-}
-
 func (h *RetryFailedDeliveriesHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
-	var payload retryFailedPayload
+	var payload shared.RetryFailedPayload
 	if err := utils.UnmarshalTask(t, &payload); err != nil {
 		logger.Error("Failed to unmarshal retry_failed_deliveries payload, using default 50", err)
 	}
 	limit := payload.Limit
-	if limit <= 0 || limit > 100 {
-		limit = 50 // mặc định dev, có thể tăng lên prod
+	if limit <= 0 || limit > 100 || payload.Limit == 0 {
+		limit = h.jobConfig.RetryFailedLimit // mặc định dev, có thể tăng lên prod
 	}
 
 	logger.Info("Starting RetryFailedDeliveries job", map[string]interface{}{

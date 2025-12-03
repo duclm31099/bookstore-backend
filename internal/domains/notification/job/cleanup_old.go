@@ -7,6 +7,7 @@ import (
 
 	"github.com/hibiken/asynq"
 
+	"bookstore-backend/internal/config"
 	"bookstore-backend/internal/domains/notification/service"
 	"bookstore-backend/internal/shared/utils"
 	"bookstore-backend/pkg/logger"
@@ -18,13 +19,16 @@ import (
 
 type CleanupOldNotificationsHandler struct {
 	notificationService service.NotificationService
+	jobConfig           config.JobConfig
 }
 
 func NewCleanupOldNotificationsHandler(
 	notificationService service.NotificationService,
+	jobConfig config.JobConfig,
 ) *CleanupOldNotificationsHandler {
 	return &CleanupOldNotificationsHandler{
 		notificationService: notificationService,
+		jobConfig:           jobConfig,
 	}
 }
 
@@ -42,7 +46,7 @@ func (h *CleanupOldNotificationsHandler) ProcessTask(ctx context.Context, t *asy
 
 	days := payload.Days
 	if days <= 0 {
-		days = 30 // mặc định theo yêu cầu
+		days = h.jobConfig.CleanupRetentionDays // mặc định theo yêu cầu
 	}
 
 	olderThan := time.Duration(days) * 24 * time.Hour

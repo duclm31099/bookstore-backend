@@ -327,17 +327,8 @@ func (h *Handler) ValidateCart(c *gin.Context) {
 func (h *Handler) ApplyPromoCode(c *gin.Context) {
 	userIdVal, exist := c.Get("user_id")
 
-	logger.Info("get user id", map[string]interface{}{
-		"userId": userIdVal,
-		"exist":  exist,
-	})
-
 	// 1) Kiểm tra tồn tại
 	if !exist || userIdVal == nil {
-		logger.Info("error", map[string]interface{}{
-			"userId": userIdVal,
-			"exist":  exist,
-		})
 		response.Error(c, http.StatusUnauthorized, "User not login", nil)
 		return
 	}
@@ -357,15 +348,8 @@ func (h *Handler) ApplyPromoCode(c *gin.Context) {
 		return
 	}
 
-	logger.Info("user id", map[string]interface{}{
-		"uid": uid,
-	})
-
 	cartID, err := middleware.GetCartID(c)
-	logger.Info("middlware get cart", map[string]interface{}{
-		"cartID": cartID,
-		"err":    err,
-	})
+
 	if err != nil {
 		response.Error(c, http.StatusBadRequest, "Invalid cart", err.Error())
 		return
@@ -377,11 +361,7 @@ func (h *Handler) ApplyPromoCode(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, "Invalid request", err.Error())
 		return
 	}
-	logger.Info("Go to service", map[string]interface{}{
-		"cartID":    cartID,
-		"promoCode": req.PromoCode,
-		"uid":       uid,
-	})
+
 	result, err := h.service.ApplyPromoCode(c.Request.Context(), cartID, req.PromoCode, uid)
 	if err != nil {
 		logger.Error("apply promo code failed", err)

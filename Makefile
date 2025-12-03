@@ -227,6 +227,8 @@ seed-8: ## Seed reviews data
 
 seed-9: ## Seed reviews data
 	@$(PSQL) -f seeds/009_test_remove_expired_promotions.sql 2>/dev/null
+seed-10: ## Seed reviews data
+	@$(PSQL) -f seeds/010_notification_seed.sql
 # ========================================
 # ASYNQ MONITORING
 # ========================================

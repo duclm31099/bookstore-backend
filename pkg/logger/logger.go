@@ -20,6 +20,9 @@ func Init(env string) {
 func Info(msg string, fields map[string]interface{}) {
 	log.Info().Fields(fields).Msg(msg)
 }
+func Debug(msg string) {
+	log.Debug().Msg(msg)
+}
 
 func Error(msg string, err error) {
 	log.Error().Err(err).Msg(msg)

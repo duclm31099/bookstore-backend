@@ -6,10 +6,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/rs/zerolog/log"
 
 	"bookstore-backend/internal/domains/notification/model"
 	"bookstore-backend/internal/domains/notification/repository"
+	"bookstore-backend/pkg/logger"
 )
 
 // ================================================
@@ -52,10 +52,10 @@ func (s *campaignService) SetDependencies(
 // ================================================
 
 func (s *campaignService) CreateCampaign(ctx context.Context, adminID uuid.UUID, req model.CreateCampaignRequest) (*model.CampaignResponse, error) {
-	log.Info().
-		Str("admin_id", adminID.String()).
-		Str("name", req.Name).
-		Msg("[CampaignService] CreateCampaign")
+	logger.Info("[CampaignService] CreateCampaign", map[string]interface{}{
+		"admin_id": adminID.String(),
+		"name":     req.Name,
+	})
 
 	// 1. VALIDATE TEMPLATE EXISTS
 	template, err := s.templateRepo.GetByCode(ctx, req.TemplateCode)
@@ -119,7 +119,7 @@ func (s *campaignService) CreateCampaign(ctx context.Context, adminID uuid.UUID,
 	// 7. CALCULATE TOTAL RECIPIENTS (estimate)
 	totalRecipients, err := s.estimateRecipients(ctx, campaign)
 	if err != nil {
-		log.Warn().Err(err).Msg("Failed to estimate recipients")
+		logger.Error("Failed to estimate recipients", err)
 	} else {
 		campaign.TotalRecipients = &totalRecipients
 	}
@@ -129,10 +129,10 @@ func (s *campaignService) CreateCampaign(ctx context.Context, adminID uuid.UUID,
 		return nil, fmt.Errorf("create campaign: %w", err)
 	}
 
-	log.Info().
-		Str("campaign_id", campaign.ID.String()).
-		Str("status", campaign.Status).
-		Msg("[CampaignService] Campaign created successfully")
+	logger.Info("[CampaignService] Campaign created successfully", map[string]interface{}{
+		"campaign_id": campaign.ID.String(),
+		"status":      campaign.Status,
+	})
 
 	return s.toResponse(campaign), nil
 }
@@ -186,9 +186,9 @@ func (s *campaignService) ListCampaigns(ctx context.Context, status *string, cre
 // ================================================
 
 func (s *campaignService) StartCampaign(ctx context.Context, campaignID uuid.UUID) error {
-	log.Info().
-		Str("campaign_id", campaignID.String()).
-		Msg("[CampaignService] StartCampaign")
+	logger.Info("[CampaignService] StartCampaign", map[string]interface{}{
+		"campaign_id": campaignID.String(),
+	})
 
 	// 1. GET CAMPAIGN
 	campaign, err := s.campaignRepo.GetByID(ctx, campaignID)
@@ -208,9 +208,9 @@ func (s *campaignService) StartCampaign(ctx context.Context, campaignID uuid.UUI
 
 	// 4. START PROCESSING (this will be handled by background worker)
 	// For now, just mark as running and let worker pick it up
-	log.Info().
-		Str("campaign_id", campaignID.String()).
-		Msg("[CampaignService] Campaign started, will be processed by worker")
+	logger.Info("[CampaignService] Campaign started, will be processed by worker", map[string]interface{}{
+		"campaign_id": campaignID.String(),
+	})
 
 	return nil
 }
@@ -220,9 +220,9 @@ func (s *campaignService) StartCampaign(ctx context.Context, campaignID uuid.UUI
 // ================================================
 
 func (s *campaignService) CancelCampaign(ctx context.Context, campaignID uuid.UUID) error {
-	log.Info().
-		Str("campaign_id", campaignID.String()).
-		Msg("[CampaignService] CancelCampaign")
+	logger.Info("[CampaignService] CancelCampaign", map[string]interface{}{
+		"campaign_id": campaignID.String(),
+	})
 
 	// 1. GET CAMPAIGN
 	campaign, err := s.campaignRepo.GetByID(ctx, campaignID)
@@ -240,9 +240,9 @@ func (s *campaignService) CancelCampaign(ctx context.Context, campaignID uuid.UU
 		return fmt.Errorf("mark as cancelled: %w", err)
 	}
 
-	log.Info().
-		Str("campaign_id", campaignID.String()).
-		Msg("[CampaignService] Campaign cancelled successfully")
+	logger.Info("[CampaignService] Campaign cancelled successfully", map[string]interface{}{
+		"campaign_id": campaignID.String(),
+	})
 
 	return nil
 }
@@ -252,7 +252,7 @@ func (s *campaignService) CancelCampaign(ctx context.Context, campaignID uuid.UU
 // ================================================
 
 func (s *campaignService) ProcessScheduledCampaigns(ctx context.Context) error {
-	log.Info().Msg("[Background] Processing scheduled campaigns")
+	logger.Info("[Background] Processing scheduled campaigns", map[string]interface{}{})
 
 	// Get campaigns scheduled to run now
 	campaigns, err := s.campaignRepo.ListScheduled(ctx, time.Now())
@@ -261,30 +261,27 @@ func (s *campaignService) ProcessScheduledCampaigns(ctx context.Context) error {
 	}
 
 	if len(campaigns) == 0 {
-		log.Info().Msg("[Background] No scheduled campaigns to process")
+		logger.Info("[Background] No scheduled campaigns to process", map[string]interface{}{})
 		return nil
 	}
 
 	for _, campaign := range campaigns {
-		log.Info().
-			Str("campaign_id", campaign.ID.String()).
-			Str("name", campaign.Name).
-			Msg("[Background] Starting scheduled campaign")
+		logger.Info("[Background] Starting scheduled campaign", map[string]interface{}{
+			"campaign_id": campaign.ID.String(),
+			"name":        campaign.Name,
+		})
 
 		// Mark as started
 		if err := s.campaignRepo.MarkAsStarted(ctx, campaign.ID); err != nil {
-			log.Error().
-				Err(err).
-				Str("campaign_id", campaign.ID.String()).
-				Msg("Failed to mark campaign as started")
+			logger.Error("Failed to mark campaign as started", err)
 			continue
 		}
 
 		// Process campaign (send notifications)
 		// This will be handled by ProcessCampaignBatch in a separate worker
-		log.Info().
-			Str("campaign_id", campaign.ID.String()).
-			Msg("[Background] Campaign marked as running, worker will process batches")
+		logger.Info("[Background] Campaign marked as running, worker will process batches", map[string]interface{}{
+			"campaign_id": campaign.ID.String(),
+		})
 	}
 
 	return nil
@@ -295,10 +292,10 @@ func (s *campaignService) ProcessScheduledCampaigns(ctx context.Context) error {
 // ================================================
 
 func (s *campaignService) ProcessCampaignBatch(ctx context.Context, campaignID uuid.UUID, batchNumber int) error {
-	log.Info().
-		Str("campaign_id", campaignID.String()).
-		Int("batch_number", batchNumber).
-		Msg("[Worker] ProcessCampaignBatch")
+	logger.Info("[Worker] ProcessCampaignBatch", map[string]interface{}{
+		"campaign_id":  campaignID.String(),
+		"batch_number": batchNumber,
+	})
 
 	// 1. GET CAMPAIGN
 	campaign, err := s.campaignRepo.GetByID(ctx, campaignID)
@@ -308,10 +305,10 @@ func (s *campaignService) ProcessCampaignBatch(ctx context.Context, campaignID u
 
 	// 2. CHECK IF CAMPAIGN IS STILL RUNNING
 	if campaign.Status != model.CampaignStatusRunning {
-		log.Warn().
-			Str("campaign_id", campaignID.String()).
-			Str("status", campaign.Status).
-			Msg("Campaign is not running, skipping batch")
+		logger.Info("Campaign is not running, skipping batch", map[string]interface{}{
+			"campaign_id": campaignID.String(),
+			"status":      campaign.Status,
+		})
 		return nil
 	}
 
@@ -323,9 +320,9 @@ func (s *campaignService) ProcessCampaignBatch(ctx context.Context, campaignID u
 
 	if len(targetUsers) == 0 {
 		// No more users to process, mark campaign as completed
-		log.Info().
-			Str("campaign_id", campaignID.String()).
-			Msg("No more users to process, marking campaign as completed")
+		logger.Info("No more users to process, marking campaign as completed", map[string]interface{}{
+			"campaign_id": campaignID.String(),
+		})
 
 		if err := s.campaignRepo.MarkAsCompleted(ctx, campaignID); err != nil {
 			return fmt.Errorf("mark as completed: %w", err)
@@ -352,11 +349,7 @@ func (s *campaignService) ProcessCampaignBatch(ctx context.Context, campaignID u
 		// Send notification
 		_, err := s.notificationService.SendNotification(ctx, notifReq)
 		if err != nil {
-			log.Error().
-				Err(err).
-				Str("user_id", userID.String()).
-				Str("campaign_id", campaignID.String()).
-				Msg("Failed to send campaign notification")
+			logger.Error("Failed to send campaign notification", err)
 			failedCount++
 		} else {
 			sentCount++
@@ -365,21 +358,18 @@ func (s *campaignService) ProcessCampaignBatch(ctx context.Context, campaignID u
 
 	// 5. UPDATE CAMPAIGN PROGRESS
 	if err := s.campaignRepo.UpdateProgress(ctx, campaignID, sentCount, sentCount, failedCount); err != nil {
-		log.Error().
-			Err(err).
-			Str("campaign_id", campaignID.String()).
-			Msg("Failed to update campaign progress")
+		logger.Error("Failed to update campaign progress", err)
 	}
 
 	// 6. DELAY BEFORE NEXT BATCH
 	time.Sleep(time.Duration(campaign.BatchDelaySeconds) * time.Second)
 
-	log.Info().
-		Str("campaign_id", campaignID.String()).
-		Int("batch_number", batchNumber).
-		Int("sent", sentCount).
-		Int("failed", failedCount).
-		Msg("[Worker] Batch processed successfully")
+	logger.Info("[Worker] Batch processed successfully", map[string]interface{}{
+		"campaign_id":  campaignID.String(),
+		"batch_number": batchNumber,
+		"sent":         sentCount,
+		"failed":       failedCount,
+	})
 
 	return nil
 }
@@ -425,14 +415,14 @@ func (s *campaignService) estimateRecipients(ctx context.Context, campaign *mode
 		// Query database for segment count
 		// This would require a user repository
 		// For now, return estimate
-		log.Warn().Msg("Segment recipient estimation not implemented")
+		logger.Info("Segment recipient estimation not implemented", map[string]interface{}{})
 		return 0, nil
 
 	case model.TargetTypeAllUsers:
 		// Query database for total active users
 		// This would require a user repository
 		// For now, return estimate
-		log.Warn().Msg("All users recipient estimation not implemented")
+		logger.Info("All users recipient estimation not implemented", map[string]interface{}{})
 		return 0, nil
 
 	default:
@@ -468,13 +458,13 @@ func (s *campaignService) getTargetUsers(ctx context.Context, campaign *model.Ca
 	case model.TargetTypeSegment:
 		// Query users by segment with pagination
 		// This would require integration with user service
-		log.Warn().Msg("Segment user fetching not implemented")
+		logger.Info("Segment user fetching not implemented", map[string]interface{}{})
 		return []uuid.UUID{}, nil
 
 	case model.TargetTypeAllUsers:
 		// Query all active users with pagination
 		// This would require integration with user service
-		log.Warn().Msg("All users fetching not implemented")
+		logger.Info("All users fetching not implemented", map[string]interface{}{})
 		return []uuid.UUID{}, nil
 
 	default:

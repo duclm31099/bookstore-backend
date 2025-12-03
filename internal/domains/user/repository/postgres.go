@@ -842,7 +842,7 @@ func (r *postgresRepository) DeleteExpiredVerifyTokens(ctx context.Context, cuto
 		SET 
 			verification_token = NULL,
 			verification_sent_at = NULL,
-			verification_token_expires_at = NULL
+			verification_token_expires_at = NULL,
 			updated_at = NOW()
 		WHERE
 			verification_token IS NOT NULL
@@ -857,11 +857,6 @@ func (r *postgresRepository) DeleteExpiredVerifyTokens(ctx context.Context, cuto
 		return 0, err
 	}
 
-	if result.RowsAffected() == 0 {
-		logger.Error("Query delete expired verify token failed -> ", err)
-		return 0, err
-	}
-
 	return int(result.RowsAffected()), nil
 }
 
@@ -869,8 +864,8 @@ func (r *postgresRepository) DeleteExpiredResetTokens(ctx context.Context, cutof
 	query := `
 		UPDATE users
 		SET 
-			reset_token = NULL
-			reset_token_expires_at = NULL
+			reset_token = NULL,
+			reset_token_expires_at = NULL,
 			updated_at = NOW()
 		WHERE
 			reset_token IS NOT NULL
@@ -881,11 +876,6 @@ func (r *postgresRepository) DeleteExpiredResetTokens(ctx context.Context, cutof
 	result, err := r.pool.Exec(ctx, query, cutoffTime)
 	if err != nil {
 		logger.Error("Query delete expired reset token failed due to ", err)
-		return 0, err
-	}
-
-	if result.RowsAffected() == 0 {
-		logger.Error("Query delete expired reset token failed -> ", err)
 		return 0, err
 	}
 

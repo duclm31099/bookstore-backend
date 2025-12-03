@@ -25,12 +25,12 @@ import (
 	"bookstore-backend/internal/shared"
 	"bookstore-backend/internal/shared/utils"
 	"bookstore-backend/pkg/database"
+	"bookstore-backend/pkg/logger"
 
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/rs/zerolog/log"
 	"github.com/shopspring/decimal"
 )
 
@@ -85,11 +85,11 @@ func NewBulkImportService(
 
 // ImportBooks là main entry point cho bulk import (sync mode)
 func (s *bulkImportService) ImportBooks(ctx context.Context, file *multipart.FileHeader, userID string) (*model.BulkImportResult, error) {
-	log.Info().
-		Str("user_id", userID).
-		Str("file_name", file.Filename).
-		Int64("file_size", file.Size).
-		Msg("Starting bulk import books")
+	logger.Info("Starting bulk import books", map[string]interface{}{
+		"user_id":   userID,
+		"file_name": file.Filename,
+		"file_size": file.Size,
+	})
 
 	// PHASE 1: Parse CSV file
 	csvRows, err := s.parseCSVFile(file)
@@ -104,7 +104,9 @@ func (s *bulkImportService) ImportBooks(ctx context.Context, file *multipart.Fil
 	}
 
 	totalRows := len(csvRows)
-	log.Info().Int("total_rows", totalRows).Msg("CSV parsed successfully")
+	logger.Info("CSV parsed successfully", map[string]interface{}{
+		"total_rows": totalRows,
+	})
 
 	// Check row limit (1000 rows max)
 	if totalRows > 1000 {
@@ -120,9 +122,9 @@ func (s *bulkImportService) ImportBooks(ctx context.Context, file *multipart.Fil
 	// PHASE 2: Validate ALL rows (không insert gì)
 	validationErrors := s.validateAllRows(ctx, csvRows)
 	if len(validationErrors) > 0 {
-		log.Warn().
-			Int("error_count", len(validationErrors)).
-			Msg("Validation failed")
+		logger.Info("Validation failed", map[string]interface{}{
+			"error_count": len(validationErrors),
+		})
 
 		return &model.BulkImportResult{
 			Success:    false,
@@ -132,7 +134,7 @@ func (s *bulkImportService) ImportBooks(ctx context.Context, file *multipart.Fil
 		}, nil
 	}
 
-	log.Info().Msg("All rows validated successfully")
+	logger.Info("All rows validated successfully", map[string]interface{}{})
 
 	// PHASE 3: Download & Upload images (NGOÀI transaction)
 	imageResults, err := s.uploadImagesForAllRows(ctx, csvRows)
@@ -149,7 +151,7 @@ func (s *bulkImportService) ImportBooks(ctx context.Context, file *multipart.Fil
 		}, nil
 	}
 
-	log.Info().Msg("All images uploaded successfully")
+	logger.Info("All images uploaded successfully", map[string]interface{}{})
 
 	// PHASE 4: Create entities & books (TRONG transaction)
 	createdBooks, err := s.createBooksInTransaction(ctx, csvRows, imageResults)
@@ -166,9 +168,9 @@ func (s *bulkImportService) ImportBooks(ctx context.Context, file *multipart.Fil
 		}, nil
 	}
 
-	log.Info().
-		Int("success_count", len(createdBooks)).
-		Msg("Bulk import completed successfully")
+	logger.Info("Bulk import completed successfully", map[string]interface{}{
+		"success_count": len(createdBooks),
+	})
 
 	// Return success result
 	return &model.BulkImportResult{
@@ -778,11 +780,11 @@ func (s *bulkImportService) findOrCreateAuthor(ctx context.Context, tx pgx.Tx, n
 		return "", fmt.Errorf("failed to create author: %w", err)
 	}
 
-	log.Info().
-		Str("author_id", newAuthor.ID.String()).
-		Str("name", titleCaseName).
-		Str("slug", slug).
-		Msg("Created new author")
+	logger.Info("Created new author", map[string]interface{}{
+		"author_id": newAuthor.ID.String(),
+		"name":      titleCaseName,
+		"slug":      slug,
+	})
 
 	return newAuthor.ID.String(), nil
 }
@@ -831,10 +833,10 @@ func (s *bulkImportService) findOrCreateCategory(ctx context.Context, tx pgx.Tx,
 		return "", fmt.Errorf("failed to create category: %w", err)
 	}
 
-	log.Info().
-		Str("category_id", newCategory.ID.String()).
-		Str("name", titleCaseName).
-		Msg("Created new category")
+	logger.Info("Created new category", map[string]interface{}{
+		"category_id": newCategory.ID.String(),
+		"name":        titleCaseName,
+	})
 
 	return newCategory.ID.String(), nil
 }
@@ -878,10 +880,10 @@ func (s *bulkImportService) findOrCreatePublisher(ctx context.Context, tx pgx.Tx
 		return "", fmt.Errorf("failed to create publisher: %w", err)
 	}
 
-	log.Info().
-		Str("publisher_id", newPublisher.ID.String()).
-		Str("name", titleCaseName).
-		Msg("Created new publisher")
+	logger.Info("Created new publisher", map[string]interface{}{
+		"publisher_id": newPublisher.ID.String(),
+		"name":         titleCaseName,
+	})
 
 	return newPublisher.ID.String(), nil
 }
@@ -969,11 +971,11 @@ func (s *bulkImportService) createBookWithImages(
 		}
 	}
 
-	log.Info().
-		Str("book_id", book.ID.String()).
-		Str("title", book.Title).
-		Int("images", len(imageResult.ImageRecords)).
-		Msg("Created book")
+	logger.Info("Created book", map[string]interface{}{
+		"book_id": book.ID.String(),
+		"title":   book.Title,
+		"images":  len(imageResult.ImageRecords),
+	})
 
 	return book.ID.String(), nil
 }
@@ -1029,10 +1031,7 @@ func (s *bulkImportService) processBookImages(
 
 		_, err = s.asynqClient.Enqueue(task, asynq.Queue("default"), asynq.MaxRetry(2))
 		if err != nil {
-			log.Warn().
-				Err(err).
-				Str("image_id", imageRecord.ID).
-				Msg("Failed to enqueue image processing job")
+			logger.Error("Failed to enqueue image processing job", err)
 		}
 	}
 
@@ -1057,14 +1056,12 @@ func (s *bulkImportService) cleanupUploadedImages(ctx context.Context, imageResu
 		return
 	}
 
-	log.Info().
-		Int("count", len(keysToDelete)).
-		Msg("Cleaning up uploaded images")
+	logger.Info("Cleaning up uploaded images", map[string]interface{}{
+		"count": len(keysToDelete),
+	})
 
 	err := s.minioStorage.RemoveObjects(ctx, keysToDelete)
 	if err != nil {
-		log.Error().
-			Err(err).
-			Msg("Failed to cleanup images")
+		logger.Error("Failed to cleanup images", err)
 	}
 }

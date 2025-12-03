@@ -17,7 +17,14 @@ type Config struct {
 	VNPay    VNPayConfig
 	Momo     MomoConfig
 	MinIO    MinIOConfig
+	Job      JobConfig
 }
+type JobConfig struct {
+	SendPendingLimit     int
+	RetryFailedLimit     int
+	CleanupRetentionDays int
+}
+
 type VNPayConfig struct {
 	TmnCode    string // Merchant Code (e.g., "DEMOV01")
 	HashSecret string // Secret key for HMAC-SHA512
@@ -140,6 +147,11 @@ func Load() (*Config, error) {
 			APIURL:      getEnv("MOMO_API_URL", "https://test-payment.momo.vn"),
 			ReturnURL:   getEnv("MOMO_RETURN_URL", "http://localhost:3000/payment/callback"),
 			IPNURL:      getEnv("MOMO_IPN_URL", "http://localhost:8080/api/v1/webhooks/momo"),
+		},
+		Job: JobConfig{
+			SendPendingLimit:     getEnvInt("SEND_PENDING_LIMIT", 100),
+			RetryFailedLimit:     getEnvInt("RETRY_FAILED_LIMIT", 50),
+			CleanupRetentionDays: getEnvInt("CLEANUP_RETENTION_DAYS", 30),
 		},
 	}
 

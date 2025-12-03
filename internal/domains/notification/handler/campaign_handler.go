@@ -7,11 +7,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/rs/zerolog/log"
 
 	"bookstore-backend/internal/domains/notification/model"
 	"bookstore-backend/internal/domains/notification/service"
 	"bookstore-backend/internal/shared/response"
+	"bookstore-backend/pkg/logger"
 )
 
 // ================================================
@@ -66,7 +66,7 @@ func (h *campaignHandler) CreateCampaign(c *gin.Context) {
 			response.Error(c, http.StatusBadRequest, "Template is not active", err.Error())
 			return
 		}
-		log.Error().Err(err).Msg("Failed to create campaign")
+		logger.Error("Failed to create campaign", err)
 		response.Error(c, http.StatusInternalServerError, "Failed to create campaign", err.Error())
 		return
 	}
@@ -95,7 +95,7 @@ func (h *campaignHandler) GetCampaign(c *gin.Context) {
 			response.Error(c, http.StatusNotFound, "Campaign not found", err.Error())
 			return
 		}
-		log.Error().Err(err).Msg("Failed to get campaign")
+		logger.Error("Failed to get campaign", err)
 		response.Error(c, http.StatusInternalServerError, "Failed to get campaign", err.Error())
 		return
 	}
@@ -129,7 +129,7 @@ func (h *campaignHandler) ListCampaigns(c *gin.Context) {
 	// 2. CALL SERVICE
 	campaigns, total, err := h.campaignService.ListCampaigns(c.Request.Context(), status, createdBy, page, pageSize)
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to list campaigns")
+		logger.Error("Failed to list campaigns", err)
 		response.Error(c, http.StatusInternalServerError, "Failed to list campaigns", err.Error())
 		return
 	}
@@ -171,7 +171,7 @@ func (h *campaignHandler) StartCampaign(c *gin.Context) {
 			response.Error(c, http.StatusNotFound, "Campaign not found", err.Error())
 			return
 		}
-		log.Error().Err(err).Msg("Failed to start campaign")
+		logger.Error("Failed to start campaign", err)
 		response.Error(c, http.StatusBadRequest, "Failed to start campaign", err.Error())
 		return
 	}
@@ -199,7 +199,7 @@ func (h *campaignHandler) CancelCampaign(c *gin.Context) {
 			response.Error(c, http.StatusNotFound, "Campaign not found", err.Error())
 			return
 		}
-		log.Error().Err(err).Msg("Failed to cancel campaign")
+		logger.Error("Failed to cancel campaign", err)
 		response.Error(c, http.StatusBadRequest, "Failed to cancel campaign", err.Error())
 		return
 	}

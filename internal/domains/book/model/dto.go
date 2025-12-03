@@ -505,6 +505,17 @@ func (e *ValidationError) Error() string {
 	return e.Message
 }
 
+type BookCheckoutResponse struct {
+	ID            uuid.UUID       `json:"id"`
+	Title         string          `json:"title"`
+	Price         decimal.Decimal `json:"price"`
+	CoverURL      *string         `json:"cover_url,omitempty"`
+	AuthorName    string          `json:"author_name"`
+	PublisherName string          `json:"publisher_name"`
+	CategoryName  string          `json:"category_name"`
+	Description   *string         `json:"description,omitempty"`
+}
+
 // book detail response
 type BookDetailResponse struct {
 	ID              uuid.UUID            `json:"id"`

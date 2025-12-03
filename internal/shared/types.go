@@ -64,3 +64,6 @@ type InventorySyncPayload struct {
 	Source        string `json:"source,omitempty"`         // RESERVE|RELEASE|SALE|ADMIN_ADJUST|BULK_INVENTORY (optional)
 	CorrelationID string `json:"correlation_id,omitempty"` // trace id (optional)
 }
+type RetryFailedPayload struct {
+	Limit int `json:"limit"`
+}

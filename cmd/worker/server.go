@@ -20,20 +20,29 @@ func setupAsynqServer(cfg *Config, handlers *HandlerRegistry) *asynqServer {
 
 	// Register all handlers
 	handlers.RegisterHandlers(mux)
-
-	// Create server with configuration
 	srv := asynq.NewServer(
 		asynq.RedisClientOpt{Addr: cfg.RedisAddr},
 		asynq.Config{
 			Queues: map[string]int{
-				"high":    20,
-				"default": 10,
-				"low":     5,
+				"high":         20, // 40% - Orders, payments
+				"default":      8,  // 16% - General tasks
+				"low":          5,  // 10% - Analytics
+				"notification": 17, // 34% - ✅ TĂNG LÊN vì notification quan trọng
 			},
-			Concurrency: 20,
+			Concurrency: 30, // ✅ TĂNG LÊN nếu có nhiều CPU cores
 			ErrorHandler: asynq.ErrorHandlerFunc(func(ctx context.Context, task *asynq.Task, err error) {
-				log.Printf("[Asynq] ❌ Task failed - Type: %s, Error: %v", task.Type(), err)
+				// ✅ THÊM logging chi tiết hơn
+				log.Printf("[Asynq] ❌ Task failed - Type: %s, TaskID: %s, Error: %v",
+					task.Type(),
+					task.ResultWriter().TaskID(),
+					err,
+				)
 			}),
+			// ✅ THÊM retry delay
+			RetryDelayFunc: func(n int, err error, task *asynq.Task) time.Duration {
+				// Exponential backoff: 1m, 2m, 4m, 8m, ...
+				return time.Duration(1<<uint(n)) * time.Minute
+			},
 		},
 	)
 

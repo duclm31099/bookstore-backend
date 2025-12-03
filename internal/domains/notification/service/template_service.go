@@ -7,10 +7,10 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/rs/zerolog/log"
 
 	"bookstore-backend/internal/domains/notification/model"
 	"bookstore-backend/internal/domains/notification/repository"
+	"bookstore-backend/pkg/logger"
 )
 
 // ================================================
@@ -32,10 +32,10 @@ func NewTemplateService(templateRepo repository.TemplateRepository) TemplateServ
 // ================================================
 
 func (s *templateService) CreateTemplate(ctx context.Context, adminID uuid.UUID, req model.CreateTemplateRequest) (*model.TemplateResponse, error) {
-	log.Info().
-		Str("admin_id", adminID.String()).
-		Str("code", req.Code).
-		Msg("[TemplateService] CreateTemplate")
+	logger.Info("[TemplateService] CreateTemplate", map[string]interface{}{
+		"admin_id": adminID.String(),
+		"code":     req.Code,
+	})
 
 	// 1. VALIDATE TEMPLATE CODE FORMAT (lowercase, underscores only)
 	if !isValidTemplateCode(req.Code) {
@@ -105,10 +105,10 @@ func (s *templateService) CreateTemplate(ctx context.Context, adminID uuid.UUID,
 		return nil, fmt.Errorf("create template: %w", err)
 	}
 
-	log.Info().
-		Str("template_id", template.ID.String()).
-		Str("code", template.Code).
-		Msg("[TemplateService] Template created successfully")
+	logger.Info("[TemplateService] Template created successfully", map[string]interface{}{
+		"template_id": template.ID.String(),
+		"code":        template.Code,
+	})
 
 	return s.toResponse(template), nil
 }
@@ -144,10 +144,10 @@ func (s *templateService) GetTemplateByCode(ctx context.Context, code string) (*
 // ================================================
 
 func (s *templateService) UpdateTemplate(ctx context.Context, adminID, templateID uuid.UUID, req model.UpdateTemplateRequest) (*model.TemplateResponse, error) {
-	log.Info().
-		Str("admin_id", adminID.String()).
-		Str("template_id", templateID.String()).
-		Msg("[TemplateService] UpdateTemplate")
+	logger.Info("[TemplateService] UpdateTemplate", map[string]interface{}{
+		"admin_id":    adminID.String(),
+		"template_id": templateID.String(),
+	})
 
 	// 1. GET EXISTING TEMPLATE
 	existing, err := s.templateRepo.GetByID(ctx, templateID)
@@ -210,7 +210,7 @@ func (s *templateService) UpdateTemplate(ctx context.Context, adminID, templateI
 	// 3. INCREMENT VERSION (if content changed)
 	if s.isContentChanged(req) {
 		if err := s.templateRepo.IncrementVersion(ctx, templateID); err != nil {
-			log.Warn().Err(err).Msg("Failed to increment version")
+			logger.Error("Failed to increment version", err)
 		}
 	}
 
@@ -219,9 +219,9 @@ func (s *templateService) UpdateTemplate(ctx context.Context, adminID, templateI
 		return nil, fmt.Errorf("update template: %w", err)
 	}
 
-	log.Info().
-		Str("template_id", templateID.String()).
-		Msg("[TemplateService] Template updated successfully")
+	logger.Info("[TemplateService] Template updated successfully", map[string]interface{}{
+		"template_id": templateID.String(),
+	})
 
 	return s.toResponse(existing), nil
 }
@@ -231,9 +231,9 @@ func (s *templateService) UpdateTemplate(ctx context.Context, adminID, templateI
 // ================================================
 
 func (s *templateService) DeleteTemplate(ctx context.Context, templateID uuid.UUID) error {
-	log.Info().
-		Str("template_id", templateID.String()).
-		Msg("[TemplateService] DeleteTemplate")
+	logger.Info("[TemplateService] DeleteTemplate", map[string]interface{}{
+		"template_id": templateID.String(),
+	})
 
 	// Check if template exists
 	if _, err := s.templateRepo.GetByID(ctx, templateID); err != nil {
@@ -245,9 +245,9 @@ func (s *templateService) DeleteTemplate(ctx context.Context, templateID uuid.UU
 		return fmt.Errorf("delete template: %w", err)
 	}
 
-	log.Info().
-		Str("template_id", templateID.String()).
-		Msg("[TemplateService] Template deleted successfully")
+	logger.Info("[TemplateService] Template deleted successfully", map[string]interface{}{
+		"template_id": templateID.String(),
+	})
 
 	return nil
 }
@@ -390,9 +390,9 @@ func (s *templateService) renderString(template string, data map[string]interfac
 			result = strings.Replace(result, placeholder, strValue, -1)
 		} else {
 			// Leave placeholder if variable not found (will be caught by validation)
-			log.Warn().
-				Str("variable", varName).
-				Msg("Variable not found in data")
+			logger.Info("Variable not found in data", map[string]interface{}{
+				"variable": varName,
+			})
 		}
 	}
 

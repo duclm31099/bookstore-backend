@@ -665,3 +665,11 @@ func (s *BookService) GetBooksByIDs(ctx context.Context, ids []string) ([]model.
 
 	return responses, nil
 }
+
+func (s *BookService) GetBooksCheckout(ctx context.Context, ids []string) ([]model.BookCheckoutResponse, error) {
+	books, err := s.repo.GetBooksCheckout(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	return books, nil
+}

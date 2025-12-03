@@ -23,6 +23,7 @@ type CreateOrderRequest struct {
 type CreateOrderItem struct {
 	BookID   uuid.UUID `json:"book_id" binding:"required"`
 	Quantity int       `json:"quantity" binding:"required,min=1"`
+	// Price    decimal.Decimal `json:"price" binding:"required"`
 }
 
 // Validate validates CreateOrderRequest

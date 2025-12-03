@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -94,6 +95,7 @@ func (r *notificationRepository) CreateWithTx(ctx context.Context, tx pgx.Tx, n 
 
 // GetByID retrieves notification by ID
 func (r *notificationRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.Notification, error) {
+	var dataBytes, deliveryBytes, templateBytes []byte
 	query := `
 		SELECT 
 			id, user_id, type, title, message, data,
@@ -107,10 +109,10 @@ func (r *notificationRepository) GetByID(ctx context.Context, id uuid.UUID) (*mo
 
 	var n model.Notification
 	err := r.db.QueryRow(ctx, query, id).Scan(
-		&n.ID, &n.UserID, &n.Type, &n.Title, &n.Message, &n.Data,
-		&n.IsRead, &n.ReadAt, &n.IsSent, &n.SentAt, &n.Channels, &n.DeliveryStatus,
+		&n.ID, &n.UserID, &n.Type, &n.Title, &n.Message, &dataBytes,
+		&n.IsRead, &n.ReadAt, &n.IsSent, &n.SentAt, &n.Channels, &deliveryBytes,
 		&n.ReferenceType, &n.ReferenceID, &n.IdempotencyKey,
-		&n.Priority, &n.ExpiresAt, &n.TemplateCode, &n.TemplateVersion, &n.TemplateData,
+		&n.Priority, &n.ExpiresAt, &n.TemplateCode, &n.TemplateVersion, &templateBytes,
 		&n.CreatedAt, &n.UpdatedAt,
 	)
 
@@ -118,6 +120,21 @@ func (r *notificationRepository) GetByID(ctx context.Context, id uuid.UUID) (*mo
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, model.ErrNotificationNotFound
 		}
+		return nil, fmt.Errorf("get notification by id: %w", err)
+	}
+
+	err = json.Unmarshal(dataBytes, &n.Data)
+	if err != nil {
+		return nil, fmt.Errorf("get notification by id: %w", err)
+	}
+
+	err = json.Unmarshal(deliveryBytes, &n.DeliveryStatus)
+	if err != nil {
+		return nil, fmt.Errorf("get notification by id: %w", err)
+	}
+
+	err = json.Unmarshal(templateBytes, &n.TemplateData)
+	if err != nil {
 		return nil, fmt.Errorf("get notification by id: %w", err)
 	}
 
@@ -269,19 +286,43 @@ func (r *notificationRepository) List(ctx context.Context, filters model.ListNot
 		return nil, 0, fmt.Errorf("list notifications: %w", err)
 	}
 	defer rows.Close()
-
+	var dataBytes, deliveryBytes, templateBytes []byte
 	var notifications []model.Notification
 	for rows.Next() {
 		var n model.Notification
 		err := rows.Scan(
-			&n.ID, &n.UserID, &n.Type, &n.Title, &n.Message, &n.Data,
-			&n.IsRead, &n.ReadAt, &n.IsSent, &n.SentAt, &n.Channels, &n.DeliveryStatus,
+			&n.ID, &n.UserID, &n.Type, &n.Title, &n.Message, &dataBytes,
+			&n.IsRead, &n.ReadAt, &n.IsSent, &n.SentAt, &n.Channels, &deliveryBytes,
 			&n.ReferenceType, &n.ReferenceID, &n.IdempotencyKey,
-			&n.Priority, &n.ExpiresAt, &n.TemplateCode, &n.TemplateVersion, &n.TemplateData,
+			&n.Priority, &n.ExpiresAt, &n.TemplateCode, &n.TemplateVersion, &templateBytes,
 			&n.CreatedAt, &n.UpdatedAt,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("scan notification: %w", err)
+		}
+		if len(templateBytes) > 0 {
+			var m model.JSONB
+			if err := json.Unmarshal(templateBytes, &m); err != nil {
+				return nil, 0, fmt.Errorf("unmarshal template_data jsonb: %w", err)
+			}
+			n.TemplateData = m
+		}
+		// Data
+		if len(dataBytes) > 0 {
+			var m model.JSONB
+			if err := json.Unmarshal(dataBytes, &m); err != nil {
+				return nil, 0, fmt.Errorf("unmarshal data jsonb: %w", err)
+			}
+			n.Data = m
+		}
+
+		// DeliveryStatus
+		if len(deliveryBytes) > 0 {
+			var m model.JSONB
+			if err := json.Unmarshal(deliveryBytes, &m); err != nil {
+				return nil, 0, fmt.Errorf("unmarshal delivery_status jsonb: %w", err)
+			}
+			n.DeliveryStatus = m
 		}
 		notifications = append(notifications, n)
 	}
@@ -549,18 +590,41 @@ func (r *notificationRepository) CountByType(ctx context.Context, notificationTy
 // Helper function to scan notifications
 func scanNotifications(rows pgx.Rows) ([]model.Notification, error) {
 	var notifications []model.Notification
-
+	var dataBytes, deliveryBytes, templateBytes []byte
 	for rows.Next() {
 		var n model.Notification
 		err := rows.Scan(
-			&n.ID, &n.UserID, &n.Type, &n.Title, &n.Message, &n.Data,
-			&n.IsRead, &n.ReadAt, &n.IsSent, &n.SentAt, &n.Channels, &n.DeliveryStatus,
+			&n.ID, &n.UserID, &n.Type, &n.Title, &n.Message, &dataBytes,
+			&n.IsRead, &n.ReadAt, &n.IsSent, &n.SentAt, &n.Channels, &deliveryBytes,
 			&n.ReferenceType, &n.ReferenceID, &n.IdempotencyKey,
-			&n.Priority, &n.ExpiresAt, &n.TemplateCode, &n.TemplateVersion, &n.TemplateData,
+			&n.Priority, &n.ExpiresAt, &n.TemplateCode, &n.TemplateVersion, &templateBytes,
 			&n.CreatedAt, &n.UpdatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan notification: %w", err)
+		}
+		if len(dataBytes) > 0 {
+			var m model.JSONB
+			if err := json.Unmarshal(dataBytes, &m); err != nil {
+				return nil, fmt.Errorf("unmarshal data jsonb: %w", err)
+			}
+			n.Data = m
+		}
+		// DeliveryStatus
+		if len(deliveryBytes) > 0 {
+			var m model.JSONB
+			if err := json.Unmarshal(deliveryBytes, &m); err != nil {
+				return nil, fmt.Errorf("unmarshal delivery_status jsonb: %w", err)
+			}
+			n.DeliveryStatus = m
+		}
+		// TemplateData
+		if len(templateBytes) > 0 {
+			var m model.JSONB
+			if err := json.Unmarshal(templateBytes, &m); err != nil {
+				return nil, fmt.Errorf("unmarshal template_data jsonb: %w", err)
+			}
+			n.TemplateData = m
 		}
 		notifications = append(notifications, n)
 	}

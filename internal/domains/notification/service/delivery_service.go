@@ -6,10 +6,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/rs/zerolog/log"
 
 	"bookstore-backend/internal/domains/notification/model"
 	"bookstore-backend/internal/domains/notification/repository"
+	"bookstore-backend/pkg/logger"
 )
 
 // ================================================
@@ -67,10 +67,10 @@ func NewDeliveryService(
 // ================================================
 
 func (s *deliveryService) SendEmail(ctx context.Context, notification *model.Notification, recipient string) error {
-	log.Info().
-		Str("notification_id", notification.ID.String()).
-		Str("recipient", recipient).
-		Msg("[DeliveryService] SendEmail")
+	logger.Info("[DeliveryService] SendEmail", map[string]interface{}{
+		"notification_id": notification.ID.String(),
+		"recipient":       recipient,
+	})
 
 	// 1. CREATE DELIVERY LOG (QUEUED)
 	deliveryLog := &model.DeliveryLog{
@@ -96,7 +96,7 @@ func (s *deliveryService) SendEmail(ctx context.Context, notification *model.Not
 	deliveryLog.ProcessingAt = &processingTime
 
 	if err := s.deliveryLogRepo.Update(ctx, deliveryLog); err != nil {
-		log.Warn().Err(err).Msg("Failed to update delivery log to processing")
+		logger.Error("Failed to update delivery log to processing", err)
 	}
 
 	// 3. SEND EMAIL VIA PROVIDER
@@ -104,22 +104,18 @@ func (s *deliveryService) SendEmail(ctx context.Context, notification *model.Not
 
 	if err != nil {
 		// 4a. MARK AS FAILED
-		log.Error().
-			Err(err).
-			Str("notification_id", notification.ID.String()).
-			Str("recipient", recipient).
-			Msg("Failed to send email")
+		logger.Error("Failed to send email", err)
 
 		errCode := "EMAIL_SEND_FAILED"
 		errMsg := err.Error()
 
 		if err := s.deliveryLogRepo.MarkAsFailed(ctx, deliveryLog.ID, errCode, errMsg); err != nil {
-			log.Error().Err(err).Msg("Failed to mark delivery log as failed")
+			logger.Error("Failed to mark delivery log as failed", err)
 		}
 
 		// Update notification delivery status
 		if err := s.notifRepo.UpdateDeliveryStatus(ctx, notification.ID, model.ChannelEmail, "failed"); err != nil {
-			log.Error().Err(err).Msg("Failed to update notification delivery status")
+			logger.Error("Failed to update notification delivery status", err)
 		}
 
 		return fmt.Errorf("send email: %w", err)
@@ -132,18 +128,18 @@ func (s *deliveryService) SendEmail(ctx context.Context, notification *model.Not
 	deliveryLog.ProviderMessageID = &messageID
 
 	if err := s.deliveryLogRepo.Update(ctx, deliveryLog); err != nil {
-		log.Warn().Err(err).Msg("Failed to update delivery log to sent")
+		logger.Error("Failed to update delivery log to sent", err)
 	}
 
 	// Update notification delivery status
 	if err := s.notifRepo.UpdateDeliveryStatus(ctx, notification.ID, model.ChannelEmail, "sent"); err != nil {
-		log.Error().Err(err).Msg("Failed to update notification delivery status")
+		logger.Error("Failed to update notification delivery status", err)
 	}
 
-	log.Info().
-		Str("notification_id", notification.ID.String()).
-		Str("message_id", messageID).
-		Msg("[DeliveryService] Email sent successfully")
+	logger.Info("[DeliveryService] Email sent successfully", map[string]interface{}{
+		"notification_id": notification.ID.String(),
+		"message_id":      messageID,
+	})
 
 	return nil
 }
@@ -153,10 +149,10 @@ func (s *deliveryService) SendEmail(ctx context.Context, notification *model.Not
 // ================================================
 
 func (s *deliveryService) SendSMS(ctx context.Context, notification *model.Notification, recipient string) error {
-	log.Info().
-		Str("notification_id", notification.ID.String()).
-		Str("recipient", recipient).
-		Msg("[DeliveryService] SendSMS")
+	logger.Info("[DeliveryService] SendSMS", map[string]interface{}{
+		"notification_id": notification.ID.String(),
+		"recipient":       recipient,
+	})
 
 	// 1. CREATE DELIVERY LOG (QUEUED)
 	deliveryLog := &model.DeliveryLog{
@@ -182,7 +178,7 @@ func (s *deliveryService) SendSMS(ctx context.Context, notification *model.Notif
 	deliveryLog.ProcessingAt = &processingTime
 
 	if err := s.deliveryLogRepo.Update(ctx, deliveryLog); err != nil {
-		log.Warn().Err(err).Msg("Failed to update delivery log to processing")
+		logger.Error("Failed to update delivery log to processing", err)
 	}
 
 	// 3. SEND SMS VIA PROVIDER
@@ -190,22 +186,18 @@ func (s *deliveryService) SendSMS(ctx context.Context, notification *model.Notif
 
 	if err != nil {
 		// 4a. MARK AS FAILED
-		log.Error().
-			Err(err).
-			Str("notification_id", notification.ID.String()).
-			Str("recipient", recipient).
-			Msg("Failed to send SMS")
+		logger.Error("Failed to send SMS", err)
 
 		errCode := "SMS_SEND_FAILED"
 		errMsg := err.Error()
 
 		if err := s.deliveryLogRepo.MarkAsFailed(ctx, deliveryLog.ID, errCode, errMsg); err != nil {
-			log.Error().Err(err).Msg("Failed to mark delivery log as failed")
+			logger.Error("Failed to mark delivery log as failed", err)
 		}
 
 		// Update notification delivery status
 		if err := s.notifRepo.UpdateDeliveryStatus(ctx, notification.ID, model.ChannelSMS, "failed"); err != nil {
-			log.Error().Err(err).Msg("Failed to update notification delivery status")
+			logger.Error("Failed to update notification delivery status", err)
 		}
 
 		return fmt.Errorf("send sms: %w", err)
@@ -218,18 +210,18 @@ func (s *deliveryService) SendSMS(ctx context.Context, notification *model.Notif
 	deliveryLog.ProviderMessageID = &messageID
 
 	if err := s.deliveryLogRepo.Update(ctx, deliveryLog); err != nil {
-		log.Warn().Err(err).Msg("Failed to update delivery log to sent")
+		logger.Error("Failed to update delivery log to sent", err)
 	}
 
 	// Update notification delivery status
 	if err := s.notifRepo.UpdateDeliveryStatus(ctx, notification.ID, model.ChannelSMS, "sent"); err != nil {
-		log.Error().Err(err).Msg("Failed to update notification delivery status")
+		logger.Error("Failed to update notification delivery status", err)
 	}
 
-	log.Info().
-		Str("notification_id", notification.ID.String()).
-		Str("message_id", messageID).
-		Msg("[DeliveryService] SMS sent successfully")
+	logger.Info("[DeliveryService] SMS sent successfully", map[string]interface{}{
+		"notification_id": notification.ID.String(),
+		"message_id":      messageID,
+	})
 
 	return nil
 }
@@ -239,10 +231,10 @@ func (s *deliveryService) SendSMS(ctx context.Context, notification *model.Notif
 // ================================================
 
 func (s *deliveryService) SendPush(ctx context.Context, notification *model.Notification, recipient string) error {
-	log.Info().
-		Str("notification_id", notification.ID.String()).
-		Str("recipient", recipient).
-		Msg("[DeliveryService] SendPush")
+	logger.Info("[DeliveryService] SendPush", map[string]interface{}{
+		"notification_id": notification.ID.String(),
+		"recipient":       recipient,
+	})
 
 	// 1. CREATE DELIVERY LOG (QUEUED)
 	deliveryLog := &model.DeliveryLog{
@@ -268,7 +260,7 @@ func (s *deliveryService) SendPush(ctx context.Context, notification *model.Noti
 	deliveryLog.ProcessingAt = &processingTime
 
 	if err := s.deliveryLogRepo.Update(ctx, deliveryLog); err != nil {
-		log.Warn().Err(err).Msg("Failed to update delivery log to processing")
+		logger.Error("Failed to update delivery log to processing", err)
 	}
 
 	// 3. SEND PUSH VIA PROVIDER
@@ -282,22 +274,18 @@ func (s *deliveryService) SendPush(ctx context.Context, notification *model.Noti
 
 	if err != nil {
 		// 4a. MARK AS FAILED
-		log.Error().
-			Err(err).
-			Str("notification_id", notification.ID.String()).
-			Str("recipient", recipient).
-			Msg("Failed to send push notification")
+		logger.Error("Failed to send push notification", err)
 
 		errCode := "PUSH_SEND_FAILED"
 		errMsg := err.Error()
 
 		if err := s.deliveryLogRepo.MarkAsFailed(ctx, deliveryLog.ID, errCode, errMsg); err != nil {
-			log.Error().Err(err).Msg("Failed to mark delivery log as failed")
+			logger.Error("Failed to mark delivery log as failed", err)
 		}
 
 		// Update notification delivery status
 		if err := s.notifRepo.UpdateDeliveryStatus(ctx, notification.ID, model.ChannelPush, "failed"); err != nil {
-			log.Error().Err(err).Msg("Failed to update notification delivery status")
+			logger.Error("Failed to update notification delivery status", err)
 		}
 
 		return fmt.Errorf("send push: %w", err)
@@ -310,18 +298,18 @@ func (s *deliveryService) SendPush(ctx context.Context, notification *model.Noti
 	deliveryLog.ProviderMessageID = &messageID
 
 	if err := s.deliveryLogRepo.Update(ctx, deliveryLog); err != nil {
-		log.Warn().Err(err).Msg("Failed to update delivery log to sent")
+		logger.Error("Failed to update delivery log to sent", err)
 	}
 
 	// Update notification delivery status
 	if err := s.notifRepo.UpdateDeliveryStatus(ctx, notification.ID, model.ChannelPush, "sent"); err != nil {
-		log.Error().Err(err).Msg("Failed to update notification delivery status")
+		logger.Error("Failed to update notification delivery status", err)
 	}
 
-	log.Info().
-		Str("notification_id", notification.ID.String()).
-		Str("message_id", messageID).
-		Msg("[DeliveryService] Push notification sent successfully")
+	logger.Info("[DeliveryService] Push notification sent successfully", map[string]interface{}{
+		"notification_id": notification.ID.String(),
+		"message_id":      messageID,
+	})
 
 	return nil
 }
@@ -331,16 +319,16 @@ func (s *deliveryService) SendPush(ctx context.Context, notification *model.Noti
 // ================================================
 
 func (s *deliveryService) LogDeliveryAttempt(ctx context.Context, notificationID uuid.UUID, channel, recipient, status string) error {
-	log.Info().
-		Str("notification_id", notificationID.String()).
-		Str("channel", channel).
-		Str("status", status).
-		Msg("[DeliveryService] LogDeliveryAttempt")
+	logger.Info("[DeliveryService] LogDeliveryAttempt", map[string]interface{}{
+		"notification_id": notificationID.String(),
+		"channel":         channel,
+		"status":          status,
+	})
 
 	// Get existing logs to determine attempt number
 	logs, err := s.deliveryLogRepo.ListByNotificationID(ctx, notificationID)
 	if err != nil {
-		log.Warn().Err(err).Msg("Failed to get existing logs")
+		logger.Error("Failed to get existing logs", err)
 	}
 
 	attemptNumber := 1
@@ -375,11 +363,11 @@ func (s *deliveryService) LogDeliveryAttempt(ctx context.Context, notificationID
 // ================================================
 
 func (s *deliveryService) UpdateDeliveryStatus(ctx context.Context, notificationID uuid.UUID, channel, status string) error {
-	log.Info().
-		Str("notification_id", notificationID.String()).
-		Str("channel", channel).
-		Str("status", status).
-		Msg("[DeliveryService] UpdateDeliveryStatus")
+	logger.Info("[DeliveryService] UpdateDeliveryStatus", map[string]interface{}{
+		"notification_id": notificationID.String(),
+		"channel":         channel,
+		"status":          status,
+	})
 
 	// Update notification delivery status
 	if err := s.notifRepo.UpdateDeliveryStatus(ctx, notificationID, channel, status); err != nil {
@@ -394,7 +382,9 @@ func (s *deliveryService) UpdateDeliveryStatus(ctx context.Context, notification
 // ================================================
 
 func (s *deliveryService) RetryFailedDeliveries(ctx context.Context, limit int) error {
-	log.Info().Int("limit", limit).Msg("[Background] Retrying failed deliveries")
+	logger.Info("[Background] Retrying failed deliveries", map[string]interface{}{
+		"limit": limit,
+	})
 
 	// Get failed deliveries that need retry
 	failedLogs, err := s.deliveryLogRepo.ListFailedRetries(ctx, limit)
@@ -403,7 +393,7 @@ func (s *deliveryService) RetryFailedDeliveries(ctx context.Context, limit int) 
 	}
 
 	if len(failedLogs) == 0 {
-		log.Info().Msg("[Background] No failed deliveries to retry")
+		logger.Info("[Background] No failed deliveries to retry", map[string]interface{}{})
 		return nil
 	}
 
@@ -414,10 +404,7 @@ func (s *deliveryService) RetryFailedDeliveries(ctx context.Context, limit int) 
 		// Get notification
 		notification, err := s.notifRepo.GetByID(ctx, deliveryLog.NotificationID)
 		if err != nil {
-			log.Error().
-				Err(err).
-				Str("notification_id", deliveryLog.NotificationID.String()).
-				Msg("Failed to get notification for retry")
+			logger.Error("Failed to get notification for retry", err)
 			errorCount++
 			continue
 		}
@@ -434,21 +421,17 @@ func (s *deliveryService) RetryFailedDeliveries(ctx context.Context, limit int) 
 		}
 
 		if retryErr != nil {
-			log.Error().
-				Err(retryErr).
-				Str("notification_id", notification.ID.String()).
-				Str("channel", deliveryLog.Channel).
-				Msg("Retry failed")
+			logger.Error("Retry failed", retryErr)
 			errorCount++
 		} else {
 			successCount++
 		}
 	}
 
-	log.Info().
-		Int("success", successCount).
-		Int("errors", errorCount).
-		Msg("[Background] Finished retrying failed deliveries")
+	logger.Info("[Background] Finished retrying failed deliveries", map[string]interface{}{
+		"success": successCount,
+		"errors":  errorCount,
+	})
 
 	return nil
 }
