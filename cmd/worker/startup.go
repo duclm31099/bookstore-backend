@@ -38,30 +38,8 @@ func startServices(srv *asynqServer, scheduler *asynqScheduler, cfg *Config) err
 		return err
 	}
 
-	// ✅ 2. Log configuration
-	log.Println("Configuration:")
-	log.Printf("  • Redis:       %s\n", cfg.RedisAddr)
-	log.Printf("  • SMTP:        %s:%s\n", cfg.SMTPHost, cfg.SMTPPort)
-	log.Println("")
-
-	// ✅ 3. Log registered handlers
-	log.Println("Registered Job Handlers:")
-	log.Println("  • Email Verification")
-	log.Println("  • Reset Password Email")
-	log.Println("  • Security Alert")
-	log.Println("  • Failed Login Tracking")
-	log.Println("  • Token Cleanup (Cron)")
-	log.Println("")
-
 	// ✅ 4. Start health check endpoint
 	go startHealthCheckServer()
-
-	log.Println("============================================")
-	log.Println("✓ All services healthy and running")
-	log.Println("============================================")
-	log.Println("Health Check: http://localhost:9999/health")
-	log.Println("Press Ctrl+C to shutdown")
-	log.Println("============================================")
 
 	return nil
 }

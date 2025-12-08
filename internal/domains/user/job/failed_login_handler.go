@@ -14,6 +14,7 @@ import (
 	types "bookstore-backend/internal/shared"
 	"bookstore-backend/internal/shared/utils"
 	"bookstore-backend/pkg/cache"
+	"bookstore-backend/pkg/logger"
 )
 
 const (
@@ -62,7 +63,6 @@ func (h *FailedLoginHandler) ProcessTask(ctx context.Context, task *asynq.Task) 
 	}
 
 	if isLocked {
-		log.Warn().Str("user_id", payload.UserID).Msg("Account already locked")
 		return nil
 	}
 
@@ -75,7 +75,7 @@ func (h *FailedLoginHandler) ProcessTask(ctx context.Context, task *asynq.Task) 
 	// Set expiry on first attempt
 	if attempts == 1 {
 		if err := h.cache.Expire(ctx, attemptKey, AttemptWindow); err != nil {
-			log.Warn().Err(err).Msg("Failed to set expiry")
+			logger.Error("Failed to set expiry", err)
 		}
 	}
 
@@ -162,7 +162,7 @@ func (h *FailedLoginHandler) triggerSecurityAlert(ctx context.Context, payload t
 	_, err := h.asynqClient.EnqueueContext(
 		ctx,
 		task,
-		asynq.Queue("high"),
+		asynq.Queue(shared.QueueAuth),
 		asynq.MaxRetry(2),
 		asynq.Timeout(30*time.Second),
 	)

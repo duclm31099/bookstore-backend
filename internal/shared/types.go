@@ -67,3 +67,18 @@ type InventorySyncPayload struct {
 type RetryFailedPayload struct {
 	Limit int `json:"limit"`
 }
+
+const (
+	QueueOrder        = "order"        // Tất cả tasks về đơn hàng
+	QueueInventory    = "inventory"    // Sync kho, cập nhật stock
+	QueueNotification = "notification" // Email, SMS, push
+	QueuePayment      = "payment"      // Thanh toán (critical)
+	QueueAnalytics    = "analytics"    // Tracking, reporting
+	QueueAuth         = "auth"         // Authentication tasks
+	QueueBook         = "book"         // Book tasks
+	QueueCart         = "cart"         // Cart tasks
+	QueuePromotion    = "promotion"    // Promotion tasks
+	QueueUser         = "user"         // User tasks
+)
+
+// Config đơn giản

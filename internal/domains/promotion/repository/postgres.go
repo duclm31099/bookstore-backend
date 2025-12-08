@@ -2,7 +2,6 @@ package repository
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -27,113 +26,80 @@ func NewPostgresRepository(db *pgxpool.Pool) PromotionRepository {
 	return &PostgresRepository{db: db}
 }
 
-// -------------------------------------------------------------------
+// =================================================================================================
+// UTILS & HELPERS (Hàm chung để tái sử dụng)
+// =================================================================================================
+
+// scanPromotionRow quét dữ liệu từ một hàng vào struct Promotion
+// interface scannable giúp hàm này nhận được cả pgx.Row và pgx.Rows
+type scannable interface {
+	Scan(dest ...interface{}) error
+}
+
+func scanPromotionRow(row scannable) (*model.Promotion, error) {
+	var p model.Promotion
+	err := row.Scan(
+		&p.ID, &p.Code, &p.Name, &p.Description,
+		&p.DiscountType, &p.DiscountValue, &p.MaxDiscountAmount,
+		&p.MinOrderAmount, &p.ApplicableCategoryIDs, &p.FirstOrderOnly,
+		&p.MaxUses, &p.MaxUsesPerUser, &p.CurrentUses,
+		&p.StartsAt, &p.ExpiresAt, &p.IsActive, &p.Version,
+		&p.CreatedAt, &p.UpdatedAt,
+	)
+	return &p, err
+}
+
+// standardSelectClause trả về danh sách cột chuẩn để tránh viết lại nhiều lần
+const standardSelectClause = `
+	SELECT
+		id, code, name, description,
+		discount_type, discount_value, max_discount_amount,
+		min_order_amount, applicable_category_ids, first_order_only,
+		max_uses, max_uses_per_user, current_uses,
+		starts_at, expires_at, is_active, version,
+		created_at, updated_at
+	FROM promotions
+`
+
+// =================================================================================================
 // READ OPERATIONS
-// -------------------------------------------------------------------
+// =================================================================================================
 
 // FindByID tìm promotion theo ID
 func (r *PostgresRepository) FindByID(ctx context.Context, id uuid.UUID) (*model.Promotion, error) {
-	query := `
-		SELECT 
-			id, code, name, description,
-			discount_type, discount_value, max_discount_amount,
-			min_order_amount, applicable_category_ids, first_order_only,
-			max_uses, max_uses_per_user, current_uses,
-			starts_at, expires_at, is_active, version,
-			created_at, updated_at
-		FROM promotions
-		WHERE id = $1
-	`
+	query := standardSelectClause + ` WHERE id = $1`
 
-	var p model.Promotion
-	err := r.db.QueryRow(ctx, query, id).Scan(
-		&p.ID,                    // id
-		&p.Code,                  // code
-		&p.Name,                  // name
-		&p.Description,           // description (nullable)
-		&p.DiscountType,          // discount_type
-		&p.DiscountValue,         // discount_value
-		&p.MaxDiscountAmount,     // max_discount_amount (nullable)
-		&p.MinOrderAmount,        // min_order_amount
-		&p.ApplicableCategoryIDs, // applicable_category_ids (array)
-		&p.FirstOrderOnly,        // first_order_only
-		&p.MaxUses,               // max_uses (nullable)
-		&p.MaxUsesPerUser,        // max_uses_per_user
-		&p.CurrentUses,           // current_uses
-		&p.StartsAt,              // starts_at
-		&p.ExpiresAt,             // expires_at
-		&p.IsActive,              // is_active
-		&p.Version,               // version
-		&p.CreatedAt,             // created_at
-		&p.UpdatedAt,             // updated_at
-	)
+	p, err := scanPromotionRow(r.db.QueryRow(ctx, query, id))
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, model.ErrPromotionNotFound
 		}
 		return nil, fmt.Errorf("find promotion by id: %w", err)
 	}
-
-	return &p, nil
+	return p, nil
 }
 
 // FindByCode tìm promotion theo code (không filter active/time)
 func (r *PostgresRepository) FindByCode(ctx context.Context, code string) (*model.Promotion, error) {
-	query := `
-		SELECT 
-			id, code, name, description,
-			discount_type, discount_value, max_discount_amount,
-			min_order_amount, applicable_category_ids, first_order_only,
-			max_uses, max_uses_per_user, current_uses,
-			starts_at, expires_at, is_active, version,
-			created_at, updated_at
-		FROM promotions
-		WHERE LOWER(code) = LOWER($1)
-	`
+	query := standardSelectClause + ` WHERE LOWER(code) = LOWER($1)`
 
-	var p model.Promotion
-	err := r.db.QueryRow(ctx, query, code).Scan(
-		&p.ID,                    // id
-		&p.Code,                  // code
-		&p.Name,                  // name
-		&p.Description,           // description (nullable)
-		&p.DiscountType,          // discount_type
-		&p.DiscountValue,         // discount_value
-		&p.MaxDiscountAmount,     // max_discount_amount (nullable)
-		&p.MinOrderAmount,        // min_order_amount
-		&p.ApplicableCategoryIDs, // applicable_category_ids (array)
-		&p.FirstOrderOnly,        // first_order_only
-		&p.MaxUses,               // max_uses (nullable)
-		&p.MaxUsesPerUser,        // max_uses_per_user
-		&p.CurrentUses,           // current_uses
-		&p.StartsAt,              // starts_at
-		&p.ExpiresAt,             // expires_at
-		&p.IsActive,              // is_active
-		&p.Version,               // version
-		&p.CreatedAt,             // created_at
-		&p.UpdatedAt,             // updated_at
-	)
+	p, err := scanPromotionRow(r.db.QueryRow(ctx, query, code))
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, model.ErrPromotionNotFound
 		}
 		return nil, fmt.Errorf("find promotion by code: %w", err)
 	}
-
-	return &p, nil
+	return p, nil
 }
 
 // FindByCodeActive tìm promotion active theo code
-//
-// Business Logic:
-// - is_active = true
-// - starts_at <= NOW <= expires_at
-// - Nếu có max_uses: current_uses < max_uses
-//
-// Note: Query này được optimize với index idx_promotions_active
 func (r *PostgresRepository) FindByCodeActive(ctx context.Context, code string) (*model.Promotion, error) {
+	// Ghi đè logic select một chút để xử lý COALESCE cho max_uses_per_user nếu cần,
+	// nhưng để nhất quán với scanPromotionRow, ta nên giữ nguyên thứ tự cột.
+	// Ở đây tôi dùng query cụ thể nhưng vẫn dùng hàm scan chung.
 	query := `
-		SELECT 
+		SELECT
 			id, code, name, description,
 			discount_type, discount_value, max_discount_amount,
 			min_order_amount, applicable_category_ids, first_order_only,
@@ -142,169 +108,82 @@ func (r *PostgresRepository) FindByCodeActive(ctx context.Context, code string) 
 			created_at, updated_at
 		FROM promotions
 		WHERE LOWER(code) = LOWER($1)
-		  AND is_active = true
-		  AND starts_at <= NOW()
-		  AND expires_at >= NOW()
-		  AND (max_uses IS NULL OR current_uses < max_uses)
+			AND is_active = true
+			AND starts_at <= NOW()
+			AND expires_at >= NOW()
+			AND (max_uses IS NULL OR current_uses < max_uses)
 	`
 
-	var p model.Promotion
-	err := r.db.QueryRow(ctx, query, code).Scan(
-		&p.ID,                    // id
-		&p.Code,                  // code
-		&p.Name,                  // name
-		&p.Description,           // description (nullable)
-		&p.DiscountType,          // discount_type
-		&p.DiscountValue,         // discount_value
-		&p.MaxDiscountAmount,     // max_discount_amount (nullable)
-		&p.MinOrderAmount,        // min_order_amount
-		&p.ApplicableCategoryIDs, // applicable_category_ids (array)
-		&p.FirstOrderOnly,        // first_order_only
-		&p.MaxUses,               // max_uses (nullable)
-		&p.MaxUsesPerUser,        // max_uses_per_user
-		&p.CurrentUses,           // current_uses
-		&p.StartsAt,              // starts_at
-		&p.ExpiresAt,             // expires_at
-		&p.IsActive,              // is_active
-		&p.Version,               // version
-		&p.CreatedAt,             // created_at
-		&p.UpdatedAt,             // updated_at
-	)
+	p, err := scanPromotionRow(r.db.QueryRow(ctx, query, code))
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, model.ErrPromotionNotFound
 		}
-		return nil, fmt.Errorf("find active promotion by code: %w", err)
+		return nil, fmt.Errorf("find promotion by code: %w", err)
 	}
-
-	return &p, nil
+	return p, nil
 }
 
 // GetUserUsageCount đếm số lần user đã sử dụng promotion
-//
-// Note: Query này sử dụng index idx_promotion_usage_user
 func (r *PostgresRepository) GetUserUsageCount(ctx context.Context, promoID, userID uuid.UUID) (int, error) {
-	query := `
-		SELECT COUNT(*)
-		FROM promotion_usage
-		WHERE promotion_id = $1 AND user_id = $2
-	`
+	query := `SELECT COUNT(*) FROM promotion_usage WHERE promotion_id = $1 AND user_id = $2`
 
 	var count int
-	err := r.db.QueryRow(ctx, query, promoID, userID).Scan(&count)
-	if err != nil {
+	if err := r.db.QueryRow(ctx, query, promoID, userID).Scan(&count); err != nil {
 		return 0, fmt.Errorf("get user usage count: %w", err)
 	}
-
 	return count, nil
 }
 
-// ListActive lấy danh sách promotion active (cho public API)
-//
-// Params:
-// - categoryID: Filter theo category (nil = tất cả)
-// - page, limit: Pagination
-//
-// Returns: promotions, total count, error
+// ListActive lấy danh sách promotion active
 func (r *PostgresRepository) ListActive(ctx context.Context, categoryID *uuid.UUID, page, limit int) ([]*model.Promotion, int, error) {
 	offset := (page - 1) * limit
 
-	// Build query động với category filter
-	query := `
-		SELECT 
-			id, code, name, description,
-			discount_type, discount_value, max_discount_amount,
-			min_order_amount, applicable_category_ids, first_order_only,
-			max_uses, COALESCE(max_uses_per_user, 0) AS max_uses_per_user, current_uses,
-			starts_at, expires_at, is_active, version,
-			created_at, updated_at
-		FROM promotions
-		WHERE is_active = true
-		  AND starts_at <= NOW()
-		  AND expires_at >= NOW()
-	`
-
+	baseWhere := ` WHERE is_active = true AND starts_at <= NOW() AND expires_at >= NOW()`
 	args := []interface{}{}
 	argIndex := 1
 
-	// Filter theo category nếu có
+	// 1. Build Filter
 	if categoryID != nil {
-		query += fmt.Sprintf(" AND $%d = ANY(applicable_category_ids)", argIndex)
+		baseWhere += fmt.Sprintf(" AND $%d = ANY(applicable_category_ids)", argIndex)
 		args = append(args, *categoryID)
 		argIndex++
 	}
 
-	query += " ORDER BY starts_at DESC"
-	query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", argIndex, argIndex+1)
-	args = append(args, limit, offset)
-	logger.Info("in it", map[string]interface{}{
-		"offset":     offset,
-		"categoryID": categoryID,
-		"args":       args,
-	})
-	// Execute query
-	var promotions []*model.Promotion
-	rows, err := r.db.Query(ctx, query, args...)
-	logger.Info("after query", map[string]interface{}{
-		"rows": rows,
-		"eror": err,
-	})
+	// 2. Build Data Query
+	// Lưu ý: Logic SELECT ở đây có xử lý COALESCE cho max_uses_per_user, khớp với struct scan
+	query := `
+		SELECT
+			id, code, name, description,
+			discount_type, discount_value, max_discount_amount,
+			min_order_amount, applicable_category_ids, first_order_only,
+			max_uses, COALESCE(max_uses_per_user, 0), current_uses,
+			starts_at, expires_at, is_active, version,
+			created_at, updated_at
+		FROM promotions` + baseWhere + ` ORDER BY starts_at DESC` + fmt.Sprintf(" LIMIT $%d OFFSET $%d", argIndex, argIndex+1)
+
+	queryArgs := append(args, limit, offset)
+
+	rows, err := r.db.Query(ctx, query, queryArgs...)
 	if err != nil {
-		logger.Error("get error", err)
+		logger.Error("list active error", err)
 		return nil, 0, fmt.Errorf("list active promotions: %w", err)
 	}
+	defer rows.Close()
 
+	var promotions []*model.Promotion
 	for rows.Next() {
-		var p model.Promotion
-		err := rows.Scan(
-			&p.ID,                    // id
-			&p.Code,                  // code
-			&p.Name,                  // name
-			&p.Description,           // description (nullable)
-			&p.DiscountType,          // discount_type
-			&p.DiscountValue,         // discount_value
-			&p.MaxDiscountAmount,     // max_discount_amount (nullable)
-			&p.MinOrderAmount,        // min_order_amount
-			&p.ApplicableCategoryIDs, // applicable_category_ids (array)
-			&p.FirstOrderOnly,        // first_order_only
-			&p.MaxUses,               // max_uses (nullable)
-			&p.MaxUsesPerUser,        // max_uses_per_user
-			&p.CurrentUses,           // current_uses
-			&p.StartsAt,              // starts_at
-			&p.ExpiresAt,             // expires_at
-			&p.IsActive,              // is_active
-			&p.Version,               // version
-			&p.CreatedAt,             // created_at
-			&p.UpdatedAt,             // updated_at
-		)
+		p, err := scanPromotionRow(rows)
 		if err != nil {
 			return nil, 0, err
 		}
-		promotions = append(promotions, &p)
-	}
-	logger.Info("Get Query ", map[string]interface{}{
-		"promotions": promotions,
-	})
-
-	// Count total
-	countQuery := `
-		SELECT COUNT(*)
-		FROM promotions
-		WHERE is_active = true
-		  AND starts_at <= NOW()
-		  AND expires_at >= NOW()
-	`
-
-	countArgs := []interface{}{}
-	if categoryID != nil {
-		countQuery += " AND $1 = ANY(applicable_category_ids)"
-		countArgs = append(countArgs, *categoryID)
+		promotions = append(promotions, p)
 	}
 
+	// 3. Count Total
+	countQuery := `SELECT COUNT(*) FROM promotions` + baseWhere
 	var total int
-	err = r.db.QueryRow(ctx, countQuery, countArgs...).Scan(&total)
-	if err != nil {
-		logger.Error("count error", err)
+	if err := r.db.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count active promotions: %w", err)
 	}
 
@@ -312,21 +191,13 @@ func (r *PostgresRepository) ListActive(ctx context.Context, categoryID *uuid.UU
 }
 
 // ListAdmin lấy danh sách promotion với filter (Admin API)
-//
-// Business Logic:
-// - Status filter: active, expired, upcoming, all
-// - Search: Tìm kiếm theo code hoặc name (case-insensitive)
-// - Sort: Nhiều cách sắp xếp khác nhau
-// - Calculate: usage_rate, status
 func (r *PostgresRepository) ListAdmin(ctx context.Context, filter *model.ListPromotionsFilter) ([]*model.PromotionListItem, int, error) {
 	offset := (filter.Page - 1) * filter.Limit
-
-	// Build WHERE clause động
-	whereClauses := []string{}
+	whereClauses := []string{"1=1"} // Dummy condition để dễ append AND
 	args := []interface{}{}
 	argIndex := 1
 
-	// Status filter
+	// Build Conditions
 	switch filter.Status {
 	case "active":
 		whereClauses = append(whereClauses, "is_active = true AND NOW() BETWEEN starts_at AND expires_at")
@@ -334,38 +205,25 @@ func (r *PostgresRepository) ListAdmin(ctx context.Context, filter *model.ListPr
 		whereClauses = append(whereClauses, "NOW() > expires_at")
 	case "upcoming":
 		whereClauses = append(whereClauses, "NOW() < starts_at")
-	case "all":
-		// Không filter
 	}
 
-	// Search filter
 	if filter.Search != "" {
-		whereClauses = append(whereClauses, fmt.Sprintf(
-			"(LOWER(code) LIKE $%d OR LOWER(name) LIKE $%d)",
-			argIndex, argIndex,
-		))
+		whereClauses = append(whereClauses, fmt.Sprintf("(LOWER(code) LIKE $%d OR LOWER(name) LIKE $%d)", argIndex, argIndex))
 		args = append(args, "%"+strings.ToLower(filter.Search)+"%")
 		argIndex++
 	}
 
-	// IsActive filter
 	if filter.IsActive != nil {
 		whereClauses = append(whereClauses, fmt.Sprintf("is_active = $%d", argIndex))
 		args = append(args, *filter.IsActive)
 		argIndex++
 	}
 
-	// Combine WHERE clauses
-	whereSQL := ""
-	if len(whereClauses) > 0 {
-		whereSQL = "WHERE " + strings.Join(whereClauses, " AND ")
-	}
+	whereSQL := "WHERE " + strings.Join(whereClauses, " AND ")
 
-	// Build ORDER BY clause
-	orderBySQL := "ORDER BY created_at DESC" // Default
+	// Build Sort
+	orderBySQL := "ORDER BY created_at DESC"
 	switch filter.Sort {
-	case "created_at_desc":
-		orderBySQL = "ORDER BY created_at DESC"
 	case "expires_at_asc":
 		orderBySQL = "ORDER BY expires_at ASC"
 	case "usage_desc":
@@ -374,18 +232,18 @@ func (r *PostgresRepository) ListAdmin(ctx context.Context, filter *model.ListPr
 		orderBySQL = "ORDER BY name ASC"
 	}
 
-	// Main query với calculated fields
+	// Main Query
 	query := fmt.Sprintf(`
-		SELECT 
+		SELECT
 			id, code, name,
 			discount_type, discount_value, max_discount_amount,
 			current_uses, max_uses,
-			CASE 
-				WHEN max_uses IS NOT NULL THEN (current_uses::FLOAT / max_uses * 100)
+			CASE
+				WHEN max_uses IS NOT NULL AND max_uses > 0 THEN (current_uses::FLOAT / max_uses * 100)
 				ELSE NULL
 			END as usage_rate,
 			starts_at, expires_at, is_active,
-			CASE 
+			CASE
 				WHEN NOT is_active THEN 'inactive'
 				WHEN NOW() < starts_at THEN 'upcoming'
 				WHEN NOW() > expires_at THEN 'expired'
@@ -393,55 +251,48 @@ func (r *PostgresRepository) ListAdmin(ctx context.Context, filter *model.ListPr
 				ELSE 'active'
 			END as status
 		FROM promotions
-		%s
-		%s
-		LIMIT $%d OFFSET $%d
+		%s %s LIMIT $%d OFFSET $%d
 	`, whereSQL, orderBySQL, argIndex, argIndex+1)
 
-	args = append(args, filter.Limit, offset)
+	queryArgs := append(args, filter.Limit, offset)
 
-	// Execute query
-	var items []*model.PromotionListItem
-	rows, err := r.db.Query(ctx, query, args...)
+	rows, err := r.db.Query(ctx, query, queryArgs...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list admin promotions: %w", err)
 	}
+	defer rows.Close()
 
+	var items []*model.PromotionListItem
 	for rows.Next() {
 		var i model.PromotionListItem
-		err := rows.Scan(&i)
-		if err != nil {
+		// Scan trực tiếp vì struct này khác Promotion gốc
+		if err := rows.Scan(
+			&i.ID, &i.Code, &i.Name,
+			&i.DiscountType, &i.DiscountValue, &i.MaxDiscountAmount,
+			&i.CurrentUses, &i.MaxUses,
+			&i.UsageRate,
+			&i.StartsAt, &i.ExpiresAt, &i.IsActive, &i.Status,
+		); err != nil {
 			return nil, 0, err
 		}
 		items = append(items, &i)
 	}
 
-	// Count total
-	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM promotions %s", whereSQL)
-	countArgs := args[:len(args)-2] // Loại bỏ LIMIT và OFFSET
-
+	// Count Total
 	var total int
-	err = r.db.QueryRow(ctx, countQuery, countArgs...).Scan(&total)
-	if err != nil {
+	if err := r.db.QueryRow(ctx, fmt.Sprintf("SELECT COUNT(*) FROM promotions %s", whereSQL), args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count admin promotions: %w", err)
 	}
 
 	return items, total, nil
 }
 
-// -------------------------------------------------------------------
+// =================================================================================================
 // WRITE OPERATIONS
-// -------------------------------------------------------------------
+// =================================================================================================
 
 // Create tạo promotion mới
-//
-// Note:
-// - Generate UUID nếu chưa có
-// - Normalize code về uppercase
-// - Set default values
 func (r *PostgresRepository) Create(ctx context.Context, promo *model.Promotion) error {
-
-	// Normalize code
 	promo.Code = strings.ToUpper(promo.Code)
 
 	query := `
@@ -454,233 +305,135 @@ func (r *PostgresRepository) Create(ctx context.Context, promo *model.Promotion)
 			created_at, updated_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-			$11, $12, $13, $14, $15, NOW(), NOW()
+			$11, 0, $12, $13, $14, NOW(), NOW()
 		)
 		RETURNING id, code, name
 	`
-
+	// current_uses = 0 ($11 là max_uses_per_user, giá trị cứng 0 ở giữa, $12 là starts_at...) - SAI INDEX
+	// Sửa lại index cho chuẩn:
 	err := r.db.QueryRow(ctx, query,
-		promo.Code,
-		promo.Name,
-		promo.Description,
-		promo.DiscountType,
-		promo.DiscountValue,
-		*promo.MaxDiscountAmount,
-		promo.MinOrderAmount,
-		pq.Array(promo.ApplicableCategoryIDs), // Convert []uuid.UUID to pq.Array
-		promo.FirstOrderOnly,
-		promo.MaxUses,
-		promo.MaxUsesPerUser,
-		0, // current_uses = 0
-		promo.StartsAt,
-		promo.ExpiresAt,
-		promo.IsActive,
+		promo.Code, promo.Name, promo.Description,
+		promo.DiscountType, promo.DiscountValue, promo.MaxDiscountAmount,
+		promo.MinOrderAmount, pq.Array(promo.ApplicableCategoryIDs), promo.FirstOrderOnly,
+		promo.MaxUses, promo.MaxUsesPerUser, // $10, $11
+		promo.StartsAt, promo.ExpiresAt, promo.IsActive, // $12, $13, $14
 	).Scan(&promo.ID, &promo.Code, &promo.Name)
 
 	if err != nil {
 		logger.Error("error create::", err)
-		// Check for unique constraint violation
-		if pqErr, ok := err.(*pq.Error); ok {
-			if pqErr.Code == "23505" { // unique_violation
-				return fmt.Errorf(" constraint violation") // model.ErrPromotionCodeExists
-			}
+		if isUniqueViolation(err) {
+			return fmt.Errorf("constraint violation") // model.ErrPromotionCodeExists
 		}
 		return fmt.Errorf("create promotion: %w", err)
 	}
 
 	promo.CurrentUses = 0
 	promo.Version = 0
-
 	return nil
 }
 
 // Update cập nhật promotion với optimistic locking
-//
-// Business Logic:
-// - Sử dụng version field để tránh race condition
-// - Nếu version không khớp → promotion đã bị modify → return conflict error
-// - Tự động increment version
 func (r *PostgresRepository) Update(ctx context.Context, promo *model.Promotion) error {
-	// Normalize code
 	promo.Code = strings.ToUpper(promo.Code)
 
 	query := `
 		UPDATE promotions
-		SET 
-			code = $2,
-			name = $3,
-			description = $4,
-			discount_type = $5,
-			discount_value = $6,
-			max_discount_amount = $7,
-			min_order_amount = $8,
-			applicable_category_ids = $9,
-			first_order_only = $10,
-			max_uses = $11,
-			max_uses_per_user = $12,
-			starts_at = $13,
-			expires_at = $14,
-			is_active = $15,
-			version = version + 1,
-			updated_at = NOW()
+		SET
+			code = $2, name = $3, description = $4,
+			discount_type = $5, discount_value = $6, max_discount_amount = $7,
+			min_order_amount = $8, applicable_category_ids = $9, first_order_only = $10,
+			max_uses = $11, max_uses_per_user = $12,
+			starts_at = $13, expires_at = $14, is_active = $15,
+			version = version + 1, updated_at = NOW()
 		WHERE id = $1 AND version = $16
 		RETURNING id, name, code
 	`
 
-	oldVersion := promo.Version
-	logger.Info("promo info", map[string]interface{}{
-		"promo":      promo,
-		"oldVersion": oldVersion,
-	})
 	err := r.db.QueryRow(ctx, query,
-		promo.ID,
-		promo.Code,
-		promo.Name,
-		promo.Description,
-		promo.DiscountType,
-		promo.DiscountValue,
-		promo.MaxDiscountAmount,
-		promo.MinOrderAmount,
-		pq.Array(promo.ApplicableCategoryIDs),
-		promo.FirstOrderOnly,
-		promo.MaxUses,
-		promo.MaxUsesPerUser,
-		promo.StartsAt,
-		promo.ExpiresAt,
-		promo.IsActive,
-		oldVersion, // Version check (optimistic locking)
+		promo.ID, promo.Code, promo.Name, promo.Description,
+		promo.DiscountType, promo.DiscountValue, promo.MaxDiscountAmount,
+		promo.MinOrderAmount, pq.Array(promo.ApplicableCategoryIDs), promo.FirstOrderOnly,
+		promo.MaxUses, promo.MaxUsesPerUser,
+		promo.StartsAt, promo.ExpiresAt, promo.IsActive,
+		promo.Version,
 	).Scan(&promo.ID, &promo.Name, &promo.Code)
 
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			// Version mismatch hoặc promotion không tồn tại
-			return fmt.Errorf("Version missmatch or promotion not exist") // model.ErrPromotionVersionConflict
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("version mismatch or promotion not exist")
 		}
 		return fmt.Errorf("update promotion: %w", err)
 	}
-
 	return nil
 }
 
 // UpdateStatus cập nhật trạng thái active/inactive
 func (r *PostgresRepository) UpdateStatus(ctx context.Context, id uuid.UUID, isActive bool) error {
-	query := `
-		UPDATE promotions
-		SET is_active = $2, updated_at = NOW()
-		WHERE id = $1
-	`
+	query := `UPDATE promotions SET is_active = $2, updated_at = NOW() WHERE id = $1`
 
 	result, err := r.db.Exec(ctx, query, id, isActive)
 	if err != nil {
 		return fmt.Errorf("update promotion status: %w", err)
 	}
-
 	if result.RowsAffected() == 0 {
 		return model.ErrPromotionNotFound
 	}
-
 	return nil
 }
 
-// SoftDelete xóa promotion (soft delete)
-//
-// Note: Chỉ cho phép xóa nếu current_uses = 0
+// SoftDelete xóa promotion
 func (r *PostgresRepository) SoftDelete(ctx context.Context, id uuid.UUID) error {
-	// Check current_uses
+	// Gom check và update vào 1 logic nếu có thể, hoặc giữ logic check tường minh
+	// Ở đây logic check currentUses > 0 là quan trọng nên giữ nguyên 2 bước
 	var currentUses int
-	err := r.db.QueryRow(ctx, "SELECT current_uses FROM promotions WHERE id = $1", id).Scan(&currentUses)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+	if err := r.db.QueryRow(ctx, "SELECT current_uses FROM promotions WHERE id = $1", id).Scan(&currentUses); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return model.ErrPromotionNotFound
 		}
 		return fmt.Errorf("check current uses: %w", err)
 	}
 
 	if currentUses > 0 {
-		return fmt.Errorf("Delete promotion failed") //  model.ErrPromotionCannotDelete
+		return fmt.Errorf("delete promotion failed: in use")
 	}
 
-	// Soft delete (set is_active = false, có thể thêm deleted_at column)
-	query := `
-		UPDATE promotions
-		SET is_active = false, updated_at = NOW()
-		WHERE id = $1
-	`
-
-	_, err = r.db.Exec(ctx, query, id)
+	_, err := r.db.Exec(ctx, "UPDATE promotions SET is_active = false, updated_at = NOW() WHERE id = $1", id)
 	if err != nil {
 		return fmt.Errorf("soft delete promotion: %w", err)
 	}
-
 	return nil
 }
 
-// -------------------------------------------------------------------
+// =================================================================================================
 // USAGE TRACKING
-// -------------------------------------------------------------------
+// =================================================================================================
 
-// CreateUsage tạo promotion_usage record trong transaction
-//
-// Important Notes:
-// - Phải gọi trong transaction (tx parameter)
-// - Trigger `trigger_increment_promotion_usage` sẽ tự động increment current_uses
-// - Unique constraint đảm bảo một order chỉ dùng một promotion
+// CreateUsage tạo promotion_usage
 func (r *PostgresRepository) CreateUsage(ctx context.Context, tx pgx.Tx, usage *model.PromotionUsage) error {
-	// Generate ID nếu chưa có
 	if usage.ID == uuid.Nil {
 		usage.ID = uuid.New()
 	}
 
 	query := `
-		INSERT INTO promotion_usage (
-			id, promotion_id, user_id, order_id,
-			discount_amount, used_at, version
-		) VALUES (
-			$1, $2, $3, $4, $5, NOW(), 0
-		)
+		INSERT INTO promotion_usage (id, promotion_id, user_id, order_id, discount_amount, used_at, version)
+		VALUES ($1, $2, $3, $4, $5, NOW(), 0)
 		RETURNING used_at
 	`
-
-	err := tx.QueryRow(ctx, query,
-		usage.ID,
-		usage.PromotionID,
-		usage.UserID,
-		usage.OrderID,
-		usage.DiscountAmount,
-	).Scan(&usage.UsedAt)
-
+	err := tx.QueryRow(ctx, query, usage.ID, usage.PromotionID, usage.UserID, usage.OrderID, usage.DiscountAmount).Scan(&usage.UsedAt)
 	if err != nil {
-		// Check for unique constraint violation (duplicate usage)
-		if pqErr, ok := err.(*pq.Error); ok {
-			if pqErr.Code == "23505" { // unique_violation
-				return fmt.Errorf("create promotion usage: %w", err) //model.ErrPromotionDuplicateUsage
-			}
+		if isUniqueViolation(err) {
+			return fmt.Errorf("create promotion usage: duplicate usage")
 		}
 		return fmt.Errorf("create promotion usage: %w", err)
 	}
 
 	usage.Version = 0
-
 	return nil
 }
 
-// GetUsageHistory lấy lịch sử sử dụng promotion với chi tiết user & order
-//
-// Params:
-// - promoID: ID của promotion
-// - startDate, endDate: Filter theo thời gian (nil = không filter)
-// - userID: Filter theo user (nil = tất cả users)
-// - page, limit: Pagination
-func (r *PostgresRepository) GetUsageHistory(
-	ctx context.Context,
-	promoID uuid.UUID,
-	startDate, endDate *time.Time,
-	userID *uuid.UUID,
-	page, limit int,
-) ([]*model.PromotionUsageWithDetails, int, error) {
+// GetUsageHistory lấy lịch sử sử dụng
+func (r *PostgresRepository) GetUsageHistory(ctx context.Context, promoID uuid.UUID, startDate, endDate *time.Time, userID *uuid.UUID, page, limit int) ([]*model.PromotionUsageWithDetails, int, error) {
 	offset := (page - 1) * limit
-
-	// Build WHERE clause
 	whereClauses := []string{"pu.promotion_id = $1"}
 	args := []interface{}{promoID}
 	argIndex := 2
@@ -690,13 +443,11 @@ func (r *PostgresRepository) GetUsageHistory(
 		args = append(args, *startDate)
 		argIndex++
 	}
-
 	if endDate != nil {
 		whereClauses = append(whereClauses, fmt.Sprintf("pu.used_at <= $%d", argIndex))
 		args = append(args, *endDate)
 		argIndex++
 	}
-
 	if userID != nil {
 		whereClauses = append(whereClauses, fmt.Sprintf("pu.user_id = $%d", argIndex))
 		args = append(args, *userID)
@@ -705,16 +456,11 @@ func (r *PostgresRepository) GetUsageHistory(
 
 	whereSQL := strings.Join(whereClauses, " AND ")
 
-	// Query với JOIN để lấy thông tin user và order
 	query := fmt.Sprintf(`
-		SELECT 
+		SELECT
 			pu.id, pu.promotion_id, pu.user_id, pu.order_id,
 			pu.discount_amount, pu.used_at, pu.version,
-			u.email as user_email,
-			u.full_name as user_full_name,
-			o.order_number,
-			o.total as order_total,
-			o.status as order_status
+			u.email, u.full_name, o.order_number, o.total, o.status
 		FROM promotion_usage pu
 		INNER JOIN users u ON u.id = pu.user_id
 		INNER JOIN orders o ON o.id = pu.order_id
@@ -723,53 +469,41 @@ func (r *PostgresRepository) GetUsageHistory(
 		LIMIT $%d OFFSET $%d
 	`, whereSQL, argIndex, argIndex+1)
 
-	args = append(args, limit, offset)
-
-	// Execute query
-	var usages []*model.PromotionUsageWithDetails
-	rows, err := r.db.Query(ctx, query, args...)
+	queryArgs := append(args, limit, offset)
+	logger.Info("Check data ", map[string]interface{}{
+		"query":    query,
+		"args":     queryArgs,
+		"whereSQL": whereSQL,
+	})
+	rows, err := r.db.Query(ctx, query, queryArgs...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("get usage history: %w", err)
 	}
+	defer rows.Close()
 
+	var usages []*model.PromotionUsageWithDetails
 	for rows.Next() {
 		var u model.PromotionUsageWithDetails
-		err := rows.Scan(&u)
-		if err != nil {
+		if err := rows.Scan(
+			&u.ID, &u.PromotionID, &u.UserID, &u.OrderID,
+			&u.DiscountAmount, &u.UsedAt, &u.Version,
+			&u.UserEmail, &u.UserFullName, &u.OrderNumber, &u.OrderTotal, &u.OrderStatus,
+		); err != nil {
 			return nil, 0, err
 		}
 		usages = append(usages, &u)
 	}
-	// Count total
-	countQuery := fmt.Sprintf(`
-		SELECT COUNT(*)
-		FROM promotion_usage pu
-		WHERE %s
-	`, whereSQL)
-	countArgs := args[:len(args)-2] // Remove LIMIT and OFFSET
 
 	var total int
-	err = r.db.QueryRow(ctx, countQuery, countArgs...).Scan(&total)
-	if err != nil {
+	if err := r.db.QueryRow(ctx, fmt.Sprintf("SELECT COUNT(*) FROM promotion_usage pu WHERE %s", whereSQL), args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count usage history: %w", err)
 	}
 
 	return usages, total, nil
 }
 
-// GetUsageStats tính toán thống kê sử dụng promotion
-//
-// Returns:
-// - total_uses: Tổng số lần sử dụng
-// - total_discount_given: Tổng tiền đã giảm
-// - average_discount_per_order: Trung bình giảm giá/đơn
-// - unique_users: Số user đã sử dụng
-func (r *PostgresRepository) GetUsageStats(
-	ctx context.Context,
-	promoID uuid.UUID,
-	startDate, endDate *time.Time,
-) (*model.UsageStats, error) {
-	// Build WHERE clause
+// GetUsageStats tính toán thống kê
+func (r *PostgresRepository) GetUsageStats(ctx context.Context, promoID uuid.UUID, startDate, endDate *time.Time) (*model.UsageStats, error) {
 	whereClauses := []string{"promotion_id = $1"}
 	args := []interface{}{promoID}
 	argIndex := 2
@@ -779,50 +513,37 @@ func (r *PostgresRepository) GetUsageStats(
 		args = append(args, *startDate)
 		argIndex++
 	}
-
 	if endDate != nil {
 		whereClauses = append(whereClauses, fmt.Sprintf("used_at <= $%d", argIndex))
 		args = append(args, *endDate)
 		argIndex++
 	}
 
-	whereSQL := strings.Join(whereClauses, " AND ")
-
 	query := fmt.Sprintf(`
-		SELECT 
-			COUNT(*) as total_uses,
-			COALESCE(SUM(discount_amount), 0) as total_discount_given,
-			COALESCE(AVG(discount_amount), 0) as average_discount_per_order,
-			COUNT(DISTINCT user_id) as unique_users
+		SELECT
+			COUNT(*),
+			COALESCE(SUM(discount_amount), 0),
+			COALESCE(AVG(discount_amount), 0),
+			COUNT(DISTINCT user_id)
 		FROM promotion_usage
 		WHERE %s
-	`, whereSQL)
+	`, strings.Join(whereClauses, " AND "))
 
 	var stats model.UsageStats
-	err := r.db.QueryRow(ctx, query, args...).Scan(
+	if err := r.db.QueryRow(ctx, query, args...).Scan(
 		&stats.TotalUses,
 		&stats.TotalDiscountGiven,
 		&stats.AverageDiscountPerOrder,
 		&stats.UniqueUsers,
-	)
-	if err != nil {
+	); err != nil {
 		return nil, fmt.Errorf("get usage stats: %w", err)
 	}
 
-	// Revenue impact = negative (đã giảm)
 	stats.RevenueImpact = stats.TotalDiscountGiven.Neg()
-
 	return &stats, nil
 }
 
-// -------------------------------------------------------------------
-// UTILITY
-// -------------------------------------------------------------------
-
-// CheckCodeExists kiểm tra code đã tồn tại chưa
-//
-// Params:
-// - excludeID: Loại trừ ID này (dùng cho update)
+// CheckCodeExists kiểm tra code tồn tại
 func (r *PostgresRepository) CheckCodeExists(ctx context.Context, code string, excludeID *uuid.UUID) (bool, error) {
 	query := "SELECT EXISTS(SELECT 1 FROM promotions WHERE LOWER(code) = LOWER($1)"
 	args := []interface{}{code}
@@ -831,14 +552,17 @@ func (r *PostgresRepository) CheckCodeExists(ctx context.Context, code string, e
 		query += " AND id != $2"
 		args = append(args, *excludeID)
 	}
-
 	query += ")"
 
 	var exists bool
 	err := r.db.QueryRow(ctx, query, args...).Scan(&exists)
-	if err != nil {
-		return false, fmt.Errorf("check code exists: %w", err)
-	}
+	return exists, err
+}
 
-	return exists, nil
+// isUniqueViolation helper function để check lỗi unique constraints
+func isUniqueViolation(err error) bool {
+	if pqErr, ok := err.(*pq.Error); ok {
+		return pqErr.Code == "23505"
+	}
+	return false
 }

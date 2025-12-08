@@ -50,6 +50,5 @@ func NewTwilioSMSService(accountSID, authToken, fromNumber string) *TwilioSMSSer
 
 func (s *TwilioSMSService) SendSMS(ctx context.Context, to, message string) (messageID string, err error) {
 	// TODO: Implement Twilio API call
-	log.Warn().Msg("Twilio SMS not implemented yet, using mock")
 	return NewMockSMSService().SendSMS(ctx, to, message)
 }

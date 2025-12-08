@@ -11,7 +11,6 @@ import (
 	inveService "bookstore-backend/internal/domains/inventory/service"
 	orderModel "bookstore-backend/internal/domains/order/model"
 	orderS "bookstore-backend/internal/domains/order/service"
-	promotionModel "bookstore-backend/internal/domains/promotion/model"
 	"bookstore-backend/internal/shared"
 	"bookstore-backend/internal/shared/utils"
 	"bookstore-backend/pkg/logger"
@@ -25,10 +24,10 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-type PromotionServiceInterface interface {
-	ValidatePromotion(ctx context.Context, req *promotionModel.ValidatePromotionRequest) (*promotionModel.ValidationResult, error)
-	CalculateDiscount(promo *promotionModel.Promotion, subtotal decimal.Decimal) decimal.Decimal
-}
+// type PromotionServiceInterface interface {
+// 	ValidatePromotion(ctx context.Context, req *promotionModel.ValidatePromotionRequest) (*promotionModel.ValidationResult, error)
+// 	CalculateDiscount(promo *promotionModel.Promotion, subtotal decimal.Decimal) decimal.Decimal
+// }
 
 type CartService struct {
 	repository       repo.RepositoryInterface
@@ -38,7 +37,7 @@ type CartService struct {
 	bookService      bookS.ServiceInterface
 	orderService     orderS.OrderService
 	asynqClient      *asynq.Client
-	promotionService PromotionServiceInterface
+	// promotionService PromotionServiceInterface
 }
 
 func NewCartService(
@@ -63,9 +62,9 @@ func NewCartService(
 	}
 }
 
-func (s *CartService) SetPromotionService(p PromotionServiceInterface) {
-	s.promotionService = p
-}
+// func (s *CartService) SetPromotionService(p PromotionServiceInterface) {
+// 	s.promotionService = p
+// }
 
 func (s *CartService) ValidatePromoCode(ctx context.Context, req *model.ValidatePromoRequest) (*model.PromotionValidationResult, error) {
 	// Step 1: Normalize and validate input
@@ -1580,7 +1579,7 @@ func (s *CartService) enqueueSendOrderConfirmation(
 	}
 
 	_, err = s.asynqClient.Enqueue(task,
-		asynq.Queue("default"),
+		asynq.Queue(shared.QueueOrder),
 		asynq.MaxRetry(2),
 		asynq.Timeout(30*time.Second),
 	)
@@ -1616,9 +1615,9 @@ func (s *CartService) enqueueAutoReleaseReservation(orderID uuid.UUID, orderNumb
 	}
 
 	_, err = s.asynqClient.Enqueue(task,
-		asynq.Queue("high"),             // High priority
-		asynq.MaxRetry(3),               // Critical task
-		asynq.ProcessIn(15*time.Minute), // Execute after 15 minutes
+		asynq.Queue(shared.QueueInventory), // High priority
+		asynq.MaxRetry(3),                  // Critical task
+		asynq.ProcessIn(15*time.Minute),    // Execute after 15 minutes
 	)
 
 	if err != nil {
@@ -1666,7 +1665,7 @@ func (s *CartService) enqueueTrackCheckout(
 	}
 
 	_, err = s.asynqClient.Enqueue(task,
-		asynq.Queue("low"),
+		asynq.Queue(shared.QueueAnalytics),
 		asynq.MaxRetry(0), // Don't retry analytics
 	)
 

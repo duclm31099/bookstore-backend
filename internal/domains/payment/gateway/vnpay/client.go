@@ -63,10 +63,14 @@ func (c *Client) CreatePaymentURL(
 		}
 	}
 
-	// ⚠️ Warning: If IP is localhost in production, VNPay might flag as suspicious
+	// ⚠️ VNPay requires IPv4 format - convert IPv6 localhost to IPv4
+	if clientIP == "::1" {
+		clientIP = "127.0.0.1"
+	}
+
+	// Warning: If IP is localhost in production, VNPay might flag as suspicious
 	// This should only happen if middleware is not properly configured
-	if clientIP == "127.0.0.1" || clientIP == "::1" {
-		// Log warning - middleware might not be registered
+	if clientIP == "127.0.0.1" {
 		fmt.Printf("⚠️ WARNING: Using localhost IP for VNPay request. Ensure IPExtractorMiddleware is registered.\n")
 	}
 
@@ -83,10 +87,12 @@ func (c *Client) CreatePaymentURL(
 		"vnp_OrderType":  "other", // Can be: other, billpayment, topup
 		"vnp_Locale":     c.config.Locale,
 		"vnp_ReturnUrl":  req.ReturnURL,
-		"vnp_IpnUrl":     c.config.IPNURL,
 		"vnp_IpAddr":     clientIP,
 		"vnp_CreateDate": now.Format("20060102150405"),
-		"vnp_ExpireDate": now.Add(15 * time.Minute).Format("20060102150405"),
+		// NOTE: vnp_IpnUrl disabled for sandbox - VNPay rejects tunnel/localhost URLs
+		// Enable when deploying to production with real public domain
+		// "vnp_IpnUrl":     c.config.IPNURL,
+		"vnp_ExpireDate": now.Add(30 * time.Minute).Format("20060102150405"),
 	}
 
 	// Optional: Bank code (for specific bank selection)

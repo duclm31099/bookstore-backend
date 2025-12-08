@@ -333,6 +333,12 @@ func setupOrderRoutes(v1 *gin.RouterGroup, c *container.Container) {
 // ========================================
 func setupPaymentRoutes(v1 *gin.RouterGroup, c *container.Container) {
 	payments := v1.Group("/payments")
+
+	// Public route for VNPay return verification (no auth required)
+	// This is called by frontend after VNPay redirect
+	payments.GET("/vnpay/verify", c.PaymentHandler.VerifyVNPayReturn)
+
+	// Authenticated routes
 	payments.Use(middleware.AuthMiddleware(c.Config.JWT.Secret))
 	{
 		payments.POST("/create", c.PaymentHandler.CreatePayment)

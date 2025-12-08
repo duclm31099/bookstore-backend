@@ -33,6 +33,10 @@ type PaymentService interface {
 	// ProcessVNPayWebhook processes VNPay IPN callback
 	ProcessVNPayWebhook(ctx context.Context, webhookData model.VNPayWebhookRequest) error
 
+	// VerifyVNPayReturn verifies payment from ReturnURL (called by frontend)
+	// This is an alternative to IPN webhook when vnp_IpnUrl causes errors
+	VerifyVNPayReturn(ctx context.Context, webhookData model.VNPayWebhookRequest) (*model.VerifyPaymentResponse, error)
+
 	// ProcessMomoWebhook processes Momo IPN callback
 	ProcessMomoWebhook(ctx context.Context, webhookData model.MomoWebhookRequest) error
 

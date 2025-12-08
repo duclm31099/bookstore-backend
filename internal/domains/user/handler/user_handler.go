@@ -81,11 +81,13 @@ func (h *UserHandler) Register(c *gin.Context) {
 func (h *UserHandler) RefreshToken(c *gin.Context) {
 	// ✅ Lấy refresh token từ cookie (không phải body)
 	refreshToken, err := c.Cookie("refresh_token")
-	if err != nil {
+	if err != nil || refreshToken == "" {
 		response.Error(c, http.StatusUnauthorized, "Missing refresh token", nil)
 		return
 	}
-
+	logger.Info("get refresh token", map[string]interface{}{
+		"refreshToken": refreshToken,
+	})
 	// Call service để validate và generate new tokens
 	newLoginResp, err := h.service.RefreshToken(c.Request.Context(), refreshToken)
 	if err != nil {
@@ -97,7 +99,7 @@ func (h *UserHandler) RefreshToken(c *gin.Context) {
 	c.SetCookie(
 		"refresh_token",
 		newLoginResp.RefreshToken,
-		7*24*3600,
+		30*24*3600,
 		"/",
 		"",
 		true,
@@ -162,22 +164,9 @@ func (h *UserHandler) Login(c *gin.Context) {
 		h.handleError(c, err)
 		return
 	}
-	// ✅ STEP 4: SET REFRESH TOKEN IN HTTPONLYCOOKIE
-	c.SetCookie(
-		"refresh_token",  // Cookie name
-		res.RefreshToken, // Cookie value
-		7*24*3600,        // Max age (7 days in seconds)
-		"/",              // Path
-		"",               // Domain (empty = auto-detect)
-		true,             // Secure (HTTPS only)
-		true,             // HttpOnly (JavaScript cannot access)
-	)
-
-	// ✅ STEP 5: REMOVE REFRESH TOKEN FROM RESPONSE BODY
-	res.RefreshToken = "" // ← Đừng trả về body nữa
 
 	// Set refresh token cookie
-	c.SetCookie("refresh_token", res.RefreshToken, 7*24*3600, "/", "", true, true)
+	c.SetCookie("refresh_token", res.RefreshToken, 30*24*3600, "/", "", true, true)
 	res.RefreshToken = ""
 
 	// Merge cart if user had anonymous session

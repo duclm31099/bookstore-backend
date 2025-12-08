@@ -568,7 +568,7 @@ func (r *postgresRepository) RemoveCartPromo(ctx context.Context, cartID uuid.UU
 		SET 
 			promo_code = NULL,
 			discount = 0,
-			total = NULL,
+			promo_metadata = NULL,
 			updated_at = NOW()
 		WHERE id = $1
 	`

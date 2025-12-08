@@ -330,6 +330,29 @@ func (h *PaymentHandler) VNPayWebhook(c *gin.Context) {
 	})
 }
 
+// VerifyVNPayReturn verifies payment from ReturnURL
+// GET /api/v1/payments/vnpay/verify
+// This is called by frontend after VNPay redirect (alternative to IPN webhook)
+func (h *PaymentHandler) VerifyVNPayReturn(c *gin.Context) {
+	// Parse VNPay return parameters from query string
+	var webhookData model.VNPayWebhookRequest
+
+	if err := c.ShouldBindQuery(&webhookData); err != nil {
+		res.Error(c, http.StatusBadRequest, "INVALID_REQUEST", "Invalid VNPay return parameters")
+		return
+	}
+
+	// Verify and process payment
+	response, err := h.paymentService.VerifyVNPayReturn(c.Request.Context(), webhookData)
+	if err != nil {
+		res.Error(c, http.StatusInternalServerError, "VERIFY_ERROR", err.Error())
+		return
+	}
+
+	// Return verification result
+	res.Success(c, http.StatusOK, response.Message, response)
+}
+
 // MomoWebhook handles Momo IPN callback
 // POST /api/v1/webhooks/momo
 func (h *PaymentHandler) MomoWebhook(c *gin.Context) {

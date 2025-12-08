@@ -317,3 +317,21 @@ type VNPayWebhookRequest struct {
 	VnpSecureHash        string `form:"vnp_SecureHash"`
 	VnpTransactionStatus string `form:"vnp_TransactionStatus"`
 }
+
+// =====================================================
+// VERIFY PAYMENT RESPONSE (for ReturnURL verification)
+// =====================================================
+
+type VerifyPaymentResponse struct {
+	Success          bool            `json:"success"`
+	PaymentID        uuid.UUID       `json:"payment_id"`
+	OrderID          uuid.UUID       `json:"order_id"`
+	Status           string          `json:"status"`
+	Amount           decimal.Decimal `json:"amount"`
+	TransactionNo    string          `json:"transaction_no,omitempty"`
+	BankCode         string          `json:"bank_code,omitempty"`
+	PayDate          string          `json:"pay_date,omitempty"`
+	Message          string          `json:"message"`
+	ResponseCode     string          `json:"response_code"`
+	AlreadyProcessed bool            `json:"already_processed,omitempty"`
+}

@@ -4,6 +4,7 @@ import (
 	model "bookstore-backend/internal/domains/book/model"
 	"bookstore-backend/internal/domains/book/repository"
 	"bookstore-backend/internal/infrastructure/storage"
+	types "bookstore-backend/internal/shared"
 	"bookstore-backend/internal/shared/utils"
 	"bookstore-backend/pkg/cache"
 	"bookstore-backend/pkg/logger"
@@ -224,8 +225,8 @@ func (s *BookService) CreateBook(ctx context.Context, req model.CreateBookReques
 		// 4. Enqueue job xử lý (resize/upload các variant)
 		p := map[string]string{"image_id": imgRec.ID}
 		payload, _ := json.Marshal(p)
-		job := asynq.NewTask("book:process_image", payload)
-		s.asynqClient.Enqueue(job, asynq.Queue("high"), asynq.MaxRetry(2))
+		job := asynq.NewTask(types.TypeProcessBookImage, payload)
+		s.asynqClient.Enqueue(job, asynq.Queue(types.QueueBook), asynq.MaxRetry(2))
 	}
 
 	// 7. Invalidate list cache (xóa cache danh sách sách)

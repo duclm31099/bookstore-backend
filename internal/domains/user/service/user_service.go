@@ -118,7 +118,7 @@ func (s *userService) Register(ctx context.Context, req user.RegisterRequest) (*
 	}
 	b, _ := json.Marshal(payload)
 	task := asynq.NewTask(shared.TypeSendVerificationEmail, b)
-	s.asynqClient.Enqueue(task, asynq.Queue("high"), asynq.Timeout(30*time.Second), asynq.MaxRetry(3))
+	s.asynqClient.Enqueue(task, asynq.Queue(shared.QueueAuth), asynq.Timeout(30*time.Second), asynq.MaxRetry(3))
 
 	// 8. RETURN DTO (không expose sensitive data)
 	dto := newUser.ToDTO()
@@ -146,12 +146,6 @@ func (s *userService) Login(ctx context.Context, req user.LoginRequest) (*user.L
 		ttl, _ := s.cache.TTL(ctx, lockKey)
 		remainingMinutes := int(ttl.Minutes())
 
-		log.Warn().
-			Str("user_id", u.ID.String()).
-			Str("email", req.Email).
-			Int("remaining_minutes", remainingMinutes).
-			Msg("Login attempt on locked account")
-
 		return nil, fmt.Errorf("tài khoản bị khóa tạm thời, vui lòng thử lại sau %d phút", remainingMinutes)
 	}
 
@@ -170,12 +164,6 @@ func (s *userService) Login(ctx context.Context, req user.LoginRequest) (*user.L
 		ipAddress := s.extractIPFromContext(ctx)
 		s.trackFailedLogin(ctx, u.ID.String(), ipAddress)
 
-		log.Warn().
-			Str("user_id", u.ID.String()).
-			Str("email", req.Email).
-			Str("ip_address", ipAddress).
-			Msg("Failed login attempt - wrong password")
-
 		return nil, user.ErrInvalidCredentials
 	}
 
@@ -183,7 +171,6 @@ func (s *userService) Login(ctx context.Context, req user.LoginRequest) (*user.L
 	attemptKey := fmt.Sprintf("failed_login:%s", u.ID)
 	if err := s.cache.Delete(ctx, attemptKey); err != nil {
 		// Log but don't fail the login
-		log.Warn().Err(err).Str("user_id", u.ID.String()).Msg("Failed to clear login attempts")
 	}
 
 	// 5. GENERATE JWT TOKENS
@@ -203,12 +190,7 @@ func (s *userService) Login(ctx context.Context, req user.LoginRequest) (*user.L
 	// }()
 
 	// ✅ 6.1. LOG SUCCESSFUL LOGIN (for security monitoring)
-	ipAddress := s.extractIPFromContext(ctx)
-	log.Info().
-		Str("user_id", u.ID.String()).
-		Str("email", u.Email).
-		Str("ip_address", ipAddress).
-		Msg("Successful login")
+	// ipAddress := s.extractIPFromContext(ctx)
 
 	// 7. RETURN LOGIN RESPONSE
 	dto := u.ToDTO()
@@ -262,7 +244,7 @@ func (s *userService) trackFailedLogin(ctx context.Context, userID, ipAddress st
 	_, err = s.asynqClient.EnqueueContext(
 		ctx,
 		task,
-		asynq.Queue("default"),        // Default priority
+		asynq.Queue(shared.QueueAuth), // Default priority
 		asynq.MaxRetry(1),             // Retry once if failed
 		asynq.Timeout(10*time.Second), // 10s timeout
 		asynq.ProcessIn(time.Second),  // Process immediately
@@ -402,7 +384,7 @@ func (s *userService) ForgotPassword(ctx context.Context, req user.ForgotPasswor
 	}
 	b, _ := json.Marshal(payload)
 	task := asynq.NewTask(shared.TypeSendResetEmail, b)
-	s.asynqClient.Enqueue(task, asynq.Queue("high"), asynq.Timeout(30*time.Second), asynq.MaxRetry(3))
+	s.asynqClient.Enqueue(task, asynq.Queue(shared.QueueAuth), asynq.Timeout(30*time.Second), asynq.MaxRetry(3))
 	log.Printf("🔐 Reset token for %s: %s (expires: %v)", u.Email, resetToken, expiresAt)
 	return nil
 }
@@ -442,7 +424,7 @@ func (s *userService) ResendVerification(ctx context.Context, email string) erro
 	}
 	b, _ := json.Marshal(payload)
 	task := asynq.NewTask(shared.TypeSendVerificationEmail, b)
-	s.asynqClient.Enqueue(task, asynq.Queue("high"), asynq.Timeout(30*time.Second), asynq.MaxRetry(3))
+	s.asynqClient.Enqueue(task, asynq.Queue(shared.QueueAuth), asynq.Timeout(30*time.Second), asynq.MaxRetry(3))
 
 	return nil
 }

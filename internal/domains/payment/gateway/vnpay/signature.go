@@ -76,8 +76,17 @@ func VerifySignature(params map[string]string, secretKey string) bool {
 	// Compare (case-insensitive for safety)
 	return strings.EqualFold(receivedSignature, expectedSignature)
 }
+
+// BuildPaymentURL builds VNPay payment URL with correct signature
+//
+// VNPay Algorithm (matching PHP reference exactly):
+// 1. Sort parameters by key (ascending, case-sensitive)
+// 2. Build hash string: urlencode(key1)=urlencode(value1)&urlencode(key2)=urlencode(value2)
+// 3. HMAC-SHA512(hashString, secretKey)
+// 4. Uppercase hex encode
+// 5. Append to URL
 func BuildPaymentURL(baseURL string, params map[string]string, hashSecret string) string {
-	// Sort keys
+	// Step 1: Sort keys alphabetically
 	keys := make([]string, 0, len(params))
 	for k := range params {
 		if k != "vnp_SecureHash" && k != "vnp_SecureHashType" {
@@ -86,40 +95,58 @@ func BuildPaymentURL(baseURL string, params map[string]string, hashSecret string
 	}
 	sort.Strings(keys)
 
-	// Build raw query
-	var parts []string
+	// Step 2: Build hash data string (URL-encoded like PHP urlencode)
+	// PHP urlencode: spaces -> +, special chars -> %XX
+	var hashParts []string
+	var queryParts []string
+
 	for _, k := range keys {
 		v := params[k]
 		if v != "" {
-			parts = append(parts, fmt.Sprintf("%s=%s", k, v))
+			// URL encode key and value (PHP style: spaces become +)
+			encodedKey := phpURLEncode(k)
+			encodedValue := phpURLEncode(v)
+
+			hashParts = append(hashParts, encodedKey+"="+encodedValue)
+			queryParts = append(queryParts, encodedKey+"="+encodedValue)
 		}
 	}
-	rawQuery := strings.Join(parts, "&")
 
-	// ✅ LOG ĐỂ DEBUG
+	hashData := strings.Join(hashParts, "&")
+	queryString := strings.Join(queryParts, "&")
+
+	// Debug logging
 	log.Println("=== VNPay Hash Debug ===")
-	log.Printf("Params count: %d", len(params))
-	log.Printf("Keys sorted: %v", keys)
-	log.Printf("Raw Query: %s", rawQuery)
-	log.Printf("Secret: %s", hashSecret)
 
-	// Create hash
+	// Step 3: Create HMAC-SHA512 hash
 	h := hmac.New(sha512.New, []byte(hashSecret))
-	h.Write([]byte(rawQuery))
+	h.Write([]byte(hashData))
+
+	// Step 4: Uppercase hex encode
 	secureHash := strings.ToUpper(hex.EncodeToString(h.Sum(nil)))
 
 	log.Printf("Generated Hash: %s", secureHash)
 	log.Println("========================")
 
-	// Build final URL
+	// Step 5: Build final URL
 	if !strings.HasSuffix(baseURL, "/vpcpay.html") {
 		baseURL += "/vpcpay.html"
 	}
 
-	finalURL := fmt.Sprintf("%s?%s&vnp_SecureHash=%s", baseURL, rawQuery, secureHash)
+	finalURL := fmt.Sprintf("%s?%s&vnp_SecureHash=%s", baseURL, queryString, secureHash)
 	log.Printf("Final URL: %s", finalURL)
 
 	return finalURL
+}
+
+// phpURLEncode encodes string like PHP's urlencode()
+// PHP urlencode: spaces become '+', special chars become %XX
+// Go url.QueryEscape: spaces become '%20'
+func phpURLEncode(s string) string {
+	// First use Go's QueryEscape, then replace %20 with +
+	encoded := url.QueryEscape(s)
+	// Replace %20 with + to match PHP's urlencode behavior
+	return strings.ReplaceAll(encoded, "%20", "+")
 }
 
 func createSecureHash(data, secret string) string {

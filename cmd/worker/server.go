@@ -5,6 +5,8 @@ import (
 	"log"
 	"time"
 
+	types "bookstore-backend/internal/shared"
+
 	"github.com/hibiken/asynq"
 )
 
@@ -24,10 +26,11 @@ func setupAsynqServer(cfg *Config, handlers *HandlerRegistry) *asynqServer {
 		asynq.RedisClientOpt{Addr: cfg.RedisAddr},
 		asynq.Config{
 			Queues: map[string]int{
-				"high":         20, // 40% - Orders, payments
-				"default":      8,  // 16% - General tasks
-				"low":          5,  // 10% - Analytics
-				"notification": 17, // 34% - ✅ TĂNG LÊN vì notification quan trọng
+				types.QueuePayment:      10, // Ưu tiên cao nhất
+				types.QueueOrder:        8,
+				types.QueueInventory:    6,
+				types.QueueNotification: 5,
+				types.QueueAnalytics:    1, // Thấp nhất
 			},
 			Concurrency: 30, // ✅ TĂNG LÊN nếu có nhiều CPU cores
 			ErrorHandler: asynq.ErrorHandlerFunc(func(ctx context.Context, task *asynq.Task, err error) {

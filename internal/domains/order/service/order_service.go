@@ -274,7 +274,7 @@ func (s *orderService) CreateOrder(ctx context.Context, userID uuid.UUID, req mo
 		}
 		if b, err := json.Marshal(payload); err == nil {
 			task := asynq.NewTask(shared.TypeInventorySyncBookStock, b)
-			if _, err := s.asynq.Enqueue(task, asynq.Queue("inventory")); err != nil {
+			if _, err := s.asynq.Enqueue(task, asynq.Queue(shared.QueueInventory)); err != nil {
 				logger.Error("Failed to enqueue InventorySyncJob after order", err)
 			}
 		}
@@ -623,7 +623,7 @@ func (s *orderService) CancelOrder(
 		}
 		if b, err := json.Marshal(payload); err == nil {
 			task := asynq.NewTask(shared.TypeInventorySyncBookStock, b)
-			if _, err := s.asynq.Enqueue(task, asynq.Queue("inventory")); err != nil {
+			if _, err := s.asynq.Enqueue(task, asynq.Queue(shared.QueueInventory)); err != nil {
 				logger.Error("Failed to enqueue InventorySyncJob after cancel order", err)
 			}
 		}
@@ -886,7 +886,7 @@ func (s *orderService) createOrderFromItems(
 		}
 		if b, err := json.Marshal(payload); err == nil {
 			task := asynq.NewTask(shared.TypeInventorySyncBookStock, b)
-			if _, err := s.asynq.Enqueue(task, asynq.Queue("inventory")); err != nil {
+			if _, err := s.asynq.Enqueue(task, asynq.Queue(shared.QueueInventory)); err != nil {
 				logger.Error("Failed to enqueue InventorySyncJob after reorder", err)
 			}
 		}
@@ -920,9 +920,9 @@ func (s *orderService) enqueueAutoReleaseReservation(orderID uuid.UUID, orderNum
 	}
 
 	_, err = s.asynq.Enqueue(task,
-		asynq.Queue("high"),             // High priority
-		asynq.MaxRetry(3),               // Critical task
-		asynq.ProcessIn(15*time.Minute), // Execute after 15 minutes
+		asynq.Queue(shared.QueueInventory), // High priority
+		asynq.MaxRetry(3),                  // Critical task
+		asynq.ProcessIn(15*time.Minute),    // Execute after 15 minutes
 	)
 
 	if err != nil {
@@ -1399,7 +1399,7 @@ func (s *orderService) CancelOrderBySystem(
 		}
 		b, _ := json.Marshal(payload)
 		task := asynq.NewTask(shared.TypeInventorySyncBookStock, b)
-		if _, err := s.asynq.Enqueue(task, asynq.Queue("inventory")); err != nil {
+		if _, err := s.asynq.Enqueue(task, asynq.Queue(shared.QueueInventory)); err != nil {
 			logger.Error("Failed to enqueue InventorySyncJob after cancel order", err)
 		}
 	}

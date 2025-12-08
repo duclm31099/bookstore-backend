@@ -48,6 +48,5 @@ func NewFCMPushService(serverKey string) *FCMPushService {
 
 func (s *FCMPushService) SendPush(ctx context.Context, deviceToken, title, body string, data map[string]interface{}) (messageID string, err error) {
 	// TODO: Implement FCM API call
-	log.Warn().Msg("FCM Push not implemented yet, using mock")
 	return NewMockPushService().SendPush(ctx, deviceToken, title, body, data)
 }

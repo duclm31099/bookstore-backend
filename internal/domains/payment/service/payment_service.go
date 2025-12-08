@@ -542,6 +542,109 @@ func (s *paymentService) handleFailedPayment(
 }
 
 // =====================================================
+// VERIFY VNPAY RETURN URL (Alternative to IPN)
+// =====================================================
+
+// VerifyVNPayReturn verifies payment from ReturnURL callback
+// This is called by frontend after VNPay redirects back
+// When vnp_IpnUrl causes errors, this is the fallback mechanism
+func (s *paymentService) VerifyVNPayReturn(
+	ctx context.Context,
+	webhookData model.VNPayWebhookRequest,
+) (*model.VerifyPaymentResponse, error) {
+	// Step 1: Verify signature
+	isValid := s.vnpayGateway.VerifySignature(webhookData)
+	if !isValid {
+		return &model.VerifyPaymentResponse{
+			Success:      false,
+			Message:      "Chữ ký không hợp lệ",
+			ResponseCode: "97",
+		}, nil
+	}
+
+	// Step 2: Get payment transaction by vnp_TxnRef (payment_transaction.id)
+	paymentID, err := uuid.Parse(webhookData.VnpTxnRef)
+	if err != nil {
+		return &model.VerifyPaymentResponse{
+			Success:      false,
+			Message:      "Mã giao dịch không hợp lệ",
+			ResponseCode: "99",
+		}, nil
+	}
+
+	payment, err := s.paymentRepo.GetByID(ctx, paymentID)
+	if err != nil {
+		return &model.VerifyPaymentResponse{
+			Success:      false,
+			Message:      "Không tìm thấy giao dịch",
+			ResponseCode: "99",
+		}, nil
+	}
+
+	// Step 3: Check if already processed (idempotency)
+	if payment.Status == model.PaymentStatusSuccess {
+		return &model.VerifyPaymentResponse{
+			Success:          true,
+			PaymentID:        payment.ID,
+			OrderID:          payment.OrderID,
+			Status:           payment.Status,
+			Amount:           payment.Amount,
+			TransactionNo:    webhookData.VnpTransactionNo,
+			BankCode:         webhookData.VnpBankCode,
+			PayDate:          webhookData.VnpPayDate,
+			Message:          "Giao dịch đã được xử lý trước đó",
+			ResponseCode:     webhookData.VnpResponseCode,
+			AlreadyProcessed: true,
+		}, nil
+	}
+
+	// Step 4: Process based on response code
+	if webhookData.VnpResponseCode == "00" {
+		// Payment success - update database
+		err = s.handleSuccessfulPayment(ctx, payment, webhookData)
+		if err != nil {
+			return &model.VerifyPaymentResponse{
+				Success:      false,
+				PaymentID:    payment.ID,
+				OrderID:      payment.OrderID,
+				Message:      "Lỗi cập nhật trạng thái thanh toán",
+				ResponseCode: "99",
+			}, nil
+		}
+
+		return &model.VerifyPaymentResponse{
+			Success:       true,
+			PaymentID:     payment.ID,
+			OrderID:       payment.OrderID,
+			Status:        model.PaymentStatusSuccess,
+			Amount:        payment.Amount,
+			TransactionNo: webhookData.VnpTransactionNo,
+			BankCode:      webhookData.VnpBankCode,
+			PayDate:       webhookData.VnpPayDate,
+			Message:       "Thanh toán thành công",
+			ResponseCode:  webhookData.VnpResponseCode,
+		}, nil
+	}
+
+	// Payment failed
+	err = s.handleFailedPayment(ctx, payment, webhookData)
+	if err != nil {
+		logger.Error("Failed to handle failed payment", err)
+	}
+
+	_, errorMessage := model.MapVNPayErrorCode(webhookData.VnpResponseCode)
+	return &model.VerifyPaymentResponse{
+		Success:      false,
+		PaymentID:    payment.ID,
+		OrderID:      payment.OrderID,
+		Status:       model.PaymentStatusFailed,
+		Amount:       payment.Amount,
+		Message:      errorMessage,
+		ResponseCode: webhookData.VnpResponseCode,
+	}, nil
+}
+
+// =====================================================
 // PROCESS MOMO WEBHOOK
 // =====================================================
 

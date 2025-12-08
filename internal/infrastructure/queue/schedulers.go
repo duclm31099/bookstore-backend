@@ -71,7 +71,7 @@ func (s *Scheduler) registerCleanupExpiredTokensJob() error {
 	_, err = s.scheduler.Register(
 		"0 2 * * *", // Daily at 2 AM
 		task,
-		asynq.Queue("low"),
+		asynq.Queue(shared.QueueUser),
 		asynq.MaxRetry(1),
 		asynq.Timeout(5*time.Minute),
 	)
@@ -104,9 +104,9 @@ func (s *Scheduler) registerRemoveExpiredPromotionsJob() error {
 	_, err = s.scheduler.Register(
 		"0 */3 * * *", // Every 3 hours at minute 0 (00:00, 03:00, 06:00, etc.)
 		task,
-		asynq.Queue("default"),        // Default queue (medium priority)
-		asynq.MaxRetry(2),             // Retry twice if fails
-		asynq.Timeout(10*time.Minute), // 10 min timeout (handles large datasets)
+		asynq.Queue(shared.QueuePromotion), // Default queue (medium priority)
+		asynq.MaxRetry(2),                  // Retry twice if fails
+		asynq.Timeout(10*time.Minute),      // 10 min timeout (handles large datasets)
 	)
 
 	if err != nil {
@@ -139,7 +139,7 @@ func (s *Scheduler) registerSendPendingNotificationsJob() error {
 	_, err = s.scheduler.Register(
 		"0 7 * * *", // Daily at 7 AM
 		task,
-		asynq.Queue("notification"),
+		asynq.Queue(shared.QueueNotification),
 		asynq.MaxRetry(3),
 		asynq.Timeout(2*time.Minute),
 	)
@@ -174,7 +174,7 @@ func (s *Scheduler) registerCleanupOldNotificationsJob() error {
 	_, err = s.scheduler.Register(
 		"0 3 * * *", // Daily at 3 AM (staggered from other cleanup jobs)
 		task,
-		asynq.Queue("low"), // Low priority, background cleanup
+		asynq.Queue(shared.QueueNotification), // Low priority, background cleanup
 		asynq.MaxRetry(2),
 		asynq.Timeout(10*time.Minute),
 	)
@@ -208,7 +208,7 @@ func (s *Scheduler) registerRetryFailedDeliveriesJob() error {
 	_, err = s.scheduler.Register(
 		"*/360 * * * *", // Every 6 hour
 		task,
-		asynq.Queue("notification"),
+		asynq.Queue(shared.QueueNotification),
 		asynq.MaxRetry(3),
 		asynq.Timeout(5*time.Minute),
 	)

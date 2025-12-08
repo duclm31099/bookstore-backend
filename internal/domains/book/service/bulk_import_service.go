@@ -1029,7 +1029,7 @@ func (s *bulkImportService) processBookImages(
 		payloadBytes, _ := json.Marshal(payload)
 		task := asynq.NewTask(shared.TypeProcessBookImage, payloadBytes)
 
-		_, err = s.asynqClient.Enqueue(task, asynq.Queue("default"), asynq.MaxRetry(2))
+		_, err = s.asynqClient.Enqueue(task, asynq.Queue(shared.QueueBook), asynq.MaxRetry(2))
 		if err != nil {
 			logger.Error("Failed to enqueue image processing job", err)
 		}

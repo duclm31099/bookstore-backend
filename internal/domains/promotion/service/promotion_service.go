@@ -14,7 +14,6 @@ import (
 	cartService "bookstore-backend/internal/domains/cart/service"
 	"bookstore-backend/internal/domains/promotion/model"
 	"bookstore-backend/internal/domains/promotion/repository"
-	"bookstore-backend/pkg/logger"
 )
 
 // PromotionService xử lý business logic cho promotion
@@ -402,9 +401,7 @@ func (s *promotionService) ValidatePromotion(ctx context.Context, req *model.Val
 
 	// Step 1: Find active promotion
 	promo, err := s.repo.FindByCodeActive(ctx, req.Code)
-	logger.Info("find promo by code", map[string]interface{}{
-		"promo": promo,
-	})
+
 	if err != nil {
 		return nil, err
 	}
@@ -450,7 +447,7 @@ func (s *promotionService) ValidatePromotion(ctx context.Context, req *model.Val
 	var userUsageCount int
 	var userRemainingUses int
 
-	if req.UserID != nil && *req.UserID != uuid.Nil {
+	if *req.UserID != uuid.Nil {
 		userUsageCount, err = s.repo.GetUserUsageCount(ctx, promo.ID, *req.UserID)
 		if err != nil {
 			return nil, fmt.Errorf("get user usage count: %w", err)
@@ -471,9 +468,9 @@ func (s *promotionService) ValidatePromotion(ctx context.Context, req *model.Val
 		userRemainingUses = promo.MaxUsesPerUser - userUsageCount
 	} else {
 		// Guest user
+
 		userRemainingUses = promo.MaxUsesPerUser
 	}
-
 	// Step 5: Check minimum order amount
 	if req.Subtotal.LessThan(promo.MinOrderAmount) {
 		return nil, &model.AppError{
@@ -506,10 +503,9 @@ func (s *promotionService) ValidatePromotion(ctx context.Context, req *model.Val
 	// 		}
 	// 	}
 	// }
-
 	// Step 7: Check category applicability
 	// Logic: Nếu applicable_category_ids không rỗng, ít nhất 1 item phải match
-	if len(promo.ApplicableCategoryIDs) > 0 {
+	if promo.ApplicableCategoryIDs != nil && len(promo.ApplicableCategoryIDs) > 0 {
 		hasApplicable := false
 
 		for _, item := range req.CartItems {
@@ -564,18 +560,6 @@ func (s *promotionService) ListActivePromotions(ctx context.Context, categoryID 
 	return s.repo.ListActive(ctx, categoryID, page, limit)
 }
 
-// GetAvailablePromotionsForCart lấy danh sách promotions có thể áp dụng cho cart
-//
-// Business Logic Flow:
-// 1. Get cart info by cartID and verify ownership
-// 2. Get all active promotions
-// 3. Filter promotions based on:
-//   - is_active = true
-//   - Valid time window (starts_at <= now <= expires_at)
-//   - min_order_amount <= cart.subtotal
-//   - Usage limit not reached
-//
-// 4. Convert to AvailablePromotionResponse and return
 func (s *promotionService) GetAvailablePromotionsForCart(
 	ctx context.Context,
 	cartID uuid.UUID,
@@ -598,47 +582,45 @@ func (s *promotionService) GetAvailablePromotionsForCart(
 		return nil, fmt.Errorf("list active promotions: %w", err)
 	}
 
+	var cartItems []model.CartItem
+	if len(cartInfo.Items) > 0 {
+		cartItems = make([]model.CartItem, len(cartInfo.Items))
+		for i, item := range cartInfo.Items {
+			cartItems[i] = model.CartItem{
+				Quantity:   item.Quantity,
+				BookID:     item.BookID,
+				Price:      item.Price,
+				CategoryID: *item.CategoryID,
+			}
+		}
+	}
+
 	// Step 3: Filter promotions
 	var availablePromotions []*model.AvailablePromotionResponse
-	now := time.Now()
 
 	for _, promo := range allPromotions {
 		// Check is_active
-		if !promo.IsActive {
-			continue
-		}
-
-		// Check valid time window
-		if !promo.IsValidTimeWindow() {
-			continue
-		}
-
-		// Check if not expired or not started
-		if now.Before(promo.StartsAt) || now.After(promo.ExpiresAt) {
-			continue
-		}
-
-		// Check usage limit not reached
-		if promo.IsUsageLimitReached() {
-			continue
-		}
-
-		// Check minimum order amount
-		if cartInfo.Subtotal.LessThan(promo.MinOrderAmount) {
-			continue
-		}
-
-		// Promotion is available, add to result
-		availablePromotions = append(availablePromotions, &model.AvailablePromotionResponse{
-			Code:              promo.Code,
-			Name:              promo.Name,
-			Description:       promo.Description,
-			DiscountType:      string(promo.DiscountType),
-			DiscountValue:     promo.DiscountValue,
-			MaxDiscountAmount: promo.MaxDiscountAmount,
-			MinOrderAmount:    promo.MinOrderAmount,
-			ExpiresAt:         promo.ExpiresAt,
+		result, err := s.ValidatePromotion(ctx, &model.ValidatePromotionRequest{
+			Code:      promo.Code,
+			CartItems: cartItems,
+			Subtotal:  cartInfo.Subtotal,
+			UserID:    &userID,
 		})
+		if err != nil {
+			continue
+		}
+		if result.IsValid {
+			availablePromotions = append(availablePromotions, &model.AvailablePromotionResponse{
+				Code:              promo.Code,
+				Name:              promo.Name,
+				Description:       promo.Description,
+				DiscountType:      string(promo.DiscountType),
+				DiscountValue:     promo.DiscountValue,
+				MaxDiscountAmount: promo.MaxDiscountAmount,
+				MinOrderAmount:    promo.MinOrderAmount,
+				ExpiresAt:         promo.ExpiresAt,
+			})
+		}
 	}
 
 	return availablePromotions, nil

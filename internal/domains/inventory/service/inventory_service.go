@@ -200,7 +200,7 @@ func (s *InventoryService) UpdateInventory(ctx context.Context, warehouseID, boo
 		// Không cần fail request vì stock đã được cập nhật
 	} else {
 		task := asynq.NewTask(shared.TypeInventorySyncBookStock, b)
-		if _, err := s.asynq.Enqueue(task, asynq.Queue("inventory")); err != nil {
+		if _, err := s.asynq.Enqueue(task, asynq.Queue(shared.QueueInventory)); err != nil {
 			logger.Error("InventoryService.UpdateStock: failed to enqueue InventorySyncJob", err)
 			// Không cần fail request, log alert là đủ
 		}
@@ -293,7 +293,7 @@ func (s *InventoryService) ReserveStock(ctx context.Context, req model.ReserveSt
 	b, err := json.Marshal(payload)
 	if err == nil {
 		task := asynq.NewTask(shared.TypeInventorySyncBookStock, b)
-		s.asynq.Enqueue(task, asynq.Queue("inventory"))
+		s.asynq.Enqueue(task, asynq.Queue(shared.QueueInventory))
 	}
 
 	expiresAt := time.Now().Add(ReservationTimeoutMinutes * time.Minute)
@@ -322,7 +322,7 @@ func (s *InventoryService) ReleaseStock(ctx context.Context, req model.ReleaseSt
 	b, err := json.Marshal(payload)
 	if err == nil {
 		task := asynq.NewTask(shared.TypeInventorySyncBookStock, b)
-		s.asynq.Enqueue(task, asynq.Queue("inventory"))
+		s.asynq.Enqueue(task, asynq.Queue(shared.QueueInventory))
 	}
 	return &model.ReleaseStockResponse{
 		Success:           true,
