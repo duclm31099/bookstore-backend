@@ -141,63 +141,63 @@ func (s *paymentService) CreatePayment(
 		ExpiresAt:            time.Now().Add(time.Duration(model.PaymentTimeoutMinutes) * time.Minute),
 	}
 
-	// switch req.Gateway {
-	// case model.GatewayVNPay:
+	// Generate payment URL based on gateway
+	var paymentURL string
 
-	// case model.GatewayMomo:
-	// 	// Generate Momo payment URL
-	// 	paymentURL, err := s.momoGateway.CreatePaymentURL(ctx, gateway.MomoPaymentRequest{
-	// 		OrderID:   paymentID.String(),
-	// 		Amount:    order.Total,
-	// 		OrderInfo: fmt.Sprintf("Payment for order %s", order.OrderNumber),
-	// 	})
+	switch req.Gateway {
+	case model.GatewayVNPay:
+		// VNPay payment
+		if s.vnpayGateway == nil {
+			return nil, fmt.Errorf("VNPay gateway not configured")
+		}
+		paymentURL, err = s.vnpayGateway.CreatePaymentURL(ctx, gateway.VNPayPaymentRequest{
+			TransactionRef: paymentID.String(),
+			Amount:         order.Total,
+			OrderInfo:      strings.ReplaceAll(order.OrderNumber, "-", ""),
+			ReturnURL:      s.vnpayGateway.GetReturnURL(),
+		})
+		if err != nil {
+			s.paymentRepo.MarkAsFailed(ctx, paymentID, model.ErrCodeGatewayUnavailable, err.Error())
+			return nil, fmt.Errorf("failed to generate VNPay URL: %w", err)
+		}
 
-	// 	if err != nil {
-	// 		s.paymentRepo.MarkAsFailed(ctx, paymentID, model.ErrCodeGatewayUnavailable, err.Error())
-	// 		return nil, fmt.Errorf("failed to generate Momo URL: %w", err)
-	// 	}
+	case model.GatewayMomo:
+		// Momo payment
+		if s.momoGateway == nil {
+			return nil, fmt.Errorf("Momo gateway not configured. Please set MOMO_PARTNER_CODE, MOMO_ACCESS_KEY, MOMO_SECRET_KEY in environment variables")
+		}
+		paymentURL, err = s.momoGateway.CreatePaymentURL(ctx, gateway.MomoPaymentRequest{
+			OrderID:   paymentID.String(),
+			Amount:    order.Total,
+			OrderInfo: fmt.Sprintf("Thanh toan don hang %s", order.OrderNumber),
+		})
+		if err != nil {
+			s.paymentRepo.MarkAsFailed(ctx, paymentID, model.ErrCodeGatewayUnavailable, err.Error())
+			return nil, fmt.Errorf("failed to generate Momo URL: %w", err)
+		}
 
-	// 	// Update payment to processing
-	// 	s.paymentRepo.UpdateStatus(ctx, paymentID, model.PaymentStatusProcessing)
-
-	// 	response.PaymentURL = &paymentURL
-
-	// case model.GatewayCOD:
-	// 	// COD: No payment URL needed, just confirmation
-	// 	message := "COD order confirmed. Pay on delivery."
-	// 	response.Message = &message
-	// 	// COD payment stays in 'pending' until delivery
+	case model.GatewayCOD:
+		// COD: No payment URL needed, just confirmation
+		message := "Đơn hàng COD đã được xác nhận. Thanh toán khi nhận hàng."
+		response.Message = &message
+		// COD payment stays in 'pending' until delivery
+		return response, nil
 
 	// case model.GatewayBankTransfer:
-	// 	// Bank Transfer: Generate QR code or bank details
-	// 	// TODO: Implement bank transfer logic
-	// 	bankAccount := "1234567890 - VietcomBank"
+	// 	// Bank Transfer: Generate bank details
+	// 	bankAccount := "1234567890 - VietcomBank - BOOKSTORE JSC"
 	// 	response.BankAccount = &bankAccount
+	// 	return response, nil
 
-	// default:
-	// 	return nil, model.NewInvalidGatewayError(req.Gateway)
-	// }
-	// Generate VNPay payment URL
-	paymentURL, err := s.vnpayGateway.CreatePaymentURL(ctx, gateway.VNPayPaymentRequest{
-		TransactionRef: paymentID.String(),
-		Amount:         order.Total,
-		OrderInfo:      strings.ReplaceAll(order.OrderNumber, "-", ""),
-		ReturnURL:      s.vnpayGateway.GetReturnURL(),
-	})
-
-	if err != nil {
-		// Mark payment as failed
-		s.paymentRepo.MarkAsFailed(ctx, paymentID, model.ErrCodeGatewayUnavailable, err.Error())
-		return nil, fmt.Errorf("failed to generate VNPay URL: %w", err)
+	default:
+		return nil, model.NewInvalidGatewayError(req.Gateway)
 	}
 
 	// Update payment to processing
-	// This is critical - if this fails, we must rollback to prevent orphaned payments
 	if err := s.paymentRepo.UpdateStatus(ctx, paymentID, model.PaymentStatusProcessing); err != nil {
 		logger.Error("Failed to update payment status to processing", err)
 
-		// ✅ ROLLBACK: Mark payment as failed to prevent limbo state
-		// This ensures the payment record reflects the actual state
+		// ROLLBACK: Mark payment as failed to prevent limbo state
 		rollbackErr := s.paymentRepo.MarkAsFailed(
 			ctx,
 			paymentID,
@@ -206,13 +206,11 @@ func (s *paymentService) CreatePayment(
 		)
 		if rollbackErr != nil {
 			logger.Error("Failed to rollback payment after status update error", rollbackErr)
-			// Log both errors for debugging
 		}
 
-		// Return error to client - do NOT provide payment URL
-		// User can retry the payment (new record will be created)
 		return nil, fmt.Errorf("failed to prepare payment transaction: %w", err)
 	}
+
 	response = &model.CreatePaymentResponse{
 		PaymentTransactionID: paymentID,
 		Gateway:              req.Gateway,
@@ -654,14 +652,209 @@ func (s *paymentService) ProcessMomoWebhook(
 	ctx context.Context,
 	webhookData model.MomoWebhookRequest,
 ) error {
-	// Similar implementation to VNPay
-	// TODO: Implement Momo webhook processing
-	// Key differences:
-	// - Signature algorithm: HMAC-SHA256 (not SHA512)
-	// - Response codes: 0=success, others=fail
-	// - Data structure different from VNPay
+	// Step 1: Verify signature
+	if s.momoGateway == nil {
+		return fmt.Errorf("Momo gateway not configured")
+	}
 
-	return fmt.Errorf("Momo webhook not implemented yet")
+	isValid := s.momoGateway.VerifySignature(webhookData)
+	if !isValid {
+		return fmt.Errorf("invalid Momo signature")
+	}
+
+	// Step 2: Get payment transaction by OrderID (payment_transaction.id)
+	paymentID, err := uuid.Parse(webhookData.OrderID)
+	if err != nil {
+		return fmt.Errorf("invalid order ID format: %w", err)
+	}
+
+	payment, err := s.paymentRepo.GetByID(ctx, paymentID)
+	if err != nil {
+		return fmt.Errorf("payment not found: %w", err)
+	}
+
+	// Step 3: Idempotency check - skip if already processed
+	if payment.Status == model.PaymentStatusSuccess || payment.Status == model.PaymentStatusFailed {
+		return nil // Already processed
+	}
+
+	// Step 4: Process based on result code
+	if webhookData.ResultCode == 0 {
+		// Payment success
+		return s.handleMomoSuccessfulPayment(ctx, payment, webhookData)
+	}
+
+	// Payment failed
+	return s.handleMomoFailedPayment(ctx, payment, webhookData)
+}
+
+// handleMomoSuccessfulPayment handles successful Momo payment
+func (s *paymentService) handleMomoSuccessfulPayment(
+	ctx context.Context,
+	payment *model.PaymentTransaction,
+	webhookData model.MomoWebhookRequest,
+) error {
+	tx, err := s.txManager.BeginTx(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer s.txManager.RollbackTx(ctx, tx)
+
+	paymentDetails := map[string]interface{}{
+		"trans_id":   webhookData.TransID,
+		"pay_type":   webhookData.PayType,
+		"order_type": webhookData.OrderType,
+	}
+
+	gatewayResponse := map[string]interface{}{
+		"partnerCode":  webhookData.PartnerCode,
+		"requestId":    webhookData.RequestID,
+		"amount":       webhookData.Amount,
+		"orderInfo":    webhookData.OrderInfo,
+		"transId":      webhookData.TransID,
+		"resultCode":   webhookData.ResultCode,
+		"message":      webhookData.Message,
+		"responseTime": webhookData.ResponseTime,
+	}
+
+	err = s.paymentRepo.MarkAsSuccess(
+		ctx,
+		payment.ID,
+		webhookData.TransID,
+		gatewayResponse,
+		paymentDetails,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to mark payment as success: %w", err)
+	}
+
+	if err := s.txManager.CommitTx(ctx, tx); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
+}
+
+// handleMomoFailedPayment handles failed Momo payment
+func (s *paymentService) handleMomoFailedPayment(
+	ctx context.Context,
+	payment *model.PaymentTransaction,
+	webhookData model.MomoWebhookRequest,
+) error {
+	internalCode, errorMessage := model.MapMomoErrorCode(webhookData.ResultCode)
+
+	err := s.paymentRepo.MarkAsFailed(ctx, payment.ID, internalCode, errorMessage)
+	if err != nil {
+		return fmt.Errorf("failed to mark payment as failed: %w", err)
+	}
+
+	return nil
+}
+
+// =====================================================
+// VERIFY MOMO RETURN URL (Alternative to IPN)
+// =====================================================
+
+// VerifyMomoReturn verifies payment from Momo ReturnURL callback
+// This is called by frontend after Momo redirects back
+func (s *paymentService) VerifyMomoReturn(
+	ctx context.Context,
+	webhookData model.MomoWebhookRequest,
+) (*model.VerifyPaymentResponse, error) {
+	// Step 1: Verify signature
+	if s.momoGateway == nil {
+		return &model.VerifyPaymentResponse{
+			Success:      false,
+			Message:      "Momo gateway chưa được cấu hình",
+			ResponseCode: "99",
+		}, nil
+	}
+
+	isValid := s.momoGateway.VerifySignature(webhookData)
+	if !isValid {
+		return &model.VerifyPaymentResponse{
+			Success:      false,
+			Message:      "Chữ ký không hợp lệ",
+			ResponseCode: "97",
+		}, nil
+	}
+
+	// Step 2: Get payment transaction by OrderID (payment_transaction.id)
+	paymentID, err := uuid.Parse(webhookData.OrderID)
+	if err != nil {
+		return &model.VerifyPaymentResponse{
+			Success:      false,
+			Message:      "Mã giao dịch không hợp lệ",
+			ResponseCode: "99",
+		}, nil
+	}
+
+	payment, err := s.paymentRepo.GetByID(ctx, paymentID)
+	if err != nil {
+		return &model.VerifyPaymentResponse{
+			Success:      false,
+			Message:      "Không tìm thấy giao dịch",
+			ResponseCode: "99",
+		}, nil
+	}
+
+	// Step 3: Check if already processed (idempotency)
+	if payment.Status == model.PaymentStatusSuccess {
+		return &model.VerifyPaymentResponse{
+			Success:          true,
+			PaymentID:        payment.ID,
+			OrderID:          payment.OrderID,
+			Status:           payment.Status,
+			Amount:           payment.Amount,
+			TransactionNo:    webhookData.TransID,
+			Message:          "Giao dịch đã được xử lý trước đó",
+			ResponseCode:     fmt.Sprintf("%d", webhookData.ResultCode),
+			AlreadyProcessed: true,
+		}, nil
+	}
+
+	// Step 4: Process based on result code
+	if webhookData.ResultCode == 0 {
+		// Payment success - update database
+		err = s.handleMomoSuccessfulPayment(ctx, payment, webhookData)
+		if err != nil {
+			return &model.VerifyPaymentResponse{
+				Success:      false,
+				PaymentID:    payment.ID,
+				OrderID:      payment.OrderID,
+				Message:      "Lỗi cập nhật trạng thái thanh toán",
+				ResponseCode: "99",
+			}, nil
+		}
+
+		return &model.VerifyPaymentResponse{
+			Success:       true,
+			PaymentID:     payment.ID,
+			OrderID:       payment.OrderID,
+			Status:        model.PaymentStatusSuccess,
+			Amount:        payment.Amount,
+			TransactionNo: webhookData.TransID,
+			Message:       "Thanh toán thành công",
+			ResponseCode:  "0",
+		}, nil
+	}
+
+	// Payment failed
+	err = s.handleMomoFailedPayment(ctx, payment, webhookData)
+	if err != nil {
+		logger.Error("Failed to handle failed Momo payment", err)
+	}
+
+	_, errorMessage := model.MapMomoErrorCode(webhookData.ResultCode)
+	return &model.VerifyPaymentResponse{
+		Success:      false,
+		PaymentID:    payment.ID,
+		OrderID:      payment.OrderID,
+		Status:       model.PaymentStatusFailed,
+		Amount:       payment.Amount,
+		Message:      errorMessage,
+		ResponseCode: fmt.Sprintf("%d", webhookData.ResultCode),
+	}, nil
 }
 
 // =====================================================

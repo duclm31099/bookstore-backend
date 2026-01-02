@@ -338,6 +338,10 @@ func setupPaymentRoutes(v1 *gin.RouterGroup, c *container.Container) {
 	// This is called by frontend after VNPay redirect
 	payments.GET("/vnpay/verify", c.PaymentHandler.VerifyVNPayReturn)
 
+	// Public route for Momo return verification (no auth required)
+	// This is called by frontend after Momo redirect
+	// payments.GET("/momo/verify", c.PaymentHandler.VerifyMomoReturn)
+
 	// Authenticated routes
 	payments.Use(middleware.AuthMiddleware(c.Config.JWT.Secret))
 	{

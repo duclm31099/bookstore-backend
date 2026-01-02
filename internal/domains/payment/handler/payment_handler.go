@@ -385,6 +385,30 @@ func (h *PaymentHandler) MomoWebhook(c *gin.Context) {
 		"message":    "Success",
 	})
 }
+
+// VerifyMomoReturn verifies payment from Momo ReturnURL
+// GET /api/v1/payments/momo/verify
+// This is called by frontend after Momo redirect (alternative to IPN webhook)
+func (h *PaymentHandler) VerifyMomoReturn(c *gin.Context) {
+	// Parse Momo return parameters from query string
+	var webhookData model.MomoWebhookRequest
+
+	if err := c.ShouldBindQuery(&webhookData); err != nil {
+		res.Error(c, http.StatusBadRequest, "INVALID_REQUEST", "Invalid Momo return parameters")
+		return
+	}
+
+	// Verify and process payment
+	response, err := h.paymentService.VerifyMomoReturn(c.Request.Context(), webhookData)
+	if err != nil {
+		res.Error(c, http.StatusInternalServerError, "VERIFY_ERROR", err.Error())
+		return
+	}
+
+	// Return verification result
+	res.Success(c, http.StatusOK, response.Message, response)
+}
+
 func (h *PaymentHandler) AdminListPayments(c *gin.Context) {
 	// Step 1: Verify admin access (done by middleware)
 

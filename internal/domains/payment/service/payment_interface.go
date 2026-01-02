@@ -40,6 +40,9 @@ type PaymentService interface {
 	// ProcessMomoWebhook processes Momo IPN callback
 	ProcessMomoWebhook(ctx context.Context, webhookData model.MomoWebhookRequest) error
 
+	// VerifyMomoReturn verifies payment from Momo ReturnURL (called by frontend)
+	VerifyMomoReturn(ctx context.Context, webhookData model.MomoWebhookRequest) (*model.VerifyPaymentResponse, error)
+
 	// ============================================
 	// ADMIN ENDPOINTS
 	// ============================================

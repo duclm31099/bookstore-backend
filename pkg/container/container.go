@@ -71,6 +71,7 @@ import (
 	warehouseService "bookstore-backend/internal/domains/warehouse/service"
 
 	"bookstore-backend/internal/domains/payment/gateway"
+	"bookstore-backend/internal/domains/payment/gateway/momo"
 	"bookstore-backend/internal/domains/payment/gateway/vnpay"
 
 	"github.com/hibiken/asynq"
@@ -314,8 +315,29 @@ func (c *Container) initGateways() error {
 	logger.Info("Init gateway:", map[string]interface{}{
 		"vnpCfg": vnpCfg,
 	})
-	// TODO: Momo Gateway (phase 2)
-	// c.MomoGateway = momo.NewClient(momoConfig)
+
+	// Momo Gateway
+	if c.Config.Momo.PartnerCode != "" {
+		momoCfg := momo.NewConfig(
+			c.Config.Momo.PartnerCode,
+			c.Config.Momo.AccessKey,
+			c.Config.Momo.SecretKey,
+			c.Config.Momo.APIURL,
+			c.Config.Momo.ReturnURL,
+			c.Config.Momo.IPNURL,
+		)
+		logger.Info("Init gateway:", map[string]interface{}{
+			"momoCfg": momoCfg,
+		})
+		momoClient, err := momo.NewClient(momoCfg)
+		if err != nil {
+			return fmt.Errorf("failed to init Momo client: %w", err)
+		}
+		c.MomoGateway = momoClient
+		log.Println("✅ Momo Gateway initialized")
+	} else {
+		log.Println("⚠️  Momo Gateway not configured (MOMO_PARTNER_CODE not set)")
+	}
 
 	return nil
 }

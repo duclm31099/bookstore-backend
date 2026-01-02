@@ -47,7 +47,7 @@ func (c *Client) CreatePaymentURL(
 	amount := req.Amount.StringFixed(0) // Momo uses integer amount
 	orderInfo := req.OrderInfo
 	requestType := "captureWallet"
-	extraData := ""
+	extraData := "" // Base64 encoded JSON or empty string
 
 	// Step 2: Build signature
 	rawSignature := BuildPaymentSignatureString(
@@ -87,7 +87,12 @@ func (c *Client) CreatePaymentURL(
 		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.config.GetPaymentURL(), bytes.NewReader(bodyJSON))
+	httpReq, err := http.NewRequestWithContext(
+		ctx,
+		"POST",
+		c.config.GetPaymentURL(),
+		bytes.NewReader(bodyJSON),
+	)
 	if err != nil {
 		return "", fmt.Errorf("failed to create HTTP request: %w", err)
 	}
@@ -112,15 +117,19 @@ func (c *Client) CreatePaymentURL(
 	}
 
 	// Step 6: Check result code
-	resultCode, _ := respData["resultCode"].(float64)
+	resultCode, ok := respData["resultCode"].(float64)
+	if !ok {
+		return "", fmt.Errorf("invalid response format: resultCode missing or invalid type")
+	}
+
 	if int(resultCode) != ResultCodeSuccess {
 		message, _ := respData["message"].(string)
-		return "", fmt.Errorf("Momo API error: %s", message)
+		return "", fmt.Errorf("MoMo API error [%d]: %s", int(resultCode), message)
 	}
 
 	// Step 7: Extract payment URL
 	payURL, ok := respData["payUrl"].(string)
-	if !ok {
+	if !ok || payURL == "" {
 		return "", fmt.Errorf("payUrl not found in response")
 	}
 
