@@ -26,6 +26,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
+	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 )
 
@@ -167,7 +168,7 @@ func (s *orderService) CreateOrder(ctx context.Context, userID uuid.UUID, req mo
 	selectedWarehouseID := selectedWH.ID
 
 	// ==================== STEP 8: TRANSACTION BẮT ĐẦU ====================
-	tx, err := s.orderRepo.BeginTx(ctx)
+	tx, err := s.orderRepo.BeginTxWithIsolation(ctx, pgx.RepeatableRead)
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
@@ -300,7 +301,7 @@ func (s *orderService) CreateOrder(ctx context.Context, userID uuid.UUID, req mo
 func (s *orderService) selectSingleWarehouseForOrder(
 	ctx context.Context,
 	address *addressModel.Address,
-	bookItems []bookItemData,
+	bookItems []model.CheckoutItem,
 ) (*whModel.WarehouseWithInventory, error) {
 	// Safety check
 	if len(bookItems) == 0 {
@@ -549,7 +550,7 @@ func (s *orderService) CancelOrder(
 	}
 
 	// 4. Begin transaction
-	tx, err := s.orderRepo.BeginTx(ctx)
+	tx, err := s.orderRepo.BeginTxWithIsolation(ctx, pgx.RepeatableRead)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
@@ -661,7 +662,7 @@ func (s *orderService) UpdateOrderStatus(
 	}
 
 	// 4. Begin transaction
-	tx, err := s.orderRepo.BeginTx(ctx)
+	tx, err := s.orderRepo.BeginTxWithIsolation(ctx, pgx.RepeatableRead)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
@@ -1059,7 +1060,7 @@ func (s *orderService) GetOrderByNumber(
 
 // validateAndFetchBookItems validates items and fetches book details
 // In production, this should call Book service/repository
-func (s *orderService) validateAndFetchBookItems(ctx context.Context, items []model.CreateOrderItem) ([]bookItemData, error) {
+func (s *orderService) validateAndFetchBookItems(ctx context.Context, items []model.CreateOrderItem) ([]model.CheckoutItem, error) {
 	bookIDs := make([]string, len(items))
 	for i, book := range items {
 		bookIDs[i] = book.BookID.String()
@@ -1069,34 +1070,22 @@ func (s *orderService) validateAndFetchBookItems(ctx context.Context, items []mo
 		return nil, err
 	}
 
-	result := make([]bookItemData, len(items))
+	result := make([]model.CheckoutItem, len(items))
 	for i, book := range books {
 		// Mock data - replace with actual book service call
-		result[i] = bookItemData{
-			BookID:     book.ID,
-			Quantity:   items[i].Quantity,
-			Price:      book.Price,
-			Title:      book.Title,
-			AuthorName: book.AuthorName,
-			CoverURL:   *book.CoverURL,
+		result[i] = model.CheckoutItem{
+			BookID:   book.ID,
+			Quantity: items[i].Quantity,
+			Price:    book.Price,
+			Title:    book.Title,
 		}
 	}
 
 	return result, nil
 }
 
-// bookItemData holds book details for order creation
-type bookItemData struct {
-	BookID     uuid.UUID
-	Quantity   int
-	Price      decimal.Decimal
-	Title      string
-	AuthorName string
-	CoverURL   string
-}
-
 // calculateItemsSubtotal calculates total subtotal from all items
-func (s *orderService) calculateItemsSubtotal(items []bookItemData) decimal.Decimal {
+func (s *orderService) calculateItemsSubtotal(items []model.CheckoutItem) decimal.Decimal {
 	subtotal := decimal.Zero
 	for _, item := range items {
 		itemSubtotal := item.Price.Mul(decimal.NewFromInt(int64(item.Quantity)))
@@ -1168,18 +1157,17 @@ func (s *orderService) calculateDiscount(promo *modelPromo.Promotion, subtotal d
 }
 
 // buildOrderItems builds order items from book items
-func (s *orderService) buildOrderItems(orderID uuid.UUID, bookItems []bookItemData) []model.OrderItem {
+func (s *orderService) buildOrderItems(orderID uuid.UUID, bookItems []model.CheckoutItem) []model.OrderItem {
 	items := make([]model.OrderItem, len(bookItems))
 	for i, book := range bookItems {
 		items[i] = model.OrderItem{
-			ID:         uuid.New(),
-			OrderID:    orderID,
-			BookID:     book.BookID,
-			Quantity:   book.Quantity,
-			Price:      book.Price,
-			AuthorName: &book.AuthorName,
-			BookTitle:  book.Title,
-			Subtotal:   book.Price.Mul(decimal.NewFromInt(int64(book.Quantity))),
+			ID:        uuid.New(),
+			OrderID:   orderID,
+			BookID:    book.BookID,
+			Quantity:  book.Quantity,
+			Price:     book.Price,
+			BookTitle: book.Title,
+			Subtotal:  book.Price.Mul(decimal.NewFromInt(int64(book.Quantity))),
 		}
 	}
 	return items
@@ -1408,4 +1396,302 @@ func (s *orderService) CancelOrderBySystem(
 	fmt.Printf("System cancelled order %s: source=%s, reason=%s\n", orderID, source, reason)
 
 	return nil
+}
+
+// internal/order/service/order_service_impl.go
+
+func (s *orderService) CreateOrderFromCheckout(
+	ctx context.Context,
+	userID uuid.UUID,
+	checkoutCtx *model.CheckoutContext,
+	req model.CreateOrderRequest,
+) (*model.CreateOrderResponse, error) {
+
+	// ==================== VALIDATION ====================
+	if err := req.Validate(); err != nil {
+		logger.Error("validate errorr ", err)
+		return nil, model.NewOrderError(model.ErrCodeInvalidRequest, "Invalid request", err)
+	}
+
+	// ✅ Validate checkout context not stale (max 30 seconds old)
+	if time.Since(checkoutCtx.ValidatedAt) > 30*time.Second {
+		return nil, model.NewOrderError(
+			model.ErrCodeCheckoutExpired,
+			"Checkout session expired, please retry",
+			nil,
+		)
+	}
+
+	// ==================== ADDRESS HANDLING ====================
+	var address *addressModel.Address
+	var err error
+
+	if req.AddressID != uuid.Nil {
+		address, err = s.addressRepo.GetByID(ctx, req.AddressID)
+		if err != nil {
+			return nil, model.NewOrderError(model.ErrCodeInvalidAddress, "Invalid shipping address", err)
+		}
+		if address.UserID != userID {
+			return nil, model.NewOrderError(model.ErrCodeInvalidAddress, "Address does not belong to user", nil)
+		}
+	} else {
+		address, err = s.addressRepo.GetDefaultByUserID(ctx, userID)
+		if err != nil {
+			return nil, model.NewOrderError(model.ErrCodeInvalidAddress, "Missing default address", err)
+		}
+		req.AddressID = address.ID
+	}
+
+	// ==================== RECALCULATE & VERIFY PRICING ====================
+	// ✅ Fetch fresh book prices từ DB (security: không tin client data)
+	bookIDs := make([]string, len(checkoutCtx.Items))
+	for i, item := range checkoutCtx.Items {
+		bookIDs[i] = item.BookID.String()
+	}
+
+	books, err := s.bookService.GetBooksByIDs(ctx, bookIDs)
+	if err != nil {
+		return nil, model.NewOrderError(cartModel.ErrCodeInvalidItems, "Failed to fetch book data", err)
+	}
+
+	// ✅ Verify prices match
+	bookPriceMap := make(map[uuid.UUID]decimal.Decimal)
+	for _, book := range books {
+		bookPriceMap[book.ID] = book.Price
+	}
+
+	recalculatedSubtotal := decimal.Zero
+	for _, item := range checkoutCtx.Items {
+		actualPrice, exists := bookPriceMap[item.BookID]
+		if !exists {
+			return nil, model.NewOrderError(
+				cartModel.ErrCodeInvalidItems,
+				fmt.Sprintf("Book %s not found", item.BookID),
+				nil,
+			)
+		}
+
+		// ✅ Security check: Verify price hasn't changed
+		if !actualPrice.Equal(item.Price) {
+			return nil, model.NewOrderError(
+				cartModel.ErrCodePriceMismatch,
+				fmt.Sprintf("Price changed for book: %s", item.Title),
+				nil,
+			)
+		}
+
+		recalculatedSubtotal = recalculatedSubtotal.Add(actualPrice.Mul(decimal.NewFromInt(int64(item.Quantity))))
+	}
+
+	// ✅ Verify subtotal matches
+	if !recalculatedSubtotal.Equal(checkoutCtx.Cart.Subtotal) {
+		return nil, model.NewOrderError(
+			cartModel.ErrCodePriceMismatch,
+			"Cart total has changed, please review your cart",
+			nil,
+		)
+	}
+
+	// ==================== PROMO HANDLING ====================
+	var promotion *modelPromo.Promotion
+	var discountAmount decimal.Decimal
+
+	if checkoutCtx.Cart.PromoCode != nil && *checkoutCtx.Cart.PromoCode != "" {
+		if checkoutCtx.Cart.PromoMetadata != nil {
+			if promoIDStr, ok := checkoutCtx.Cart.PromoMetadata["promotion_id"].(string); ok {
+				if promoID, err := uuid.Parse(promoIDStr); err == nil {
+					promotion, err = s.promoRepo.FindByID(ctx, promoID)
+					if err != nil {
+						return nil, model.NewOrderError(model.ErrCodePromoInvalid, "Invalid promotion", err)
+					}
+
+					// ✅ Re-validate promotion
+					if err := s.validatePromotion(promotion, recalculatedSubtotal, userID); err != nil {
+						return nil, err
+					}
+
+					discountAmount = s.calculateDiscount(promotion, recalculatedSubtotal)
+				}
+			}
+		}
+	}
+
+	// ==================== CALCULATE FINAL AMOUNTS ====================
+	isCOD := req.PaymentMethod == model.PaymentMethodCOD
+	_, finalDiscount, shippingFee, codFee, taxAmount, total := model.CalculateOrderAmounts(
+		recalculatedSubtotal,
+		discountAmount,
+		isCOD,
+	)
+
+	// ==================== WAREHOUSE SELECTION ====================
+	var selectedWarehouseID uuid.UUID
+
+	if checkoutCtx.AvailabilityData != nil && checkoutCtx.AvailabilityData.RecommendedWarehouseID != nil {
+		// ✅ Use warehouse từ checkout context
+		selectedWarehouseID = *checkoutCtx.AvailabilityData.RecommendedWarehouseID
+	} else {
+		// Fallback: select warehouse
+		selectedWH, err := s.selectSingleWarehouseForOrder(ctx, address, checkoutCtx.Items)
+		if err != nil {
+			return nil, err
+		}
+		selectedWarehouseID = selectedWH.ID
+	}
+
+	// ==================== START TRANSACTION ====================
+	tx, err := s.orderRepo.BeginTxWithIsolation(ctx, pgx.RepeatableRead)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer s.orderRepo.RollbackTx(ctx, tx)
+
+	// ✅ STEP 1: Lock cart và verify version
+	currentCart, err := s.cartRepo.GetByUserIDWithLock(ctx, tx, userID)
+	if err != nil {
+		return nil, model.NewOrderError(
+			cartModel.ErrCodeCartNotFound,
+			"Cart not found",
+			err,
+		)
+	}
+
+	// ✅ Version check
+	if currentCart.Version != checkoutCtx.Version {
+		return nil, model.NewOrderError(
+			cartModel.ErrCodeCartModified,
+			"Your cart was modified. Please review and checkout again.",
+			nil,
+		)
+	}
+
+	// ✅ STEP 2: Reserve inventory với locking
+	for _, item := range checkoutCtx.Items {
+		if err := s.inventoryRepo.ReserveStockWithTx(
+			ctx,
+			tx,
+			selectedWarehouseID,
+			item.BookID,
+			item.Quantity,
+			&userID,
+		); err != nil {
+			// Transaction auto rollback
+			return nil, model.NewOrderError(
+				model.ErrCodeInsufficientStock,
+				fmt.Sprintf("Insufficient stock for book: %s", item.Title),
+				err,
+			)
+		}
+	}
+
+	// ✅ STEP 3: Create order
+	orderID := uuid.New()
+	var promotionID *uuid.UUID
+	if promotion != nil {
+		promotionID = &promotion.ID
+	}
+
+	order := &model.Order{
+		ID:             orderID,
+		UserID:         userID,
+		AddressID:      req.AddressID,
+		PromotionID:    promotionID,
+		WarehouseID:    &selectedWarehouseID,
+		Subtotal:       recalculatedSubtotal,
+		ShippingFee:    shippingFee,
+		CODFee:         codFee,
+		DiscountAmount: finalDiscount,
+		TaxAmount:      taxAmount,
+		Total:          total,
+		PaymentMethod:  req.PaymentMethod,
+		PaymentStatus:  model.PaymentStatusPending,
+		CustomerNote:   req.CustomerNote,
+		Version:        0,
+	}
+
+	if isCOD {
+		order.Status = model.OrderStatusConfirmed
+	} else {
+		order.Status = model.OrderStatusPending
+	}
+
+	if err := s.orderRepo.CreateOrderWithTx(ctx, tx, order); err != nil {
+		return nil, fmt.Errorf("failed to create order: %w", err)
+	}
+
+	// ✅ STEP 4: Create order items
+	orderItems := make([]model.OrderItem, len(checkoutCtx.Items))
+	for i, item := range checkoutCtx.Items {
+		orderItems[i] = model.OrderItem{
+			OrderID:  orderID,
+			BookID:   item.BookID,
+			Quantity: item.Quantity,
+			Price:    item.Price,
+			Subtotal: item.Subtotal,
+		}
+	}
+
+	if err := s.orderRepo.CreateOrderItemsWithTx(ctx, tx, orderItems); err != nil {
+		return nil, fmt.Errorf("failed to create order items: %w", err)
+	}
+
+	// ✅ STEP 5: Status history
+	statusHistory := &model.OrderStatusHistory{
+		OrderID:    orderID,
+		FromStatus: nil,
+		ToStatus:   order.Status,
+		ChangedBy:  &userID,
+		Notes:      nil,
+	}
+	if err := s.orderRepo.CreateOrderStatusHistoryWithTx(ctx, tx, statusHistory); err != nil {
+		return nil, fmt.Errorf("failed to create order status history: %w", err)
+	}
+
+	// ✅ STEP 6: Promotion usage
+	if promotion != nil {
+		usage := &modelPromo.PromotionUsage{
+			PromotionID:    promotion.ID,
+			UserID:         userID,
+			OrderID:        orderID,
+			DiscountAmount: discountAmount,
+		}
+		if err := s.promoRepo.CreateUsage(ctx, tx, usage); err != nil {
+			return nil, fmt.Errorf("failed to create promotion usage: %w", err)
+		}
+	}
+
+	// ✅ STEP 7: Delete cart with version check
+	if err := s.cartRepo.DeleteCartWithVersionCheck(ctx, tx, currentCart.ID, checkoutCtx.Version); err != nil {
+		return nil, fmt.Errorf("failed to clear cart: %w", err)
+	}
+
+	// ✅ STEP 8: Commit transaction
+	if err := s.orderRepo.CommitTx(ctx, tx); err != nil {
+		return nil, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	// ==================== POST-COMMIT TASKS ====================
+	// ✅ Async jobs (sau khi commit thành công)
+	for _, item := range orderItems {
+		payload := shared.InventorySyncPayload{
+			BookID: item.BookID.String(),
+			Source: "SALE",
+		}
+		if b, err := json.Marshal(payload); err == nil {
+			task := asynq.NewTask(shared.TypeInventorySyncBookStock, b)
+			if _, err := s.asynq.Enqueue(task, asynq.Queue(shared.QueueInventory)); err != nil {
+				logger.Error("Failed to enqueue InventorySyncJob after order", err)
+			}
+		}
+	}
+
+	// ✅ Response
+	resp := &model.CreateOrderResponse{
+		OrderID:     order.ID,
+		OrderNumber: order.OrderNumber,
+		Total:       order.Total,
+		Status:      order.Status,
+	}
+
+	return resp, nil
 }

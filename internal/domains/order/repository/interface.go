@@ -15,6 +15,7 @@ import (
 // =====================================================
 type OrderRepository interface {
 	// Transaction management
+	BeginTxWithIsolation(ctx context.Context, isolationLevel pgx.TxIsoLevel) (pgx.Tx, error)
 	BeginTx(ctx context.Context) (pgx.Tx, error)
 	CommitTx(ctx context.Context, tx pgx.Tx) error
 	RollbackTx(ctx context.Context, tx pgx.Tx) error

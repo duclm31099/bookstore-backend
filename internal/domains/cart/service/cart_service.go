@@ -15,6 +15,7 @@ import (
 	"bookstore-backend/internal/shared/utils"
 	"bookstore-backend/pkg/logger"
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -31,6 +32,7 @@ import (
 
 type CartService struct {
 	repository       repo.RepositoryInterface
+	idempotency      repo.IdempotencyRepository
 	inventoryService inveService.ServiceInterface
 	inventoryRepo    inveRepo.RepositoryInterface
 	address          addressService.ServiceInterface
@@ -48,7 +50,7 @@ func NewCartService(
 	book bookS.ServiceInterface,
 	orderService orderS.OrderService,
 	asynqClient *asynq.Client,
-
+	idempotency repo.IdempotencyRepository,
 ) ServiceInterface {
 
 	return &CartService{
@@ -59,6 +61,7 @@ func NewCartService(
 		bookService:      book,
 		orderService:     orderService,
 		asynqClient:      asynqClient,
+		idempotency:      idempotency,
 	}
 }
 
@@ -1090,6 +1093,75 @@ type ReservationInfo struct {
 }
 
 func (s *CartService) Checkout(ctx context.Context, userID uuid.UUID, cartID uuid.UUID, req model.CheckoutRequest) (*model.CheckoutResponse, error) {
+
+	if err := req.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid request: %w", err)
+	}
+
+	// ✅ STEP 1: Check idempotency record
+	existingRecord, err := s.idempotency.Get(ctx, req.IdempotencyKey, userID)
+	if err != nil {
+		logger.Info("Failed to check idempotency", map[string]interface{}{
+			"key":   req.IdempotencyKey,
+			"error": err,
+		})
+		// Continue với checkout (fail-open strategy)
+	}
+
+	if existingRecord != nil {
+		switch existingRecord.Status {
+		case "completed":
+			// ✅ Return cached successful response
+			logger.Info("Returning cached checkout response", map[string]interface{}{
+				"idempotency_key": req.IdempotencyKey,
+				"order_id":        existingRecord.OrderID,
+			})
+
+			// Convert stored response back to CheckoutResponse
+			if cachedResp, ok := existingRecord.ResponseData.(*model.CheckoutResponse); ok {
+				return cachedResp, nil
+			}
+
+		case "processing":
+			// Check if still fresh (< 5 minutes)
+			if time.Since(existingRecord.CreatedAt) < 5*time.Minute {
+				return nil, errors.New(
+					"DUPLICATE_REQUEST - A checkout with this idempotency key is already being processed. Please wait.",
+				)
+			}
+			// If stale, allow retry (will update existing record)
+
+		case "failed":
+			// Allow retry for failed checkouts
+			logger.Info("Retrying failed checkout", map[string]interface{}{
+				"idempotency_key": req.IdempotencyKey,
+				"previous_error":  existingRecord.ErrorMessage,
+			})
+		}
+	}
+
+	// ✅ STEP 2: Create processing record
+	now := time.Now()
+	idempotencyRecord := &model.IdempotencyRecord{
+		IdempotencyKey: req.IdempotencyKey,
+		UserID:         userID,
+		CartID:         &cartID,
+		Status:         "processing",
+		RequestPayload: req,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		ExpiresAt:      now.Add(24 * time.Hour),
+	}
+
+	if err := s.idempotency.Create(ctx, idempotencyRecord); err != nil {
+		logger.Info("Failed to create idempotency record", map[string]interface{}{
+			"key":   req.IdempotencyKey,
+			"error": err,
+		})
+		// Continue với checkout
+	}
+
+	// ✅ STEP 3: Process checkout (existing logic)
 	response := &model.CheckoutResponse{
 		Success:     false,
 		Status:      "pending",
@@ -1107,6 +1179,10 @@ func (s *CartService) Checkout(ctx context.Context, userID uuid.UUID, cartID uui
 	// ==================== PHASE 1: Get & Validate Cart ====================
 	phaseStart := time.Now()
 	cart, err := s.repository.GetByID(ctx, cartID)
+	logger.Info("cart check ", map[string]interface{}{
+		"cart": cart,
+		"err":  err,
+	})
 	if err != nil {
 		return s.failCheckout(response, "CART_NOT_FOUND", "Cannot find your cart: "+err.Error(), "")
 	}
@@ -1163,6 +1239,10 @@ func (s *CartService) Checkout(ctx context.Context, userID uuid.UUID, cartID uui
 	phaseStart = time.Now()
 
 	shippingAddr, err := s.address.GetAddressByID(ctx, userID, req.ShippingAddressID)
+	logger.Info("Address check", map[string]interface{}{
+		"shippingAddr": shippingAddr,
+		"error":        err,
+	})
 	if err != nil {
 		response.Phases = append(response.Phases, model.CheckoutPhaseResult{
 			Phase:     "ADDRESS_VALIDATION",
@@ -1200,6 +1280,12 @@ func (s *CartService) Checkout(ctx context.Context, userID uuid.UUID, cartID uui
 	if req.PromoCode != nil {
 		phaseStart = time.Now()
 		promoDiscount, appliedPromo, _ = s.validateAndApplyPromo(ctx, req, cart, cartID, userID, response, phaseStart)
+		if err != nil {
+			response.Warnings = append(response.Warnings, model.CheckoutWarning{
+				Code:    "PROMO_FAILED",
+				Message: "Could not apply promo code: " + err.Error(),
+			})
+		}
 	}
 
 	// ==================== PHASE 4: Pricing Calculation ====================
@@ -1262,6 +1348,10 @@ func (s *CartService) Checkout(ctx context.Context, userID uuid.UUID, cartID uui
 
 	// ✅ Call CheckAvailability MỘT LẦN DUY NHẤT
 	availability, err := s.inventoryService.CheckAvailability(ctx, availabilityReq)
+	logger.Info("Check availability", map[string]interface{}{
+		"availability": availability,
+		"error":        err,
+	})
 	if err != nil {
 		return s.failCheckout(response, "AVAILABILITY_CHECK_FAILED", "Cannot check stock: "+err.Error(), "WAREHOUSE_SELECTION")
 	}
@@ -1313,7 +1403,30 @@ func (s *CartService) Checkout(ctx context.Context, userID uuid.UUID, cartID uui
 
 	// ==================== PHASE 6: CREATE ORDER QUA ORDER SERVICE ====================
 	phaseStart = time.Now()
-
+	checkoutItems := make([]orderModel.CheckoutItem, len(cartItems))
+	for i, item := range cartItems {
+		checkoutItems[i] = orderModel.CheckoutItem{
+			CartItemID: item.ID,
+			BookID:     item.BookID,
+			Title:      item.BookTitle,
+			Price:      item.Price,
+			Quantity:   item.Quantity,
+			Subtotal:   item.Price.Mul(decimal.NewFromInt(int64(item.Quantity))),
+		}
+	}
+	checkoutCtx := &orderModel.CheckoutContext{
+		Cart:        cart,
+		Items:       checkoutItems,
+		Version:     cart.Version, // ✅ Include version
+		ValidatedAt: time.Now(),
+	}
+	// ✅ Add warehouse info nếu có
+	if availability.RecommendedWarehouse != nil {
+		checkoutCtx.AvailabilityData = &orderModel.AvailabilitySnapshot{
+			RecommendedWarehouseID: &availability.RecommendedWarehouse.WarehouseID,
+			CheckedAt:              time.Now(),
+		}
+	}
 	// Build CreateOrderRequest cho order service
 	createReq := orderModel.CreateOrderRequest{
 		AddressID:     req.ShippingAddressID,                   // nếu nil, order service sẽ lấy default
@@ -1323,9 +1436,23 @@ func (s *CartService) Checkout(ctx context.Context, userID uuid.UUID, cartID uui
 		Items:         nil,
 		// Items sẽ được override bên trong orderService từ cart_items
 	}
-	// Gọi order service (use case duy nhất)
-	orderResp, err := s.orderService.CreateOrder(ctx, userID, createReq)
+	orderResp, err := s.orderService.CreateOrderFromCheckout(ctx, userID, checkoutCtx, createReq)
 	if err != nil {
+		logger.Error("Create orrder failed:", err)
+		s.idempotency.UpdateFailed(ctx, req.IdempotencyKey, err.Error())
+		// ✅ Handle specific errors
+		if orderErr, ok := err.(*model.OrderError); ok {
+			switch orderErr.Code {
+			case model.ErrCodeCartModified:
+				return s.failCheckout(response, "CART_MODIFIED", "Your cart was modified. Please review and try again.", "ORDER_CREATION")
+			case model.ErrCodeConcurrentCheckout:
+				return s.failCheckout(response, "CONCURRENT_CHECKOUT", "Another checkout is in progress. Please wait.", "ORDER_CREATION")
+			case model.ErrCodeStockLocked:
+				return s.failCheckout(response, "STOCK_LOCKED", orderErr.Message, "ORDER_CREATION")
+			case model.ErrCodePriceMismatch:
+				return s.failCheckout(response, "PRICE_CHANGED", orderErr.Message, "ORDER_CREATION")
+			}
+		}
 		return s.failCheckout(response, "ORDER_CREATION_FAILED", "Failed to create order: "+err.Error(), "ORDER_CREATION")
 	}
 
@@ -1338,7 +1465,7 @@ func (s *CartService) Checkout(ctx context.Context, userID uuid.UUID, cartID uui
 	})
 
 	// Build success response từ orderResp + dữ liệu đã có
-	now := time.Now()
+	now = time.Now()
 	response = s.buildSuccessResponse(
 		response,
 		&orderModel.Order{
@@ -1354,6 +1481,13 @@ func (s *CartService) Checkout(ctx context.Context, userID uuid.UUID, cartID uui
 		now,
 		req.PaymentMethod,
 	)
+	if err := s.idempotency.UpdateCompleted(ctx, req.IdempotencyKey, orderResp.OrderID, response); err != nil {
+		logger.Info("Failed to update idempotency record", map[string]interface{}{
+			"key":   req.IdempotencyKey,
+			"error": err,
+		})
+		// Don't fail checkout, just log
+	}
 	go s.enqueuePostCheckoutTasks(context.Background(), orderResp.OrderID, orderResp.OrderNumber, userID, cartID, req, total, len(cartItems), promoDiscount, appliedPromo)
 	// ==================== Build Success Response ====================
 	return response, nil

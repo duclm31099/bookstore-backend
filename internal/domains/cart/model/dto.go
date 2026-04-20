@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -92,6 +93,7 @@ type CartPromo struct {
 // ===================================
 
 type CheckoutRequest struct {
+	IdempotencyKey string `json:"idempotency_key" binding:"required,min=16,max=255"`
 	// Shipping & Billing
 	ShippingAddressID uuid.UUID  `json:"shipping_address_id" binding:"required" validate:"required"`
 	BillingAddressID  *uuid.UUID `json:"billing_address_id,omitempty"` // NULL = same as shipping
@@ -111,6 +113,22 @@ type CheckoutRequest struct {
 	// Internal use (set by system)
 	UserAgent string `json:"-"` // Track device type
 	IPAddress string `json:"-"` // Track location
+}
+
+func (r *CheckoutRequest) Validate() error {
+	if r.IdempotencyKey == "" {
+		return errors.New("idempotency_key is required")
+	}
+	if len(r.IdempotencyKey) < 16 {
+		return errors.New("idempotency_key must be at least 16 characters")
+	}
+	if r.ShippingAddressID == uuid.Nil {
+		return errors.New("shipping_address_id is required")
+	}
+	if r.PaymentMethod == "" {
+		return errors.New("payment_method is required")
+	}
+	return nil
 }
 
 // PaymentDetails represents payment method details
@@ -314,4 +332,18 @@ type PromotionValidationResult struct {
 	// Validity period
 	StartsAt  time.Time
 	ExpiresAt time.Time
+}
+type IdempotencyRecord struct {
+	IdempotencyKey string      `json:"idempotency_key"`
+	UserID         uuid.UUID   `json:"user_id"`
+	CartID         *uuid.UUID  `json:"cart_id"`
+	OrderID        *uuid.UUID  `json:"order_id"`
+	Status         string      `json:"status"` // processing, completed, failed
+	RequestPayload interface{} `json:"request_payload"`
+	ResponseData   interface{} `json:"response_data"`
+	ErrorMessage   *string     `json:"error_message"`
+	CreatedAt      time.Time   `json:"created_at"`
+	UpdatedAt      time.Time   `json:"updated_at"`
+	CompletedAt    *time.Time  `json:"completed_at"`
+	ExpiresAt      time.Time   `json:"expires_at"`
 }

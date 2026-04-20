@@ -79,7 +79,14 @@ type RepositoryInterface interface {
 	UpdateItemWithTx(ctx context.Context, tx pgx.Tx, item *model.CartItem) error
 	AddItemWithTx(ctx context.Context, tx pgx.Tx, item *model.CartItem) error
 	DeleteCartWithTx(ctx context.Context, tx pgx.Tx, cartID uuid.UUID) error
+	// ✅ NEW: Lock cart with version check
+	LockCartWithVersion(ctx context.Context, tx pgx.Tx, userID uuid.UUID, expectedVersion int) (*model.Cart, error)
 
+	// ✅ NEW: Delete with version check
+	DeleteCartWithVersionCheck(ctx context.Context, tx pgx.Tx, cartID uuid.UUID, expectedVersion int) error
+
+	// ✅ NEW: Get cart with FOR UPDATE lock
+	GetByUserIDWithLock(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (*model.Cart, error)
 	// ================================================
 	// PROMOTION REMOVAL JOB METHODS
 	// ================================================

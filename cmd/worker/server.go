@@ -31,6 +31,11 @@ func setupAsynqServer(cfg *Config, handlers *HandlerRegistry) *asynqServer {
 				types.QueueInventory:    6,
 				types.QueueNotification: 5,
 				types.QueueAnalytics:    1, // Thấp nhất
+				types.QueueAuth:         2,
+				types.QueueBook:         2,
+				types.QueueCart:         2,
+				types.QueuePromotion:    2,
+				types.QueueUser:         2,
 			},
 			Concurrency: 30, // ✅ TĂNG LÊN nếu có nhiều CPU cores
 			ErrorHandler: asynq.ErrorHandlerFunc(func(ctx context.Context, task *asynq.Task, err error) {

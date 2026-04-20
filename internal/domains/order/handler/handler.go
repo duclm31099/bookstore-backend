@@ -35,7 +35,6 @@ func (h *OrderHandler) RegisterRoutes(router *gin.RouterGroup) {
 	// User routes (protected by auth middleware)
 	userRoutes := router.Group("/orders")
 	{
-		userRoutes.POST("", h.CreateOrder)                         // POST /v1/orders
 		userRoutes.GET("", h.ListOrders)                           // GET /v1/orders?page=1&limit=20&status=pending
 		userRoutes.GET("/:id", h.GetOrderDetail)                   // GET /v1/orders/:id
 		userRoutes.GET("/number/:orderNumber", h.GetOrderByNumber) // GET /v1/orders/number/ORD-20251108-001
@@ -52,73 +51,10 @@ func (h *OrderHandler) RegisterRoutes(router *gin.RouterGroup) {
 }
 
 // =====================================================
-// CREATE ORDER
-// =====================================================
-
-// CreateOrder godoc
-// @Summary Create new order
-// @Description Create new order from items, reserves inventory, calculates amounts
-// @Tags Orders
-// @Accept json
-// @Produce json
-// @Param request body model.CreateOrderRequest true "Create order request"
-// @Success 201 {object} response.SuccessResponse{data=model.CreateOrderResponse}
-// @Failure 400 {object} response.ErrorResponse
-// @Failure 422 {object} response.ErrorResponse
-// @Failure 500 {object} response.ErrorResponse
-// @Router /v1/orders [post]
-func (h *OrderHandler) CreateOrder(c *gin.Context) {
-	// Extract user_id from context (set by auth middleware)
-	userID, err := h.getUserIDFromContext(c)
-	if err != nil {
-		response.Error(c, http.StatusUnauthorized, "Unauthorized", map[string]string{
-			"code": model.ErrCodeUnauthorized,
-		})
-		return
-	}
-
-	// Bind request
-	var req model.CreateOrderRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Error(c, http.StatusBadRequest, "Invalid request body", map[string]string{
-			"error": err.Error(),
-		})
-		return
-	}
-
-	// Validate request
-	if err := req.Validate(); err != nil {
-		response.Error(c, http.StatusUnprocessableEntity, "Validation failed", map[string]string{
-			"error": err.Error(),
-		})
-		return
-	}
-
-	// Call service
-	result, err := h.orderService.CreateOrder(c.Request.Context(), userID, req)
-	if err != nil {
-		h.handleServiceError(c, err)
-		return
-	}
-
-	// Return success response
-	response.Success(c, http.StatusCreated, "Order created successfully", result)
-}
-
-// =====================================================
 // GET ORDER DETAIL
 // =====================================================
-
-// GetOrderDetail godoc
 // @Summary Get order detail
 // @Description Get detailed information of a specific order
-// @Tags Orders
-// @Produce json
-// @Param id path string true "Order ID (UUID)"
-// @Success 200 {object} response.SuccessResponse{data=model.OrderDetailResponse}
-// @Failure 400 {object} response.ErrorResponse
-// @Failure 404 {object} response.ErrorResponse
-// @Failure 500 {object} response.ErrorResponse
 // @Router /v1/orders/{id} [get]
 func (h *OrderHandler) GetOrderDetail(c *gin.Context) {
 	// Extract user_id from context
@@ -154,17 +90,8 @@ func (h *OrderHandler) GetOrderDetail(c *gin.Context) {
 // =====================================================
 // GET ORDER BY NUMBER
 // =====================================================
-
-// GetOrderByNumber godoc
 // @Summary Get order by order number
 // @Description Get order details by order number (e.g., ORD-20251108-001)
-// @Tags Orders
-// @Produce json
-// @Param orderNumber path string true "Order Number"
-// @Success 200 {object} response.SuccessResponse{data=model.OrderDetailResponse}
-// @Failure 400 {object} response.ErrorResponse
-// @Failure 404 {object} response.ErrorResponse
-// @Router /v1/orders/number/{orderNumber} [get]
 func (h *OrderHandler) GetOrderByNumber(c *gin.Context) {
 	// Extract user_id from context
 	userID, err := h.getUserIDFromContext(c)
@@ -196,19 +123,8 @@ func (h *OrderHandler) GetOrderByNumber(c *gin.Context) {
 // =====================================================
 // LIST ORDERS
 // =====================================================
-
-// ListOrders godoc
 // @Summary List user's orders
 // @Description Get paginated list of user's orders with optional status filter
-// @Tags Orders
-// @Produce json
-// @Param page query int false "Page number" default(1)
-// @Param limit query int false "Items per page" default(20)
-// @Param status query string false "Filter by status (pending, confirmed, processing, shipping, delivered, cancelled, returned)"
-// @Success 200 {object} response.SuccessResponse{data=model.ListOrdersResponse}
-// @Failure 400 {object} response.ErrorResponse
-// @Failure 500 {object} response.ErrorResponse
-// @Router /v1/orders [get]
 func (h *OrderHandler) ListOrders(c *gin.Context) {
 	// Extract user_id from context
 	userID, err := h.getUserIDFromContext(c)
@@ -258,21 +174,8 @@ func (h *OrderHandler) ListOrders(c *gin.Context) {
 // =====================================================
 // CANCEL ORDER
 // =====================================================
-
-// CancelOrder godoc
 // @Summary Cancel order
 // @Description Cancel an order (only pending or confirmed orders can be cancelled)
-// @Tags Orders
-// @Accept json
-// @Produce json
-// @Param id path string true "Order ID (UUID)"
-// @Param request body model.CancelOrderRequest true "Cancel order request"
-// @Success 200 {object} response.SuccessResponse
-// @Failure 400 {object} response.ErrorResponse
-// @Failure 404 {object} response.ErrorResponse
-// @Failure 409 {object} response.ErrorResponse "Version mismatch"
-// @Failure 422 {object} response.ErrorResponse "Cannot cancel order"
-// @Router /v1/orders/{id}/cancel [patch]
 func (h *OrderHandler) CancelOrder(c *gin.Context) {
 	// Extract user_id from context
 	userID, err := h.getUserIDFromContext(c)
@@ -324,19 +227,9 @@ func (h *OrderHandler) CancelOrder(c *gin.Context) {
 // =====================================================
 // REORDER FROM EXISTING ORDER
 // =====================================================
-
 // ReorderFromExisting godoc
 // @Summary Reorder from existing order
 // @Description Create a new order based on an existing order
-// @Tags Orders
-// @Accept json
-// @Produce json
-// @Param request body model.ReorderRequest true "Reorder request"
-// @Success 201 {object} response.SuccessResponse{data=model.CreateOrderResponse}
-// @Failure 400 {object} response.ErrorResponse
-// @Failure 404 {object} response.ErrorResponse
-// @Failure 500 {object} response.ErrorResponse
-// @Router /v1/orders/reorder [post]
 func (h *OrderHandler) ReorderFromExisting(c *gin.Context) {
 	// Extract user_id from context
 	userID, err := h.getUserIDFromContext(c)
@@ -370,20 +263,8 @@ func (h *OrderHandler) ReorderFromExisting(c *gin.Context) {
 // =====================================================
 // ADMIN: LIST ALL ORDERS
 // =====================================================
-
-// ListAllOrders godoc
 // @Summary Admin: List all orders
 // @Description Get paginated list of all orders (admin only)
-// @Tags Admin
-// @Produce json
-// @Param page query int false "Page number" default(1)
-// @Param limit query int false "Items per page" default(20)
-// @Param status query string false "Filter by status"
-// @Success 200 {object} response.SuccessResponse{data=model.ListOrdersResponse}
-// @Failure 400 {object} response.ErrorResponse
-// @Failure 401 {object} response.ErrorResponse
-// @Failure 403 {object} response.ErrorResponse
-// @Router /v1/admin/orders [get]
 func (h *OrderHandler) ListAllOrders(c *gin.Context) {
 	// Extract user_id from context (admin middleware should validate admin role)
 	_, err := h.getUserIDFromContext(c)
@@ -433,21 +314,8 @@ func (h *OrderHandler) ListAllOrders(c *gin.Context) {
 // =====================================================
 // ADMIN: UPDATE ORDER STATUS
 // =====================================================
-
-// UpdateOrderStatus godoc
 // @Summary Admin: Update order status
 // @Description Update order status with version control (admin only)
-// @Tags Admin
-// @Accept json
-// @Produce json
-// @Param id path string true "Order ID (UUID)"
-// @Param request body model.UpdateOrderStatusRequest true "Update status request"
-// @Success 200 {object} response.SuccessResponse
-// @Failure 400 {object} response.ErrorResponse
-// @Failure 404 {object} response.ErrorResponse
-// @Failure 409 {object} response.ErrorResponse "Version mismatch"
-// @Failure 422 {object} response.ErrorResponse "Invalid status transition"
-// @Router /v1/admin/orders/{id}/status [patch]
 func (h *OrderHandler) UpdateOrderStatus(c *gin.Context) {
 	// Extract user_id from context (admin)
 	userID, err := h.getUserIDFromContext(c)

@@ -2,6 +2,7 @@ package repository
 
 import (
 	"bookstore-backend/internal/domains/address/model"
+	"bookstore-backend/pkg/logger"
 	"context"
 	"errors"
 	"strconv"
@@ -57,7 +58,11 @@ func (r *postgresRepository) Create(ctx context.Context, addr *model.Address) (*
 // GetByID retrieves an address by ID (bao gồm latitude/longitude)
 func (r *postgresRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.Address, error) {
 	query := `
-        SELECT id, user_id, recipient_name, phone, province, district, ward, street, address_type, is_default, notes, latitude, longitude, created_at, updated_at
+        SELECT id, user_id, recipient_name, phone, province, district, ward, street, address_type, is_default,
+					COALESCE(notes, '') as notes,
+					COALESCE(latitude, 0) as latitude,
+					COALESCE(longitude, 0) as longitude,
+					created_at, updated_at
         FROM addresses
         WHERE id = $1
     `
@@ -86,7 +91,11 @@ func (r *postgresRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.
 // GetByUserID retrieves all addresses for a user (bao gồm latitude/longitude)
 func (r *postgresRepository) GetByUserID(ctx context.Context, userID uuid.UUID) ([]*model.Address, error) {
 	query := `
-        SELECT id, user_id, recipient_name, phone, province, district, ward, street, address_type, is_default, notes, latitude, longitude, created_at, updated_at
+        SELECT id, user_id, recipient_name, phone, province, district, ward, street, address_type, is_default, 
+				 	COALESCE(notes, '') as notes,              
+          COALESCE(latitude, 0) as latitude,        
+          COALESCE(longitude, 0) as longitude,      
+					created_at, updated_at
         FROM addresses
         WHERE user_id = $1
         ORDER BY is_default DESC, created_at DESC
@@ -94,7 +103,8 @@ func (r *postgresRepository) GetByUserID(ctx context.Context, userID uuid.UUID) 
 
 	rows, err := r.pool.Query(ctx, query, userID)
 	if err != nil {
-		return nil, model.NewCreateAddressError(err)
+		logger.Error(" Query ", err)
+		return nil, model.NewAddressNotFound()
 	}
 	defer rows.Close()
 
@@ -110,7 +120,8 @@ func (r *postgresRepository) GetByUserID(ctx context.Context, userID uuid.UUID) 
 			&addr.CreatedAt, &addr.UpdatedAt,
 		)
 		if err != nil {
-			return nil, model.NewCreateAddressError(err)
+			logger.Error("Scan ", err)
+			return nil, model.NewAddressNotFound()
 		}
 		addresses = append(addresses, &addr)
 	}
@@ -125,7 +136,11 @@ func (r *postgresRepository) GetByUserID(ctx context.Context, userID uuid.UUID) 
 // GetDefaultByUserID retrieves default address for a user (bao gồm latitude/longitude)
 func (r *postgresRepository) GetDefaultByUserID(ctx context.Context, userID uuid.UUID) (*model.Address, error) {
 	query := `
-        SELECT id, user_id, recipient_name, phone, province, district, ward, street, address_type, is_default, notes, latitude, longitude, created_at, updated_at
+        SELECT id, user_id, recipient_name, phone, province, district, ward, street, address_type, is_default, 
+					COALESCE(notes, '') as notes,              
+          COALESCE(latitude, 0) as latitude,        
+          COALESCE(longitude, 0) as longitude, 
+					created_at, updated_at	
         FROM addresses
         WHERE user_id = $1 AND is_default = true
     `
@@ -154,7 +169,11 @@ func (r *postgresRepository) GetDefaultByUserID(ctx context.Context, userID uuid
 // List retrieves all addresses (for admin use) (bao gồm latitude/longitude)
 func (r *postgresRepository) List(ctx context.Context, offset, limit int) ([]*model.Address, error) {
 	query := `
-        SELECT id, user_id, recipient_name, phone, province, district, ward, street, address_type, is_default, notes, latitude, longitude, created_at, updated_at
+        SELECT id, user_id, recipient_name, phone, province, district, ward, street, address_type, is_default,
+					COALESCE(notes, '') as notes,              
+          COALESCE(latitude, 0) as latitude,        
+          COALESCE(longitude, 0) as longitude, 
+					created_at, updated_at
         FROM addresses
         ORDER BY created_at DESC
         LIMIT $1 OFFSET $2
@@ -324,7 +343,11 @@ func (r *postgresRepository) GetAddressWithUser(ctx context.Context, id uuid.UUI
         SELECT 
             a.id, a.user_id, u.full_name, u.email, 
             a.recipient_name, a.phone, a.province, a.district, a.ward, a.street, 
-            a.address_type, a.is_default, a.notes, a.latitude, a.longitude, a.created_at, a.updated_at
+            a.address_type, a.is_default, 
+						COALESCE(a.notes, '') as notes,              
+						COALESCE(a.latitude, 0) as latitude,        
+						COALESCE(a.longitude, 0) as longitude,  
+						a.created_at, a.updated_at
         FROM addresses a
         LEFT JOIN users u ON a.user_id = u.id
         WHERE a.id = $1
@@ -366,7 +389,11 @@ func (r *postgresRepository) ListAddressesWithUser(ctx context.Context, offset, 
         SELECT 
             a.id, a.user_id, u.full_name, u.email, 
             a.recipient_name, a.phone, a.province, a.district, a.ward, a.street, 
-            a.address_type, a.is_default, a.notes, a.latitude, a.longitude, a.created_at, a.updated_at
+            a.address_type, a.is_default, 
+						COALESCE(a.notes, '') as notes,              
+						COALESCE(a.latitude, 0) as latitude,        
+						COALESCE(a.longitude, 0) as longitude,  
+						a.created_at, a.updated_at
         FROM addresses a
         LEFT JOIN users u ON a.user_id = u.id
         ORDER BY a.created_at DESC

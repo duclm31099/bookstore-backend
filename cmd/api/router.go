@@ -320,7 +320,6 @@ func setupOrderRoutes(v1 *gin.RouterGroup, c *container.Container) {
 	orders := v1.Group("/orders")
 	orders.Use(middleware.AuthMiddleware(c.Config.JWT.Secret))
 	{
-		orders.POST("", c.OrderHandler.CreateOrder)
 		orders.GET("", c.OrderHandler.ListOrders)
 		orders.GET("/:id", c.OrderHandler.GetOrderDetail)
 		orders.POST("/:id/cancel", c.OrderHandler.CancelOrder)

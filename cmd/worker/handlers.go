@@ -35,7 +35,7 @@ type HandlerRegistry struct {
 	sendOrderConfirmation  *cartJob.SendOrderConfirmationHandler
 	autoReleaseReservation *cartJob.AutoReleaseReservationHandler
 	trackCheckout          *cartJob.TrackCheckoutHandler
-
+	cartIdempotency        *cartJob.IdempotencyCleanupJob
 	// WHY THIS HANDLER?
 	// - Automatically removes expired/invalid promotions from carts
 	// - Runs every 3 hours with smart scheduling based on user activity
@@ -58,9 +58,9 @@ func initializeHandlers(c *container.Container, cfg *Config) *HandlerRegistry {
 		resetPassword:     emailjob.NewResetPasswordEmailHandler(emailSvc),
 
 		// Security handlers
-		securityAlert: job.NewSecurityAlertHandler(emailSvc, c.UserRepo),
-		failedLogin:   job.NewFailedLoginHandler(c.Cache, c.UserRepo, c.AsynqClient),
-
+		securityAlert:   job.NewSecurityAlertHandler(emailSvc, c.UserRepo),
+		failedLogin:     job.NewFailedLoginHandler(c.Cache, c.UserRepo, c.AsynqClient),
+		cartIdempotency: cartJob.NewIdempotencyCleanupJob(c.Idempotency),
 		// Maintenance handlers
 		cleanup:          job.NewCleanupExpiredTokenHandler(c.UserRepo),
 		processBookImage: bookJob.NewProcessImageHandler(c.ImageBookService),
@@ -125,5 +125,5 @@ func (h *HandlerRegistry) RegisterHandlers(mux *asynq.ServeMux) {
 	mux.HandleFunc(shared.TypeSendPendingNotifications, h.sendPendingNotifications.ProcessTask)
 	mux.HandleFunc(shared.TypeCleanupOldNotifications, h.cleanupOldNotifications.ProcessTask)
 	mux.HandleFunc(shared.TypeRetryFailedDeliveries, h.retryFailedDeliveries.ProcessTask)
-
+	mux.HandleFunc(shared.TypeCleanUpIdempotency, h.cartIdempotency.Run)
 }

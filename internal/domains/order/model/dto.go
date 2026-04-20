@@ -3,8 +3,9 @@ package model
 import (
 	"time"
 
+	cartModel "bookstore-backend/internal/domains/cart/model"
+
 	validation "github.com/go-ozzo/ozzo-validation/v4"
-	"github.com/go-ozzo/ozzo-validation/v4/is"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
@@ -29,7 +30,7 @@ type CreateOrderItem struct {
 // Validate validates CreateOrderRequest
 func (req CreateOrderRequest) Validate() error {
 	return validation.ValidateStruct(&req,
-		validation.Field(&req.AddressID, validation.Required, is.UUIDv4),
+		validation.Field(&req.AddressID, validation.Required),
 		validation.Field(&req.PaymentMethod, validation.Required, validation.In(
 			PaymentMethodCOD,
 			PaymentMethodVNPay,
@@ -211,4 +212,24 @@ func (req UpdateOrderStatusRequest) Validate() error {
 type ReorderRequest struct {
 	OrderID   uuid.UUID `json:"order_id" binding:"required"`
 	AddressID uuid.UUID `json:"address_id" binding:"required"`
+}
+type CheckoutContext struct {
+	Cart             *cartModel.Cart       `json:"cart"`
+	Items            []CheckoutItem        `json:"items"`
+	Version          int                   `json:"version"`
+	ValidatedAt      time.Time             `json:"validated_at"`
+	AvailabilityData *AvailabilitySnapshot `json:"availability_data,omitempty"`
+}
+type CheckoutItem struct {
+	CartItemID uuid.UUID       `json:"cart_item_id"`
+	BookID     uuid.UUID       `json:"book_id"`
+	Title      string          `json:"title"`
+	Price      decimal.Decimal `json:"price"`
+	Quantity   int             `json:"quantity"`
+	Subtotal   decimal.Decimal `json:"subtotal"`
+}
+
+type AvailabilitySnapshot struct {
+	RecommendedWarehouseID *uuid.UUID `json:"recommended_warehouse_id"`
+	CheckedAt              time.Time  `json:"checked_at"`
 }

@@ -12,9 +12,10 @@ import (
 // ORDER SERVICE INTERFACE
 // =====================================================
 type OrderService interface {
+
 	// Create new order from cart items
 	CreateOrder(ctx context.Context, userID uuid.UUID, req model.CreateOrderRequest) (*model.CreateOrderResponse, error)
-
+	CreateOrderFromCheckout(ctx context.Context, userID uuid.UUID, checkoutCtx *model.CheckoutContext, req model.CreateOrderRequest) (*model.CreateOrderResponse, error)
 	// Get order detail by ID
 	GetOrderDetail(ctx context.Context, orderID uuid.UUID, userID uuid.UUID) (*model.OrderDetailResponse, error)
 

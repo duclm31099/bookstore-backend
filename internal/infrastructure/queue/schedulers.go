@@ -54,6 +54,10 @@ func (s *Scheduler) RegisterCleanupJobs() error {
 		return err
 	}
 
+	if err := s.registerCleanUpIdempotencyJob(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -115,6 +119,27 @@ func (s *Scheduler) registerRemoveExpiredPromotionsJob() error {
 	}
 
 	logger.Info("✓ Registered RemoveExpiredPromotions: every 3 hours", map[string]interface{}{})
+	return nil
+}
+
+func (s *Scheduler) registerCleanUpIdempotencyJob() error {
+
+	task := asynq.NewTask(shared.TypeCleanUpIdempotency, nil)
+
+	_, err := s.scheduler.Register(
+		"0 */1 * * *", // Every 3 hours at minute 0 (00:00, 03:00, 06:00, etc.)
+		task,
+		asynq.Queue(shared.QueueCart), // Default queue (medium priority)
+		asynq.MaxRetry(2),             // Retry twice if fails
+		asynq.Timeout(10*time.Minute), // 10 min timeout (handles large datasets)
+	)
+
+	if err != nil {
+		logger.Error("Failed to register CleanUpIdempotency job", err)
+		return err
+	}
+
+	logger.Info("✓ Registered CleanUpIdempotency: every 1 hours", nil)
 	return nil
 }
 

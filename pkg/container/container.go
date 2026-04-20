@@ -105,6 +105,7 @@ type Container struct {
 	BookRepo         bookRepo.RepositoryInterface
 	InventoryRepo    inventoryRepo.RepositoryInterface
 	CartRepo         cartRepo.RepositoryInterface
+	Idempotency      cartRepo.IdempotencyRepository
 	PromotionRepo    promotionRepo.PromotionRepository
 	OrderRepo        orderRepo.OrderRepository
 	PaymentRepo      paymentRepo.PaymentRepoInteface
@@ -397,6 +398,7 @@ func (c *Container) initRepositories() error {
 	c.BookRepo = bookRepo.NewPostgresRepository(pool, c.Cache)
 	c.InventoryRepo = inventoryRepo.NewRepository(pool)
 	c.CartRepo = cartRepo.NewPostgresRepository(pool, c.Cache)
+	c.Idempotency = cartRepo.NewIdempotencyRepository(pool)
 	c.PromotionRepo = promotionRepo.NewPostgresRepository(pool)
 	c.OrderRepo = orderRepo.NewPostgresOrderRepository(pool)
 	c.PaymentRepo = paymentRepo.NewppRepository(pool)
@@ -570,6 +572,7 @@ func (c *Container) initCrossDependentServices() error {
 		c.BookService,
 		c.OrderService, // ✅ OrderService already exists
 		c.AsynqClient,
+		cartRepo.NewIdempotencyRepository(c.DB.Pool),
 	)
 	log.Println("  ✓ CartService")
 

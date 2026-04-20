@@ -26,6 +26,7 @@ const (
 	TypeSendOrderConfirmation  = "order:send_confirmation"
 	TypeAutoReleaseReservation = "inventory:auto_release_reservation"
 	TypeTrackCheckout          = "analytics:track_checkout"
+	TypeCleanUpIdempotency     = "cart:cleanup_idempotency"
 
 	// Promotion removal job
 	TypeRemoveExpiredPromotions = "cart:remove_expired_promotions"

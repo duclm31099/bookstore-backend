@@ -10,6 +10,7 @@ import (
 
 	"bookstore-backend/internal/domains/address/model"
 	repo "bookstore-backend/internal/domains/address/repository"
+	"bookstore-backend/pkg/logger"
 )
 
 type addressService struct {
@@ -88,6 +89,7 @@ func (s *addressService) GetAddressByID(ctx context.Context, userID, addressID u
 func (s *addressService) ListUserAddresses(ctx context.Context, userID uuid.UUID) ([]*model.AddressResponse, error) {
 	addrs, err := s.repo.GetByUserID(ctx, userID)
 	if err != nil {
+		logger.Error("GetByUserID::", err)
 		return nil, err
 	}
 

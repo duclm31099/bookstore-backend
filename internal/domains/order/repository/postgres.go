@@ -851,3 +851,17 @@ func (r *postgresOrderRepository) GetOrderStatusHistory(ctx context.Context, ord
 
 	return histories, nil
 }
+
+func (r *postgresOrderRepository) BeginTxWithIsolation(ctx context.Context, isolationLevel pgx.TxIsoLevel) (pgx.Tx, error) {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel:   isolationLevel,
+		AccessMode: pgx.ReadWrite,
+	})
+
+	if err != nil {
+		logger.Error("failed to begin transaction with isolation level: ", err)
+		return nil, err
+	}
+
+	return tx, nil
+}

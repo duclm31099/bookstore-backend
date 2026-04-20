@@ -84,6 +84,7 @@ func (h *AddressHandler) ListUserAddresses(c *gin.Context) {
 
 	results, err := h.service.ListUserAddresses(c.Request.Context(), userID)
 	if err != nil {
+		logger.Error("ListUserAddresses:::", err)
 		statusCode, message, code := model.GetErrorResponse(err)
 		response.Error(c, statusCode, message, code)
 		return

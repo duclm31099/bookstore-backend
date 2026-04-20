@@ -6,6 +6,7 @@ import (
 	"bookstore-backend/pkg/cache"
 	"bookstore-backend/pkg/logger"
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/lib/pq"
 	"github.com/shopspring/decimal"
 )
 
@@ -1308,6 +1310,100 @@ func (r *postgresRepository) UpdatePromoMetadata(ctx context.Context, cartID uui
 
 	if result.RowsAffected() == 0 {
 		return fmt.Errorf("cart not found: %s", cartID)
+	}
+
+	return nil
+}
+
+// internal/cart/repository/cart_repository_impl.go
+
+func (r *postgresRepository) LockCartWithVersion(ctx context.Context, tx pgx.Tx, userID uuid.UUID, expectedVersion int) (*model.Cart, error) {
+	query := `
+        SELECT id, user_id, promo_code, promo_metadata, subtotal, discount, total, version, expires_at, created_at, updated_at
+        FROM carts
+        WHERE user_id = $1 AND version = $2
+        FOR UPDATE NOWAIT
+    `
+
+	var cart model.Cart
+	err := tx.QueryRow(ctx, query, userID, expectedVersion).Scan(
+		&cart.ID,
+		&cart.UserID,
+		&cart.PromoCode,
+		&cart.PromoMetadata,
+		&cart.Subtotal,
+		&cart.Discount,
+		&cart.Total,
+		&cart.Version,
+		&cart.ExpiresAt,
+		&cart.CreatedAt,
+		&cart.UpdatedAt,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, model.ErrCartVersionMismatch // ✅ Custom error
+	}
+
+	if err != nil {
+		if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "55P03" { // Lock not available
+			return nil, model.ErrCartLocked
+		}
+		return nil, fmt.Errorf("failed to lock cart: %w", err)
+	}
+
+	return &cart, nil
+}
+
+func (r *postgresRepository) GetByUserIDWithLock(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (*model.Cart, error) {
+	query := `
+        SELECT id, user_id, promo_code, promo_metadata, subtotal, discount, total, version, expires_at, created_at, updated_at
+        FROM carts
+        WHERE user_id = $1
+        FOR UPDATE NOWAIT
+    `
+
+	var cart model.Cart
+	err := tx.QueryRow(ctx, query, userID).Scan(
+		&cart.ID,
+		&cart.UserID,
+		&cart.PromoCode,
+		&cart.PromoMetadata,
+		&cart.Subtotal,
+		&cart.Discount,
+		&cart.Total,
+		&cart.Version,
+		&cart.ExpiresAt,
+		&cart.CreatedAt,
+		&cart.UpdatedAt,
+	)
+
+	if err != nil {
+		if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "55P03" {
+			return nil, model.ErrCartLocked
+		}
+		return nil, err
+	}
+
+	return &cart, nil
+}
+
+func (r *postgresRepository) DeleteCartWithVersionCheck(ctx context.Context, tx pgx.Tx, cartID uuid.UUID, expectedVersion int) error {
+	query := `
+        DELETE FROM carts
+        WHERE id = $1 AND version = $2
+    `
+
+	result, err := tx.Exec(ctx, query, cartID, expectedVersion)
+	if err != nil {
+		return fmt.Errorf("failed to delete cart: %w", err)
+	}
+
+	if err != nil {
+		return err
+	}
+
+	if result.RowsAffected() == 0 {
+		return model.ErrCartVersionMismatch
 	}
 
 	return nil

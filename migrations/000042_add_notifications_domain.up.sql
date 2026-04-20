@@ -1,48 +1,49 @@
+
 -- ================================================
 -- ENHANCEMENT 1: NOTIFICATION TEMPLATES
 -- ================================================
 
 CREATE TABLE IF NOT EXISTS notification_templates (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    
+
     -- Template identification
     code VARCHAR(100) UNIQUE NOT NULL,  -- order_confirmed, payment_failed, promo_expired
     name VARCHAR(255) NOT NULL,
     description TEXT,
     category VARCHAR(50) NOT NULL,  -- transactional, marketing, system
-    
+
     -- Channel-specific templates
     -- WHY SEPARATE? Each channel needs different format
     email_subject TEXT,
     email_body_html TEXT,  -- HTML template with {{placeholders}}
     email_body_text TEXT,  -- Plain text fallback
-    
+
     sms_body TEXT,  -- SMS template (160 chars limit)
     push_title TEXT,
     push_body TEXT,
-    
+
     in_app_title TEXT,
     in_app_body TEXT,
     in_app_action_url TEXT,  -- Deep link for app
-    
+
     -- Template variables
     -- WHY? Document what variables this template expects
     -- Example: ["order_number", "total_amount", "delivery_date"]
     required_variables TEXT[],
-    
+
     -- Multi-language support
     language VARCHAR(5) DEFAULT 'vi',
-    
+
     -- Default settings
     default_channels TEXT[] DEFAULT '{in_app}',
     default_priority INT DEFAULT 2,
     expires_after_hours INT,  -- Auto-expire after X hours
-    
+
     -- Versioning
     -- WHY? Track template changes over time
     version INT DEFAULT 1,
     is_active BOOLEAN DEFAULT TRUE,
-    
+
     -- Audit
     created_by UUID REFERENCES users(id),
     updated_by UUID REFERENCES users(id),
@@ -50,8 +51,9 @@ CREATE TABLE IF NOT EXISTS notification_templates (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_templates_code ON notification_templates(code, is_active);
-CREATE INDEX idx_templates_category ON notification_templates(category, is_active);
+CREATE INDEX IF NOT EXISTS idx_templates_code ON notification_templates(code, is_active);
+CREATE INDEX IF NOT EXISTS idx_templates_category ON notification_templates(category, is_active);
+
 
 -- ================================================
 -- ENHANCEMENT 2: NOTIFICATION DELIVERY LOGS
@@ -59,29 +61,29 @@ CREATE INDEX idx_templates_category ON notification_templates(category, is_activ
 
 CREATE TABLE IF NOT EXISTS notification_delivery_logs (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    
+
     -- Reference to notification
     notification_id UUID NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
-    
+
     -- Delivery attempt details
     channel VARCHAR(20) NOT NULL,  -- email, sms, push
     attempt_number INT DEFAULT 1,
-    
+
     -- Status tracking
     status VARCHAR(50) NOT NULL,  -- queued, processing, sent, delivered, failed, bounced, opened, clicked
-    
+
     -- Recipient info
     recipient VARCHAR(255) NOT NULL,  -- email address / phone number / device token
-    
+
     -- Provider details
     provider VARCHAR(50),  -- aws_ses, twilio, fcm, apns
     provider_message_id VARCHAR(255),  -- External tracking ID
     provider_response JSONB,  -- Full provider response
-    
+
     -- Error tracking
     error_code VARCHAR(50),
     error_message TEXT,
-    
+
     -- Performance metrics
     queued_at TIMESTAMPTZ,
     processing_at TIMESTAMPTZ,
@@ -90,21 +92,22 @@ CREATE TABLE IF NOT EXISTS notification_delivery_logs (
     opened_at TIMESTAMPTZ,
     clicked_at TIMESTAMPTZ,
     failed_at TIMESTAMPTZ,
-    
+
     -- Retry metadata
     retry_after TIMESTAMPTZ,
     max_retries INT DEFAULT 3,
-    
+
     -- Cost tracking (optional)
     estimated_cost DECIMAL(10,4),  -- Track SMS/email costs
-    
+
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_delivery_logs_notification ON notification_delivery_logs(notification_id);
-CREATE INDEX idx_delivery_logs_status ON notification_delivery_logs(channel, status);
-CREATE INDEX idx_delivery_logs_failed ON notification_delivery_logs(status, retry_after) 
+CREATE INDEX IF NOT EXISTS idx_delivery_logs_notification ON notification_delivery_logs(notification_id);
+CREATE INDEX IF NOT EXISTS idx_delivery_logs_status ON notification_delivery_logs(channel, status);
+CREATE INDEX IF NOT EXISTS idx_delivery_logs_failed ON notification_delivery_logs(status, retry_after) 
     WHERE status = 'failed' AND retry_after IS NOT NULL;
+
 
 -- ================================================
 -- ENHANCEMENT 3: NOTIFICATION CAMPAIGNS
@@ -112,55 +115,56 @@ CREATE INDEX idx_delivery_logs_failed ON notification_delivery_logs(status, retr
 
 CREATE TABLE IF NOT EXISTS notification_campaigns (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    
+
     -- Campaign info
     name VARCHAR(255) NOT NULL,
     description TEXT,
     template_code VARCHAR(100) REFERENCES notification_templates(code),
-    
+
     -- Targeting
     target_type VARCHAR(50) NOT NULL,  -- all_users, segment, specific_users
     target_segment VARCHAR(50),  -- vip_users, inactive_users, new_users
     target_user_ids UUID[],  -- For specific users
-    
+
     -- Targeting filters (JSONB for flexibility)
     -- Example: {"last_order_days_ago": ">30", "total_spent": ">1000000"}
     target_filters JSONB,
-    
+
     -- Scheduling
     scheduled_at TIMESTAMPTZ,
     started_at TIMESTAMPTZ,
     completed_at TIMESTAMPTZ,
     cancelled_at TIMESTAMPTZ,
-    
+
     -- Status
     status VARCHAR(50) DEFAULT 'draft',  -- draft, scheduled, running, paused, completed, cancelled
-    
+
     -- Batch processing
     batch_size INT DEFAULT 1000,  -- Process N users per batch
     batch_delay_seconds INT DEFAULT 5,  -- Delay between batches
-    
+
     -- Progress tracking
     total_recipients INT,
     processed_count INT DEFAULT 0,
     sent_count INT DEFAULT 0,
     delivered_count INT DEFAULT 0,
     failed_count INT DEFAULT 0,
-    
+
     -- Template data (same for all recipients)
     template_data JSONB,
-    
+
     -- Channels to use
     channels TEXT[],
-    
+
     -- Audit
     created_by UUID REFERENCES users(id),
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_campaigns_status ON notification_campaigns(status, scheduled_at);
-CREATE INDEX idx_campaigns_created_by ON notification_campaigns(created_by);
+CREATE INDEX IF NOT EXISTS idx_campaigns_status ON notification_campaigns(status, scheduled_at);
+CREATE INDEX IF NOT EXISTS idx_campaigns_created_by ON notification_campaigns(created_by);
+
 
 -- ================================================
 -- ENHANCEMENT 4: RATE LIMITING
@@ -168,43 +172,73 @@ CREATE INDEX idx_campaigns_created_by ON notification_campaigns(created_by);
 
 CREATE TABLE IF NOT EXISTS notification_rate_limits (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    
+
     -- Scope
     scope VARCHAR(50) NOT NULL,  -- global, user, notification_type
     scope_id VARCHAR(255),  -- user_id or notification type
-    
+
     -- Limits
     max_notifications INT NOT NULL,
     window_minutes INT NOT NULL,  -- Time window
-    
+
     -- Current usage (reset periodically by background job)
     current_count INT DEFAULT 0,
     window_start TIMESTAMPTZ DEFAULT NOW(),
-    
+
     -- Metadata
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
-    
+
     UNIQUE(scope, scope_id, window_minutes)
 );
 
-CREATE INDEX idx_rate_limits_scope ON notification_rate_limits(scope, scope_id);
+CREATE INDEX IF NOT EXISTS idx_rate_limits_scope ON notification_rate_limits(scope, scope_id);
+
 
 -- ================================================
 -- ENHANCEMENT 5: UPDATE NOTIFICATIONS TABLE
 -- ================================================
 
--- Add template reference
-ALTER TABLE notifications 
-ADD COLUMN template_code VARCHAR(100) REFERENCES notification_templates(code),
-ADD COLUMN template_version INT,
-ADD COLUMN template_data JSONB;  -- Variables used to render template
+-- Add template reference (only if not exists)
+DO $$ 
+BEGIN
+    -- Add template_code column
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'notifications' 
+        AND column_name = 'template_code'
+    ) THEN
+        ALTER TABLE notifications 
+        ADD COLUMN template_code VARCHAR(100) REFERENCES notification_templates(code);
+    END IF;
+
+    -- Add template_version column
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'notifications' 
+        AND column_name = 'template_version'
+    ) THEN
+        ALTER TABLE notifications 
+        ADD COLUMN template_version INT;
+    END IF;
+
+    -- Add template_data column
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'notifications' 
+        AND column_name = 'template_data'
+    ) THEN
+        ALTER TABLE notifications 
+        ADD COLUMN template_data JSONB;
+    END IF;
+END $$;
 
 COMMENT ON COLUMN notifications.template_code IS 
 'Reference to notification template used (if any)';
 
 COMMENT ON COLUMN notifications.template_data IS 
 'Variables passed to template: {"order_number": "ORD-123", "total": 500000}';
+
 
 -- ================================================
 -- ENHANCEMENT 6: FUNCTIONS FOR COMMON OPERATIONS
@@ -224,6 +258,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+
 -- Function: Mark all as read
 CREATE OR REPLACE FUNCTION mark_all_notifications_read(p_user_id UUID)
 RETURNS INT AS $$
@@ -233,11 +268,12 @@ BEGIN
     UPDATE notifications
     SET is_read = TRUE, read_at = NOW()
     WHERE user_id = p_user_id AND is_read = FALSE;
-    
+
     GET DIAGNOSTICS updated_count = ROW_COUNT;
     RETURN updated_count;
 END;
 $$ LANGUAGE plpgsql;
+
 
 -- Function: Check rate limit
 CREATE OR REPLACE FUNCTION check_rate_limit(
@@ -256,7 +292,7 @@ BEGIN
     ON CONFLICT (scope, scope_id, window_minutes) 
     DO UPDATE SET updated_at = NOW()
     RETURNING current_count, window_start INTO current_usage, limit_start;
-    
+
     -- Reset if window expired
     IF limit_start + (p_window_minutes || ' minutes')::INTERVAL < NOW() THEN
         UPDATE notification_rate_limits
@@ -264,11 +300,12 @@ BEGIN
         WHERE scope = p_scope AND scope_id = p_scope_id AND window_minutes = p_window_minutes;
         RETURN TRUE;
     END IF;
-    
+
     -- Check if under limit
     RETURN current_usage < p_max_notifications;
 END;
 $$ LANGUAGE plpgsql;
+
 
 -- Function: Increment rate limit counter
 CREATE OR REPLACE FUNCTION increment_rate_limit(
@@ -282,6 +319,7 @@ BEGIN
     WHERE scope = p_scope AND scope_id = p_scope_id AND window_minutes = p_window_minutes;
 END;
 $$ LANGUAGE plpgsql;
+
 
 -- ================================================
 -- ENHANCEMENT 7: VIEWS FOR COMMON QUERIES
@@ -298,6 +336,7 @@ LEFT JOIN notification_templates t ON n.template_code = t.code
 WHERE n.is_read = FALSE
 AND (n.expires_at IS NULL OR n.expires_at > NOW());
 
+
 -- View: Notification delivery metrics
 CREATE OR REPLACE VIEW v_notification_metrics AS
 SELECT 
@@ -310,6 +349,7 @@ SELECT
     AVG(EXTRACT(EPOCH FROM (n.read_at - n.created_at))) FILTER (WHERE n.read_at IS NOT NULL) as avg_time_to_read_seconds
 FROM notifications n
 GROUP BY n.type, n.created_at::DATE;
+
 
 -- View: Campaign performance
 CREATE OR REPLACE VIEW v_campaign_performance AS
@@ -331,6 +371,7 @@ SELECT
     EXTRACT(EPOCH FROM (c.completed_at - c.started_at)) / 60 as duration_minutes
 FROM notification_campaigns c
 WHERE c.status IN ('completed', 'running');
+
 
 -- ================================================
 -- SEED DEFAULT TEMPLATES
@@ -373,7 +414,9 @@ VALUES
     ARRAY['order_number', 'amount'],
     ARRAY['in_app', 'email'],
     3
-);
+)
+ON CONFLICT (code) DO NOTHING;
+
 
 -- ================================================
 -- COMMENTS
